@@ -1,0 +1,3 @@
+* linguist-detectable
+*.go linguist-language=Go
+*.md linguist-documentation

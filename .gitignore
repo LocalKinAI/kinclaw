@@ -1,0 +1,16 @@
+# Binary
+/localkin
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# LocalKin runtime
+.localkin/
