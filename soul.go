@@ -24,8 +24,9 @@ type Meta struct {
 	} `yaml:"brain"`
 
 	Permissions struct {
-		Shell   bool `yaml:"shell"`
-		Network bool `yaml:"network"`
+		Shell        bool `yaml:"shell"`
+		ShellTimeout int  `yaml:"shell_timeout"` // seconds, 0 = default (30s)
+		Network      bool `yaml:"network"`
 
 		Filesystem struct {
 			Allow []string `yaml:"allow"`

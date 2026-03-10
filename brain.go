@@ -18,6 +18,30 @@ const (
 	RoleTool      = "tool"
 )
 
+// retryDo sends an HTTP request, retrying on 429/5xx with exponential backoff.
+func retryDo(client *http.Client, newReq func() (*http.Request, error)) (*http.Response, error) {
+	const maxAttempts = 3
+	var resp *http.Response
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		req, err := newReq()
+		if err != nil {
+			return nil, err
+		}
+		resp, err = client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != 429 && resp.StatusCode < 500 {
+			return resp, nil
+		}
+		resp.Body.Close()
+		if attempt < maxAttempts-1 {
+			time.Sleep(time.Duration(1<<attempt) * time.Second) // 1s, 2s
+		}
+	}
+	return resp, nil
+}
+
 type Message struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content"`
@@ -156,19 +180,21 @@ func (b *claudeBrain) Chat(ctx context.Context, messages []Message, tools []json
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.baseURL+"/v1/messages", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("anthropic-version", "2023-06-01")
-	if strings.HasPrefix(b.apiKey, "sk-ant-oat") {
-		req.Header.Set("Authorization", "Bearer "+b.apiKey)
-		req.Header.Set("anthropic-beta", "oauth-2025-04-20")
-	} else {
-		req.Header.Set("x-api-key", b.apiKey)
-	}
-	resp, err := b.client.Do(req)
+	resp, err := retryDo(b.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.baseURL+"/v1/messages", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("anthropic-version", "2023-06-01")
+		if strings.HasPrefix(b.apiKey, "sk-ant-oat") {
+			req.Header.Set("Authorization", "Bearer "+b.apiKey)
+			req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+		} else {
+			req.Header.Set("x-api-key", b.apiKey)
+		}
+		return req, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("Claude API request: %w", err)
 	}
@@ -377,13 +403,15 @@ func (b *openAIBrain) Chat(ctx context.Context, messages []Message, tools []json
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.baseURL+"/v1/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+b.apiKey)
-	resp, err := b.client.Do(req)
+	resp, err := retryDo(b.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.baseURL+"/v1/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+b.apiKey)
+		return req, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("OpenAI API request: %w", err)
 	}

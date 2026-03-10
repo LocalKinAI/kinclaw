@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.0] - 2026-03-10
+
+### Added
+- **`file_edit` skill** — Search-and-replace file editing. Requires exact unique match, prevents accidental overwrites. Read a file before editing.
+- **API retry with backoff** — Both Claude and OpenAI brains retry on 429/5xx (3 attempts, 1-2s exponential backoff). No more crashes on rate limits.
+- **`shell_timeout` config** — `permissions.shell_timeout` in soul YAML overrides the default 30s timeout for long-running commands.
+
+### Changed
+- **Improved tool descriptions** — shell, file_read, file_write descriptions now guide LLMs to pick the right tool (e.g. "use file_edit instead of sed", "read before editing").
+
 ## [0.1.0] - 2025-03-08
 
 ### Added

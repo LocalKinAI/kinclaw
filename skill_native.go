@@ -40,12 +40,14 @@ func NewShellSkill(timeoutSec int) Skill {
 	return &shellSkill{timeout: time.Duration(timeoutSec) * time.Second}
 }
 
-func (s *shellSkill) Name() string        { return "shell" }
-func (s *shellSkill) Description() string  { return "Execute a shell command and return its output" }
+func (s *shellSkill) Name() string { return "shell" }
+func (s *shellSkill) Description() string {
+	return "Execute a shell command and return stdout+stderr (max 128KB). Use for: running tests, git, grep/rg, build commands. Prefer file_read over cat. Prefer file_edit over sed. Dangerous commands are blocked."
+}
 func (s *shellSkill) ToolDef() json.RawMessage {
 	return MakeToolDef("shell", s.Description(),
 		map[string]map[string]string{
-			"command": {"type": "string", "description": "The shell command to execute"},
+			"command": {"type": "string", "description": "Shell command to execute. Use && to chain commands."},
 		}, []string{"command"})
 }
 
@@ -100,12 +102,14 @@ type fileReadSkill struct{}
 
 func NewFileReadSkill() Skill { return &fileReadSkill{} }
 
-func (s *fileReadSkill) Name() string        { return "file_read" }
-func (s *fileReadSkill) Description() string  { return "Read the contents of a file" }
+func (s *fileReadSkill) Name() string { return "file_read" }
+func (s *fileReadSkill) Description() string {
+	return "Read file contents (max 64KB). Always read a file before editing it."
+}
 func (s *fileReadSkill) ToolDef() json.RawMessage {
 	return MakeToolDef("file_read", s.Description(),
 		map[string]map[string]string{
-			"path": {"type": "string", "description": "Path to the file to read"},
+			"path": {"type": "string", "description": "File path to read"},
 		}, []string{"path"})
 }
 
@@ -134,13 +138,15 @@ type fileWriteSkill struct{}
 
 func NewFileWriteSkill() Skill { return &fileWriteSkill{} }
 
-func (s *fileWriteSkill) Name() string        { return "file_write" }
-func (s *fileWriteSkill) Description() string  { return "Write content to a file (creates or overwrites)" }
+func (s *fileWriteSkill) Name() string { return "file_write" }
+func (s *fileWriteSkill) Description() string {
+	return "Write content to a file. OVERWRITES entire file. For partial edits use file_edit instead."
+}
 func (s *fileWriteSkill) ToolDef() json.RawMessage {
 	return MakeToolDef("file_write", s.Description(),
 		map[string]map[string]string{
-			"path":    {"type": "string", "description": "Path to the file to write"},
-			"content": {"type": "string", "description": "Content to write to the file"},
+			"path":    {"type": "string", "description": "File path. Parent dirs created automatically."},
+			"content": {"type": "string", "description": "Complete file content (replaces everything)."},
 		}, []string{"path", "content"})
 }
 
@@ -161,6 +167,51 @@ func (s *fileWriteSkill) Execute(params map[string]string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("Written %d bytes to %s", len(content), abs), nil
+}
+
+type fileEditSkill struct{}
+
+func NewFileEditSkill() Skill { return &fileEditSkill{} }
+
+func (s *fileEditSkill) Name() string { return "file_edit" }
+func (s *fileEditSkill) Description() string {
+	return "Edit a file by replacing exact text. The old_text must appear exactly once. Read the file first to get the exact text."
+}
+func (s *fileEditSkill) ToolDef() json.RawMessage {
+	return MakeToolDef("file_edit", s.Description(),
+		map[string]map[string]string{
+			"path":     {"type": "string", "description": "File path to edit"},
+			"old_text": {"type": "string", "description": "Exact text to find (must be unique in file)"},
+			"new_text": {"type": "string", "description": "Replacement text"},
+		}, []string{"path", "old_text", "new_text"})
+}
+
+func (s *fileEditSkill) Execute(params map[string]string) (string, error) {
+	path, oldText, newText := params["path"], params["old_text"], params["new_text"]
+	if path == "" || oldText == "" {
+		return "", fmt.Errorf("path and old_text are required")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return "", err
+	}
+	content := string(data)
+	count := strings.Count(content, oldText)
+	if count == 0 {
+		return "", fmt.Errorf("old_text not found in file")
+	}
+	if count > 1 {
+		return "", fmt.Errorf("old_text found %d times, must be unique (provide more context)", count)
+	}
+	content = strings.Replace(content, oldText, newText, 1)
+	if err := os.WriteFile(abs, []byte(content), 0644); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Edited %s: replaced 1 occurrence", abs), nil
 }
 
 type webFetchSkill struct{}

@@ -27,7 +27,7 @@ localkin -soul examples/coder.soul.md
 │  Claude │ OpenAI │ Ollama │ DeepSeek    │
 ├──────────────────────────────────────────┤
 │              Skills (Tools)              │
-│  shell │ file_read │ file_write         │
+│  shell │ file_read │ file_write │ file_edit│
 │  web_fetch │ memory │ forge             │
 │  + any SKILL.md plugin                  │
 ├──────────────────────────────────────────┤
@@ -60,7 +60,7 @@ You are a senior software engineer. Write clean, working code.
 
 **Dual LLM Engine** — Claude Messages API + OpenAI Chat Completions API. One interface, any provider. Ollama, DeepSeek, Groq — anything OpenAI-compatible works out of the box.
 
-**6 Native Skills** — Shell execution (with safety blocklist), file read/write, web fetch (with SSRF protection), persistent memory, and forge (self-evolution).
+**7 Native Skills** — Shell execution (with safety blocklist), file read/write/edit, web fetch (with SSRF protection), persistent memory, and forge (self-evolution).
 
 **SKILL.md Plugins** — Drop a `SKILL.md` in `./skills/` or `~/.localkin/skills/` and it's instantly available. No code changes. No recompilation.
 
@@ -159,7 +159,7 @@ LocalKin checks for API keys in this order:
 
 | | |
 |---|---|
-| **Source code** | 2000 lines (non-test Go) |
+| **Source code** | ~2000 lines (non-test Go) |
 | **Tests** | 412 lines, 16 tests |
 | **Dependencies** | yaml, sqlite, term, net (HTML parser) |
 | **Binary size** | ~15 MB |

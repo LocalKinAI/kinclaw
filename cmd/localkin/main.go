@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	version          = "0.1.0"
+	version          = "0.2.0"
 	maxToolRounds    = 20
 )
 
@@ -85,11 +85,12 @@ func main() {
 	}
 
 	if soul.Meta.Permissions.Shell {
-		registry.Register(kin.NewShellSkill(30))
+		registry.Register(kin.NewShellSkill(soul.Meta.Permissions.ShellTimeout))
 		registry.Register(kin.NewForgeSkill(skillsDir, registry))
 	}
 	registry.Register(kin.NewFileReadSkill())
 	registry.Register(kin.NewFileWriteSkill())
+	registry.Register(kin.NewFileEditSkill())
 	if soul.Meta.Permissions.Network {
 		registry.Register(kin.NewWebFetchSkill())
 	}
