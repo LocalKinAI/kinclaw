@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	version       = "0.2.0"
+	version       = "0.3.0"
 	maxToolRounds = 20
 )
 
@@ -67,7 +67,11 @@ func main() {
 		}
 	}
 	if apiKey == "" && s.Meta.Brain.Provider != "ollama" {
-		fmt.Fprintf(os.Stderr, "Error: API key not set. Set brain.api_key in soul file or $ANTHROPIC_API_KEY / $OPENAI_API_KEY\n")
+		msg := "Error: API key not set. Set brain.api_key in soul file or $ANTHROPIC_API_KEY / $OPENAI_API_KEY"
+		if s.Meta.Brain.Provider == "claude" {
+			msg += "\n  Tip: run 'localkin -login' to authenticate with Claude (free tier)"
+		}
+		fmt.Fprintln(os.Stderr, msg)
 		os.Exit(1)
 	}
 
@@ -291,21 +295,14 @@ func findSoulFile(explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
-	entries, err := os.ReadDir("./souls")
-	if err == nil {
-		for _, e := range entries {
-			if strings.HasSuffix(e.Name(), ".soul.md") {
-				return filepath.Join("./souls", e.Name())
-			}
-		}
-	}
 	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".localkin", "souls")
-	entries, err = os.ReadDir(dir)
-	if err == nil {
-		for _, e := range entries {
-			if strings.HasSuffix(e.Name(), ".soul.md") {
-				return filepath.Join(dir, e.Name())
+	for _, dir := range []string{"./souls", filepath.Join(home, ".localkin", "souls")} {
+		entries, err := os.ReadDir(dir)
+		if err == nil {
+			for _, e := range entries {
+				if strings.HasSuffix(e.Name(), ".soul.md") {
+					return filepath.Join(dir, e.Name())
+				}
 			}
 		}
 	}

@@ -18,7 +18,6 @@ const (
 	RoleTool      = "tool"
 )
 
-// retryDo sends an HTTP request, retrying on 429/5xx with exponential backoff.
 func retryDo(client *http.Client, newReq func() (*http.Request, error)) (*http.Response, error) {
 	const maxAttempts = 3
 	var resp *http.Response
@@ -80,7 +79,6 @@ type Brain interface {
 	Chat(ctx context.Context, messages []Message, tools []json.RawMessage, onChunk StreamFunc) (*ChatResult, error)
 }
 
-// --- Claude Brain ---
 type claudeBrain struct {
 	baseURL, model, apiKey string
 	temperature            float64
@@ -331,8 +329,6 @@ func convertToolsToClaude(tools []json.RawMessage) []json.RawMessage {
 	}
 	return out
 }
-
-// --- OpenAI Brain (also works with Ollama, DeepSeek, Groq, etc.) ---
 
 type openAIBrain struct {
 	baseURL, model, apiKey string

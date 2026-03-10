@@ -24,7 +24,7 @@ localkin -soul souls/coder.soul.md
 │  YAML config + Markdown system prompt    │
 ├──────────────────────────────────────────┤
 │               Brain (LLM)               │
-│  Claude │ OpenAI │ Ollama │ DeepSeek    │
+│  Claude │ OpenAI │ Ollama │ Groq │ any  │
 ├──────────────────────────────────────────┤
 │              Skills (Tools)              │
 │  shell │ file_read │ file_write │ file_edit│
@@ -117,6 +117,9 @@ OPENAI_API_KEY=sk-xxx localkin -soul souls/openai.soul.md
 
 # DeepSeek (cheap coding model)
 DEEPSEEK_API_KEY=sk-xxx localkin -soul souls/deepseek.soul.md
+
+# Groq Cloud (free Llama, blazing fast)
+GROQ_API_KEY=gsk_xxx localkin -soul souls/groq.soul.md
 ```
 
 ## Creating Skills
@@ -159,7 +162,7 @@ LocalKin checks for API keys in this order:
 
 | | |
 |---|---|
-| **Source code** | 2000 lines (non-test Go) |
+| **Source code** | ~2000 lines (non-test Go) |
 | **Tests** | 1790 lines, 107 tests |
 | **Dependencies** | yaml, sqlite, term |
 | **Binary size** | ~15 MB |

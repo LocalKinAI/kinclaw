@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// SafeEnv returns environment variables with secrets filtered out.
 func SafeEnv() []string {
 	var env []string
 	for _, e := range os.Environ() {
@@ -91,9 +90,8 @@ func (s *shellSkill) Execute(params map[string]string) (string, error) {
 
 type fileReadSkill struct{}
 
-func NewFileReadSkill() Skill { return &fileReadSkill{} }
-
-func (s *fileReadSkill) Name() string { return "file_read" }
+func NewFileReadSkill() Skill              { return &fileReadSkill{} }
+func (s *fileReadSkill) Name() string      { return "file_read" }
 func (s *fileReadSkill) Description() string {
 	return "Read file contents (max 64KB). Always read a file before editing it."
 }
@@ -127,9 +125,8 @@ func (s *fileReadSkill) Execute(params map[string]string) (string, error) {
 
 type fileWriteSkill struct{}
 
-func NewFileWriteSkill() Skill { return &fileWriteSkill{} }
-
-func (s *fileWriteSkill) Name() string { return "file_write" }
+func NewFileWriteSkill() Skill              { return &fileWriteSkill{} }
+func (s *fileWriteSkill) Name() string      { return "file_write" }
 func (s *fileWriteSkill) Description() string {
 	return "Write content to a file. OVERWRITES entire file. For partial edits use file_edit instead."
 }
@@ -162,9 +159,8 @@ func (s *fileWriteSkill) Execute(params map[string]string) (string, error) {
 
 type fileEditSkill struct{}
 
-func NewFileEditSkill() Skill { return &fileEditSkill{} }
-
-func (s *fileEditSkill) Name() string { return "file_edit" }
+func NewFileEditSkill() Skill              { return &fileEditSkill{} }
+func (s *fileEditSkill) Name() string      { return "file_edit" }
 func (s *fileEditSkill) Description() string {
 	return "Edit a file by replacing exact text. The old_text must appear exactly once. Read the file first to get the exact text."
 }
@@ -207,9 +203,8 @@ func (s *fileEditSkill) Execute(params map[string]string) (string, error) {
 
 type webFetchSkill struct{}
 
-func NewWebFetchSkill() Skill { return &webFetchSkill{} }
-
-func (s *webFetchSkill) Name() string        { return "web_fetch" }
+func NewWebFetchSkill() Skill              { return &webFetchSkill{} }
+func (s *webFetchSkill) Name() string      { return "web_fetch" }
 func (s *webFetchSkill) Description() string  { return "Fetch a URL and return its content as readable text" }
 func (s *webFetchSkill) ToolDef() json.RawMessage {
 	return MakeToolDef("web_fetch", s.Description(),
@@ -315,7 +310,6 @@ func htmlToText(s string) string {
 	return strings.Join(strings.Fields(sb.String()), " ")
 }
 
-// MemoryBackend is the interface for the memory skill's storage.
 type MemoryBackend interface {
 	Save(key, value string) (string, error)
 	Recall(query string) (string, error)
@@ -323,8 +317,8 @@ type MemoryBackend interface {
 
 type memorySkill struct{ store MemoryBackend }
 
-func NewMemorySkill(store MemoryBackend) Skill { return &memorySkill{store: store} }
-func (s *memorySkill) Name() string            { return "memory" }
+func NewMemorySkill(store MemoryBackend) Skill  { return &memorySkill{store: store} }
+func (s *memorySkill) Name() string             { return "memory" }
 func (s *memorySkill) Description() string {
 	return "Save or recall persistent memories. Use action=save to store key-value pairs, action=recall to search memories by query."
 }
@@ -360,11 +354,8 @@ type forgeSkill struct {
 	registry  *Registry
 }
 
-func NewForgeSkill(skillsDir string, registry *Registry) Skill {
-	return &forgeSkill{skillsDir: skillsDir, registry: registry}
-}
-
-func (s *forgeSkill) Name() string { return "forge" }
+func NewForgeSkill(skillsDir string, registry *Registry) Skill { return &forgeSkill{skillsDir: skillsDir, registry: registry} }
+func (s *forgeSkill) Name() string                             { return "forge" }
 func (s *forgeSkill) Description() string {
 	return "Create a new skill by generating a SKILL.md file. The new skill becomes immediately available."
 }

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -14,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 )
 
@@ -24,21 +24,30 @@ const (
 	oauthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 )
 
+func randB64(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
 func Login() error {
-	vb := make([]byte, 32)
-	rand.Read(vb)
-	verifier := base64.RawURLEncoding.EncodeToString(vb)
+	verifier := randB64(32)
 	h := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(h[:])
+	state := randB64(32)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	redirect := fmt.Sprintf("http://localhost:%d/oauth/callback", port)
+	redirect := fmt.Sprintf("http://localhost:%d/callback", ln.Addr().(*net.TCPAddr).Port)
 	codeCh, errCh := make(chan string, 1), make(chan error, 1)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") != state {
+			fmt.Fprint(w, "<h2>Error: state mismatch.</h2>")
+			errCh <- fmt.Errorf("state mismatch")
+			return
+		}
 		if c := r.URL.Query().Get("code"); c != "" {
 			fmt.Fprint(w, "<h2>Login successful! You can close this tab.</h2>")
 			codeCh <- c
@@ -50,14 +59,18 @@ func Login() error {
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(ln)
 	defer srv.Shutdown(context.Background())
-	authURL := fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=code&code_challenge=%s&code_challenge_method=S256&scope=org:create_api_key",
-		oauthAuthURL, oauthClientID, url.QueryEscape(redirect), challenge)
+	authURL := oauthAuthURL + "?" + url.Values{
+		"response_type": {"code"}, "client_id": {oauthClientID},
+		"redirect_uri": {redirect}, "state": {state},
+		"code_challenge": {challenge}, "code_challenge_method": {"S256"},
+		"scope": {"user:profile user:inference"},
+	}.Encode()
 	fmt.Fprintln(os.Stderr, "Opening browser for Claude login...")
 	openBrowser(authURL)
 	fmt.Fprintln(os.Stderr, "Waiting for authorization (2 min timeout)...")
 	select {
 	case code := <-codeCh:
-		return exchangeAndSave(code, verifier, redirect)
+		return exchangeAndSave(code, verifier, redirect, state)
 	case err := <-errCh:
 		return err
 	case <-time.After(120 * time.Second):
@@ -65,12 +78,16 @@ func Login() error {
 	}
 }
 
-func exchangeAndSave(code, verifier, redirect string) error {
-	body := url.Values{"grant_type": {"authorization_code"}, "client_id": {oauthClientID},
-		"code": {code}, "code_verifier": {verifier}, "redirect_uri": {redirect}}.Encode()
-	req, _ := http.NewRequest("POST", oauthTokenURL, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+func exchangeAndSave(code, verifier, redirect, state string) error {
+	payload, _ := json.Marshal(map[string]string{
+		"grant_type": "authorization_code", "client_id": oauthClientID,
+		"code": code, "code_verifier": verifier, "redirect_uri": redirect, "state": state,
+	})
+	req, _ := http.NewRequest("POST", oauthTokenURL, bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+	req.Header.Set("Referer", "https://claude.ai/")
+	req.Header.Set("Origin", "https://claude.ai")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err

@@ -68,16 +68,12 @@ func (r *Registry) FilteredToolDefs(allow []string) []json.RawMessage {
 }
 
 type ToolCallInfo struct {
-	ID     string
-	Name   string
-	Params map[string]string
+	ID, Name string
+	Params   map[string]string
 }
-
 type ToolResult struct {
-	ToolCallID string
-	Name       string
-	Output     string
-	Err        error
+	ToolCallID, Name, Output string
+	Err                      error
 }
 
 func ExecuteToolCalls(reg *Registry, calls []ToolCallInfo) []ToolResult {
