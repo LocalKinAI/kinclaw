@@ -1,4 +1,4 @@
-package localkin
+package skill
 
 import (
 	"encoding/json"
@@ -96,10 +96,8 @@ func ExecuteToolCalls(reg *Registry, calls []ToolCallInfo) []ToolResult {
 		}
 		return []ToolResult{{ToolCallID: c.ID, Name: c.Name, Output: out}}
 	}
-
 	results := make([]ToolResult, len(calls))
 	var wg sync.WaitGroup
-
 	for i, c := range calls {
 		wg.Add(1)
 		go func(idx int, ci ToolCallInfo) {
@@ -117,7 +115,6 @@ func ExecuteToolCalls(reg *Registry, calls []ToolCallInfo) []ToolResult {
 			results[idx] = ToolResult{ToolCallID: ci.ID, Name: ci.Name, Output: out}
 		}(i, c)
 	}
-
 	wg.Wait()
 	return results
 }

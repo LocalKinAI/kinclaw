@@ -1,4 +1,4 @@
-package localkin
+package brain
 
 import (
 	"bufio"
@@ -36,7 +36,7 @@ func retryDo(client *http.Client, newReq func() (*http.Request, error)) (*http.R
 		}
 		resp.Body.Close()
 		if attempt < maxAttempts-1 {
-			time.Sleep(time.Duration(1<<attempt) * time.Second) // 1s, 2s
+			time.Sleep(time.Duration(1<<attempt) * time.Second)
 		}
 	}
 	return resp, nil
@@ -48,6 +48,7 @@ type Message struct {
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
+
 type ToolCall struct {
 	ID       string `json:"id"`
 	Type     string `json:"type"`
@@ -73,6 +74,7 @@ type ChatResult struct {
 	Content   string
 	ToolCalls []ToolCall
 }
+
 type StreamFunc func(chunk string, thinking bool) error
 type Brain interface {
 	Chat(ctx context.Context, messages []Message, tools []json.RawMessage, onChunk StreamFunc) (*ChatResult, error)
@@ -331,6 +333,7 @@ func convertToolsToClaude(tools []json.RawMessage) []json.RawMessage {
 }
 
 // --- OpenAI Brain (also works with Ollama, DeepSeek, Groq, etc.) ---
+
 type openAIBrain struct {
 	baseURL, model, apiKey string
 	temperature            float64
@@ -448,10 +451,7 @@ func (b *openAIBrain) Chat(ctx context.Context, messages []Message, tools []json
 			break
 		}
 		var event oaiResp
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			continue
-		}
-		if len(event.Choices) == 0 {
+		if err := json.Unmarshal([]byte(data), &event); err != nil || len(event.Choices) == 0 {
 			continue
 		}
 		delta := event.Choices[0].Delta

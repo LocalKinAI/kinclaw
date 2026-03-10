@@ -1,4 +1,4 @@
-package localkin
+package soul
 
 import (
 	"bytes"
@@ -13,31 +13,27 @@ import (
 type Meta struct {
 	Name    string `yaml:"name"`
 	Version string `yaml:"version"`
-
-	Brain struct {
-		Provider      string  `yaml:"provider"`       // "claude" (default), "openai", "ollama"
+	Brain   struct {
+		Provider      string  `yaml:"provider"`
 		Model         string  `yaml:"model"`
 		Endpoint      string  `yaml:"endpoint"`
 		Temperature   float64 `yaml:"temperature"`
 		ContextLength int     `yaml:"context_length"`
-		APIKey        string  `yaml:"api_key"` // API key or $ENV_VAR reference
+		APIKey        string  `yaml:"api_key"`
 	} `yaml:"brain"`
-
 	Permissions struct {
 		Shell        bool `yaml:"shell"`
-		ShellTimeout int  `yaml:"shell_timeout"` // seconds, 0 = default (30s)
+		ShellTimeout int  `yaml:"shell_timeout"`
 		Network      bool `yaml:"network"`
-
-		Filesystem struct {
+		Filesystem   struct {
 			Allow []string `yaml:"allow"`
 			Deny  []string `yaml:"deny"`
 		} `yaml:"filesystem"`
 	} `yaml:"permissions"`
-
 	Skills struct {
 		Enable    []string `yaml:"enable"`
 		OutputDir string   `yaml:"output_dir"`
-		Dir       string   `yaml:"dir"` // external skills directory
+		Dir       string   `yaml:"dir"`
 	} `yaml:"skills"`
 }
 
@@ -48,6 +44,7 @@ type Soul struct {
 }
 
 var frontmatterDelim = []byte("---")
+
 const securitySuffix = `
 
 ## Security
@@ -58,20 +55,19 @@ func LoadSoul(path string) (*Soul, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading soul file: %w", err)
 	}
-	soul, err := ParseSoul(data)
+	s, err := ParseSoul(data)
 	if err != nil {
 		return nil, fmt.Errorf("parsing soul file %s: %w", path, err)
 	}
-	soul.FilePath = path
-	return soul, nil
+	s.FilePath = path
+	return s, nil
 }
 
 func ParseSoul(data []byte) (*Soul, error) {
-	rawYAML, rawBody, err := splitFrontmatter(data)
+	rawYAML, rawBody, err := SplitFrontmatter(data)
 	if err != nil {
 		return nil, err
 	}
-
 	var meta Meta
 	if err := yaml.Unmarshal(rawYAML, &meta); err != nil {
 		return nil, fmt.Errorf("parsing YAML frontmatter: %w", err)
@@ -79,7 +75,6 @@ func ParseSoul(data []byte) (*Soul, error) {
 	if meta.Name == "" {
 		return nil, fmt.Errorf("soul file missing required field: name")
 	}
-
 	if meta.Brain.Provider == "" {
 		meta.Brain.Provider = "claude"
 	}
@@ -105,20 +100,18 @@ func ParseSoul(data []byte) (*Soul, error) {
 	if meta.Skills.OutputDir == "" {
 		meta.Skills.OutputDir = "./output"
 	}
-
 	prompt := strings.TrimSpace(rawBody)
 	prompt = strings.ReplaceAll(prompt, "{{current_date}}", time.Now().Format("2006-01-02"))
 	prompt += securitySuffix
-
 	return &Soul{Meta: meta, SystemPrompt: prompt}, nil
 }
 
-func splitFrontmatter(data []byte) ([]byte, string, error) {
+// SplitFrontmatter splits YAML frontmatter delimited by --- from the body.
+func SplitFrontmatter(data []byte) ([]byte, string, error) {
 	data = bytes.TrimLeft(data, "\n\r")
 	if !bytes.HasPrefix(data, frontmatterDelim) {
 		return nil, "", fmt.Errorf("soul file must start with --- (YAML frontmatter delimiter)")
 	}
-
 	rest := data[len(frontmatterDelim):]
 	rest = bytes.TrimLeft(rest, " \t")
 	if len(rest) > 0 && rest[0] == '\n' {
@@ -126,12 +119,10 @@ func splitFrontmatter(data []byte) ([]byte, string, error) {
 	} else if len(rest) > 1 && rest[0] == '\r' && rest[1] == '\n' {
 		rest = rest[2:]
 	}
-
 	idx := bytes.Index(rest, frontmatterDelim)
 	if idx < 0 {
 		return nil, "", fmt.Errorf("soul file missing closing --- delimiter")
 	}
-
 	yamlBlock := rest[:idx]
 	body := rest[idx+len(frontmatterDelim):]
 	if len(body) > 0 && body[0] == '\n' {
@@ -139,6 +130,5 @@ func splitFrontmatter(data []byte) ([]byte, string, error) {
 	} else if len(body) > 1 && body[0] == '\r' && body[1] == '\n' {
 		body = body[2:]
 	}
-
 	return yamlBlock, string(body), nil
 }

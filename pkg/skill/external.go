@@ -1,4 +1,4 @@
-package localkin
+package skill
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LocalKinAI/localkin/pkg/soul"
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,7 +20,7 @@ type SkillMeta struct {
 	Command     []string          `yaml:"command"`
 	Args        []string          `yaml:"args"`
 	Schema      map[string]Schema `yaml:"schema"`
-	Timeout     int               `yaml:"timeout"` // seconds
+	Timeout     int               `yaml:"timeout"`
 }
 
 type Schema struct {
@@ -30,7 +31,7 @@ type Schema struct {
 
 type ExternalSkill struct {
 	meta    SkillMeta
-	dir     string // directory containing the SKILL.md
+	dir     string
 	toolDef json.RawMessage
 }
 
@@ -39,12 +40,10 @@ func LoadExternalSkill(path string) (*ExternalSkill, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	rawYAML, _, err := splitFrontmatter(data)
+	rawYAML, _, err := soul.SplitFrontmatter(data)
 	if err != nil {
 		return nil, fmt.Errorf("parsing SKILL.md %s: %w", path, err)
 	}
-
 	var meta SkillMeta
 	if err := yaml.Unmarshal(rawYAML, &meta); err != nil {
 		return nil, fmt.Errorf("parsing SKILL.md YAML: %w", err)
@@ -55,7 +54,6 @@ func LoadExternalSkill(path string) (*ExternalSkill, error) {
 	if meta.Timeout <= 0 {
 		meta.Timeout = 30
 	}
-
 	props := make(map[string]map[string]string)
 	var required []string
 	for k, v := range meta.Schema {
@@ -65,17 +63,12 @@ func LoadExternalSkill(path string) (*ExternalSkill, error) {
 		}
 	}
 	toolDef := MakeToolDef(meta.Name, meta.Description, props, required)
-
-	return &ExternalSkill{
-		meta:    meta,
-		dir:     filepath.Dir(path),
-		toolDef: toolDef,
-	}, nil
+	return &ExternalSkill{meta: meta, dir: filepath.Dir(path), toolDef: toolDef}, nil
 }
 
-func (s *ExternalSkill) Name() string              { return s.meta.Name }
-func (s *ExternalSkill) Description() string        { return s.meta.Description }
-func (s *ExternalSkill) ToolDef() json.RawMessage   { return s.toolDef }
+func (s *ExternalSkill) Name() string            { return s.meta.Name }
+func (s *ExternalSkill) Description() string      { return s.meta.Description }
+func (s *ExternalSkill) ToolDef() json.RawMessage { return s.toolDef }
 
 func (s *ExternalSkill) Execute(params map[string]string) (string, error) {
 	args := make([]string, len(s.meta.Args))
@@ -86,23 +79,18 @@ func (s *ExternalSkill) Execute(params map[string]string) (string, error) {
 		}
 		args[i] = resolved
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.meta.Timeout)*time.Second)
 	defer cancel()
-
 	cmdArgs := append(s.meta.Command[1:], args...)
 	cmd := exec.CommandContext(ctx, s.meta.Command[0], cmdArgs...)
 	cmd.Dir = s.dir
 	cmd.Env = append(SafeEnv(), "SKILL_DIR="+s.dir)
-
 	out, err := cmd.CombinedOutput()
-
 	const maxOutput = 128 * 1024
 	result := string(out)
 	if len(result) > maxOutput {
 		result = result[:maxOutput] + "\n... (truncated)"
 	}
-
 	if err != nil {
 		return result + "\nError: " + err.Error(), nil
 	}
@@ -110,8 +98,6 @@ func (s *ExternalSkill) Execute(params map[string]string) (string, error) {
 }
 
 func LoadExternalSkills(dir string) ([]*ExternalSkill, error) {
-	var skills []*ExternalSkill
-
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -119,7 +105,7 @@ func LoadExternalSkills(dir string) ([]*ExternalSkill, error) {
 		}
 		return nil, err
 	}
-
+	var skills []*ExternalSkill
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -135,6 +121,5 @@ func LoadExternalSkills(dir string) ([]*ExternalSkill, error) {
 		}
 		skills = append(skills, ext)
 	}
-
 	return skills, nil
 }

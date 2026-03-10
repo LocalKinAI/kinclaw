@@ -13,7 +13,7 @@ go install github.com/LocalKinAI/localkin/cmd/localkin@latest
 localkin -login
 
 # Run
-localkin -soul examples/coder.soul.md
+localkin -soul souls/coder.soul.md
 ```
 
 ## Architecture
@@ -100,23 +100,23 @@ localkin -version
 | `/clear` | Clear conversation history |
 | `/help` | Show help |
 
-## Examples
+## Souls
 
 ```bash
 # Claude with full access
-localkin -soul examples/coder.soul.md
+localkin -soul souls/coder.soul.md
 
 # Locked down — read-only, no shell, no network
-localkin -soul examples/locked.soul.md
+localkin -soul souls/locked.soul.md
 
 # Local Ollama (zero cloud dependency)
-localkin -soul examples/ollama.soul.md
+localkin -soul souls/ollama.soul.md
 
 # OpenAI GPT-4o
-OPENAI_API_KEY=sk-xxx localkin -soul examples/openai.soul.md
+OPENAI_API_KEY=sk-xxx localkin -soul souls/openai.soul.md
 
 # DeepSeek (cheap coding model)
-DEEPSEEK_API_KEY=sk-xxx localkin -soul examples/deepseek.soul.md
+DEEPSEEK_API_KEY=sk-xxx localkin -soul souls/deepseek.soul.md
 ```
 
 ## Creating Skills
@@ -159,11 +159,11 @@ LocalKin checks for API keys in this order:
 
 | | |
 |---|---|
-| **Source code** | ~2000 lines (non-test Go) |
-| **Tests** | 412 lines, 16 tests |
-| **Dependencies** | yaml, sqlite, term, net (HTML parser) |
+| **Source code** | 2000 lines (non-test Go) |
+| **Tests** | 1790 lines, 107 tests |
+| **Dependencies** | yaml, sqlite, term |
 | **Binary size** | ~15 MB |
-| **Files** | 10 Go source files |
+| **Packages** | 6 (brain, skill, soul, memory, auth, cmd) |
 
 ## License
 

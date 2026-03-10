@@ -6,9 +6,12 @@
 - **`file_edit` skill** — Search-and-replace file editing. Requires exact unique match, prevents accidental overwrites. Read a file before editing.
 - **API retry with backoff** — Both Claude and OpenAI brains retry on 429/5xx (3 attempts, 1-2s exponential backoff). No more crashes on rate limits.
 - **`shell_timeout` config** — `permissions.shell_timeout` in soul YAML overrides the default 30s timeout for long-running commands.
+- **`pkg/` package structure** — Reorganized from flat `package localkin` into 6 packages: `brain`, `skill`, `soul`, `memory`, `auth`, `cmd`. Clean dependency graph, proper Go project layout.
+- **88 unit tests** — Comprehensive test coverage across all packages: soul parsing, brain factory, skill execution, memory persistence, security blocklists, SSRF protection.
 
 ### Changed
 - **Improved tool descriptions** — shell, file_read, file_write descriptions now guide LLMs to pick the right tool (e.g. "use file_edit instead of sed", "read before editing").
+- **`examples/` → `souls/`** — Renamed example directory to match the soul file convention.
 
 ## [0.1.0] - 2025-03-08
 
@@ -26,5 +29,4 @@
 - Web fetch: SSRF protection + HTML-to-text + prompt injection defense
 - Forge: runtime skill generation with auto-registration
 - Raw-mode readline with full CJK/UTF-8 support
-- 5 example soul files (Claude, OpenAI, Ollama, DeepSeek, locked)
-- 16 unit tests covering all core modules
+- 5 soul files (Claude, OpenAI, Ollama, DeepSeek, locked)

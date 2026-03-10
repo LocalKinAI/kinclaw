@@ -10,12 +10,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	kin "github.com/LocalKinAI/localkin"
+	"github.com/LocalKinAI/localkin/pkg/auth"
+	"github.com/LocalKinAI/localkin/pkg/brain"
+	"github.com/LocalKinAI/localkin/pkg/memory"
+	"github.com/LocalKinAI/localkin/pkg/skill"
+	"github.com/LocalKinAI/localkin/pkg/soul"
 )
 
 const (
-	version          = "0.2.0"
-	maxToolRounds    = 20
+	version       = "0.2.0"
+	maxToolRounds = 20
 )
 
 func main() {
@@ -31,7 +35,7 @@ func main() {
 		return
 	}
 	if *login {
-		if err := kin.Login(); err != nil {
+		if err := auth.Login(); err != nil {
 			fmt.Fprintf(os.Stderr, "Login failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -44,15 +48,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	soul, err := kin.LoadSoul(path)
+	s, err := soul.LoadSoul(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	apiKey := soul.Meta.Brain.APIKey
+	apiKey := s.Meta.Brain.APIKey
 	if apiKey == "" {
-		switch soul.Meta.Brain.Provider {
+		switch s.Meta.Brain.Provider {
 		case "claude":
 			apiKey = os.Getenv("ANTHROPIC_API_KEY")
 			if apiKey == "" {
@@ -62,15 +66,15 @@ func main() {
 			apiKey = os.Getenv("OPENAI_API_KEY")
 		}
 	}
-	if apiKey == "" && soul.Meta.Brain.Provider != "ollama" {
+	if apiKey == "" && s.Meta.Brain.Provider != "ollama" {
 		fmt.Fprintf(os.Stderr, "Error: API key not set. Set brain.api_key in soul file or $ANTHROPIC_API_KEY / $OPENAI_API_KEY\n")
 		os.Exit(1)
 	}
 
-	brain := kin.NewBrain(soul.Meta.Brain.Provider, soul.Meta.Brain.Endpoint,
-		soul.Meta.Brain.Model, apiKey, soul.Meta.Brain.Temperature)
+	b := brain.NewBrain(s.Meta.Brain.Provider, s.Meta.Brain.Endpoint,
+		s.Meta.Brain.Model, apiKey, s.Meta.Brain.Temperature)
 
-	store, err := kin.OpenMemory(kin.DefaultDBPath())
+	store, err := memory.OpenMemory(memory.DefaultDBPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: memory unavailable: %v\n", err)
 	}
@@ -78,51 +82,51 @@ func main() {
 		defer store.Close()
 	}
 
-	registry := kin.NewRegistry()
+	registry := skill.NewRegistry()
 	skillsDir := "./skills"
-	if soul.Meta.Skills.Dir != "" {
-		skillsDir = soul.Meta.Skills.Dir
+	if s.Meta.Skills.Dir != "" {
+		skillsDir = s.Meta.Skills.Dir
 	}
 
-	if soul.Meta.Permissions.Shell {
-		registry.Register(kin.NewShellSkill(soul.Meta.Permissions.ShellTimeout))
-		registry.Register(kin.NewForgeSkill(skillsDir, registry))
+	if s.Meta.Permissions.Shell {
+		registry.Register(skill.NewShellSkill(s.Meta.Permissions.ShellTimeout))
+		registry.Register(skill.NewForgeSkill(skillsDir, registry))
 	}
-	registry.Register(kin.NewFileReadSkill())
-	registry.Register(kin.NewFileWriteSkill())
-	registry.Register(kin.NewFileEditSkill())
-	if soul.Meta.Permissions.Network {
-		registry.Register(kin.NewWebFetchSkill())
+	registry.Register(skill.NewFileReadSkill())
+	registry.Register(skill.NewFileWriteSkill())
+	registry.Register(skill.NewFileEditSkill())
+	if s.Meta.Permissions.Network {
+		registry.Register(skill.NewWebFetchSkill())
 	}
 	if store != nil {
-		registry.Register(kin.NewMemorySkill(store))
+		registry.Register(skill.NewMemorySkill(store))
 	}
 
 	for _, dir := range []string{skillsDir, homeSkillsDir()} {
-		exts, _ := kin.LoadExternalSkills(dir)
+		exts, _ := skill.LoadExternalSkills(dir)
 		for _, ext := range exts {
 			registry.Register(ext)
 		}
 	}
 
-	toolDefs := registry.FilteredToolDefs(soul.Meta.Skills.Enable)
+	toolDefs := registry.FilteredToolDefs(s.Meta.Skills.Enable)
 	fmt.Fprintf(os.Stderr, "\033[2m  LocalKin %s\n  Soul:     %s (%s)\n  Brain:    %s / %s\n  Skills:   %d loaded\033[0m\n\n",
-		version, soul.Meta.Name, soul.FilePath, soul.Meta.Brain.Provider, soul.Meta.Brain.Model, len(toolDefs))
-	sessionID := fmt.Sprintf("%s-%d", soul.Meta.Name, os.Getpid())
-	var history []kin.Message
+		version, s.Meta.Name, s.FilePath, s.Meta.Brain.Provider, s.Meta.Brain.Model, len(toolDefs))
+	sessionID := fmt.Sprintf("%s-%d", s.Meta.Name, os.Getpid())
+	var history []brain.Message
 	if store != nil {
 		history = store.LoadHistory(sessionID, 50)
 	}
 	if *execMsg != "" {
-		os.Exit(runOnce(brain, soul, registry, toolDefs, store, sessionID, history, *execMsg, *debug))
+		os.Exit(runOnce(b, s, registry, toolDefs, store, sessionID, history, *execMsg, *debug))
 	}
-	runREPL(brain, soul, registry, toolDefs, store, sessionID, history, *debug)
+	runREPL(b, s, registry, toolDefs, store, sessionID, history, *debug)
 }
 
-func runREPL(brain kin.Brain, soul *kin.Soul, registry *kin.Registry, toolDefs []json.RawMessage, store *kin.SQLiteStore, sessionID string, history []kin.Message, debug bool) {
+func runREPL(b brain.Brain, s *soul.Soul, registry *skill.Registry, toolDefs []json.RawMessage, store *memory.SQLiteStore, sessionID string, history []brain.Message, debug bool) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-	prompt := fmt.Sprintf("\033[1;36m%s>\033[0m ", soul.Meta.Name)
+	prompt := fmt.Sprintf("\033[1;36m%s>\033[0m ", s.Meta.Name)
 	for {
 		input, err := readLine(prompt)
 		if err != nil {
@@ -155,12 +159,12 @@ func runREPL(brain kin.Brain, soul *kin.Soul, registry *kin.Registry, toolDefs [
 			fmt.Println("\033[2mConversation cleared.\033[0m")
 			continue
 		}
-		userMsg := kin.Message{Role: kin.RoleUser, Content: input}
+		userMsg := brain.Message{Role: brain.RoleUser, Content: input}
 		history = append(history, userMsg)
 		if store != nil {
 			store.SaveMessage(sessionID, userMsg)
 		}
-		messages := buildMessages(soul, history)
+		messages := buildMessages(s, history)
 		onChunk := func(chunk string, thinking bool) error {
 			if thinking {
 				fmt.Fprint(os.Stderr, "\033[2m"+chunk+"\033[0m")
@@ -169,7 +173,7 @@ func runREPL(brain kin.Brain, soul *kin.Soul, registry *kin.Registry, toolDefs [
 			}
 			return nil
 		}
-		reply, toolHistory, err := chatLoop(ctx, brain, messages, toolDefs, registry, onChunk, debug)
+		reply, toolHistory, err := chatLoop(ctx, b, messages, toolDefs, registry, onChunk, debug)
 		fmt.Println()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\033[31mError: %v\033[0m\n", err)
@@ -181,13 +185,13 @@ func runREPL(brain kin.Brain, soul *kin.Soul, registry *kin.Registry, toolDefs [
 			}
 			history = append(history, msg)
 		}
-		assistantMsg := kin.Message{Role: kin.RoleAssistant, Content: reply}
+		assistantMsg := brain.Message{Role: brain.RoleAssistant, Content: reply}
 		history = append(history, assistantMsg)
 		if store != nil {
 			store.SaveMessage(sessionID, assistantMsg)
 		}
 		for _, msg := range toolHistory {
-			if msg.Role == kin.RoleAssistant {
+			if msg.Role == brain.RoleAssistant {
 				for _, tc := range msg.ToolCalls {
 					if tc.Function.Name == "forge" {
 						toolDefs = registry.ToolDefs()
@@ -199,72 +203,59 @@ func runREPL(brain kin.Brain, soul *kin.Soul, registry *kin.Registry, toolDefs [
 	}
 }
 
-func runOnce(brain kin.Brain, soul *kin.Soul, registry *kin.Registry, toolDefs []json.RawMessage, store *kin.SQLiteStore, sessionID string, history []kin.Message, input string, debug bool) int {
+func runOnce(b brain.Brain, s *soul.Soul, registry *skill.Registry, toolDefs []json.RawMessage, store *memory.SQLiteStore, sessionID string, history []brain.Message, input string, debug bool) int {
 	ctx := context.Background()
-
-	userMsg := kin.Message{Role: kin.RoleUser, Content: input}
+	userMsg := brain.Message{Role: brain.RoleUser, Content: input}
 	history = append(history, userMsg)
 	if store != nil {
 		store.SaveMessage(sessionID, userMsg)
 	}
-
-	messages := buildMessages(soul, history)
-
+	messages := buildMessages(s, history)
 	onChunk := func(chunk string, thinking bool) error {
 		if thinking {
 			fmt.Fprint(os.Stderr, "\033[2m"+chunk+"\033[0m")
 		} else {
-			fmt.Print(chunk) // stdout for piping
+			fmt.Print(chunk)
 		}
 		return nil
 	}
-
-	reply, toolHistory, err := chatLoop(ctx, brain, messages, toolDefs, registry, onChunk, debug)
+	reply, toolHistory, err := chatLoop(ctx, b, messages, toolDefs, registry, onChunk, debug)
 	fmt.Println()
-
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}
-
 	for _, msg := range toolHistory {
 		if store != nil {
 			store.SaveMessage(sessionID, msg)
 		}
 	}
 	if store != nil {
-		store.SaveMessage(sessionID, kin.Message{Role: kin.RoleAssistant, Content: reply})
+		store.SaveMessage(sessionID, brain.Message{Role: brain.RoleAssistant, Content: reply})
 	}
-
 	return 0
 }
 
-func chatLoop(ctx context.Context, brain kin.Brain, messages []kin.Message, toolDefs []json.RawMessage, registry *kin.Registry, onChunk kin.StreamFunc, debug bool) (string, []kin.Message, error) {
-	var intermediateHistory []kin.Message
-
+func chatLoop(ctx context.Context, b brain.Brain, messages []brain.Message, toolDefs []json.RawMessage, registry *skill.Registry, onChunk brain.StreamFunc, debug bool) (string, []brain.Message, error) {
+	var intermediateHistory []brain.Message
 	for round := 0; round < maxToolRounds; round++ {
-		result, err := brain.Chat(ctx, messages, toolDefs, onChunk)
+		result, err := b.Chat(ctx, messages, toolDefs, onChunk)
 		if err != nil {
 			return "", nil, err
 		}
-
 		if len(result.ToolCalls) == 0 {
 			return result.Content, intermediateHistory, nil
 		}
-
-		assistantMsg := kin.Message{
-			Role:      kin.RoleAssistant,
-			Content:   result.Content,
-			ToolCalls: result.ToolCalls,
+		assistantMsg := brain.Message{
+			Role: brain.RoleAssistant, Content: result.Content, ToolCalls: result.ToolCalls,
 		}
 		messages = append(messages, assistantMsg)
 		intermediateHistory = append(intermediateHistory, assistantMsg)
-
-		var callInfos []kin.ToolCallInfo
+		var callInfos []skill.ToolCallInfo
 		for _, tc := range result.ToolCalls {
 			params, err := tc.ParseArguments()
 			if err != nil {
-				toolMsg := kin.Message{Role: kin.RoleTool, Content: "Error: " + err.Error(), ToolCallID: tc.ID}
+				toolMsg := brain.Message{Role: brain.RoleTool, Content: "Error: " + err.Error(), ToolCallID: tc.ID}
 				messages = append(messages, toolMsg)
 				intermediateHistory = append(intermediateHistory, toolMsg)
 				continue
@@ -272,31 +263,28 @@ func chatLoop(ctx context.Context, brain kin.Brain, messages []kin.Message, tool
 			if debug {
 				fmt.Fprintf(os.Stderr, "\033[2m[tool: %s %v]\033[0m\n", tc.Function.Name, params)
 			}
-			callInfos = append(callInfos, kin.ToolCallInfo{ID: tc.ID, Name: tc.Function.Name, Params: params})
+			callInfos = append(callInfos, skill.ToolCallInfo{ID: tc.ID, Name: tc.Function.Name, Params: params})
 		}
-
-		results := kin.ExecuteToolCalls(registry, callInfos)
+		results := skill.ExecuteToolCalls(registry, callInfos)
 		for _, r := range results {
 			if debug {
 				display := r.Output
 				if len(display) > 200 {
 					display = display[:200] + "..."
 				}
-				fmt.Fprintf(os.Stderr, "\033[2m[%s → %s]\033[0m\n", r.Name, strings.ReplaceAll(display, "\n", " "))
+				fmt.Fprintf(os.Stderr, "\033[2m[%s -> %s]\033[0m\n", r.Name, strings.ReplaceAll(display, "\n", " "))
 			}
-			toolMsg := kin.Message{Role: kin.RoleTool, Content: r.Output, ToolCallID: r.ToolCallID}
+			toolMsg := brain.Message{Role: brain.RoleTool, Content: r.Output, ToolCallID: r.ToolCallID}
 			messages = append(messages, toolMsg)
 			intermediateHistory = append(intermediateHistory, toolMsg)
 		}
 	}
-
 	return "", intermediateHistory, fmt.Errorf("too many tool call rounds (max %d)", maxToolRounds)
 }
 
-func buildMessages(soul *kin.Soul, history []kin.Message) []kin.Message {
-	messages := []kin.Message{{Role: kin.RoleSystem, Content: soul.SystemPrompt}}
-	messages = append(messages, history...)
-	return messages
+func buildMessages(s *soul.Soul, history []brain.Message) []brain.Message {
+	messages := []brain.Message{{Role: brain.RoleSystem, Content: s.SystemPrompt}}
+	return append(messages, history...)
 }
 
 func findSoulFile(explicit string) string {
@@ -335,9 +323,9 @@ func loadOAuthToken() string {
 	if err != nil {
 		return ""
 	}
-	var auth struct{ AccessToken string `json:"access_token"` }
-	if json.Unmarshal(data, &auth) != nil {
+	var a struct{ AccessToken string `json:"access_token"` }
+	if json.Unmarshal(data, &a) != nil {
 		return ""
 	}
-	return auth.AccessToken
+	return a.AccessToken
 }

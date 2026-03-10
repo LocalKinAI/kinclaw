@@ -1,4 +1,4 @@
-package localkin
+package skill
 
 import (
 	"context"
@@ -12,10 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"golang.org/x/net/html"
 )
 
+// SafeEnv returns environment variables with secrets filtered out.
 func SafeEnv() []string {
 	var env []string
 	for _, e := range os.Environ() {
@@ -29,9 +28,7 @@ func SafeEnv() []string {
 	return env
 }
 
-type shellSkill struct {
-	timeout time.Duration
-}
+type shellSkill struct{ timeout time.Duration }
 
 func NewShellSkill(timeoutSec int) Skill {
 	if timeoutSec <= 0 {
@@ -55,7 +52,6 @@ var shellBlocklist = []string{
 	"rm -rf /", "mkfs.", "dd if=", ":(){ :|:&",
 	"shutdown", "reboot", "halt",
 }
-
 var pipeBlocklist = []string{"bash", "sh", "python", "perl", "ruby"}
 
 func (s *shellSkill) Execute(params map[string]string) (string, error) {
@@ -63,7 +59,6 @@ func (s *shellSkill) Execute(params map[string]string) (string, error) {
 	if command == "" {
 		return "", fmt.Errorf("command is required")
 	}
-
 	lower := strings.ToLower(command)
 	for _, pat := range shellBlocklist {
 		if strings.Contains(lower, pat) {
@@ -78,22 +73,18 @@ func (s *shellSkill) Execute(params map[string]string) (string, error) {
 			}
 		}
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 	defer cancel()
-
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Env = SafeEnv()
 	out, err := cmd.CombinedOutput()
-
 	const maxOutput = 128 * 1024
 	result := string(out)
 	if len(result) > maxOutput {
 		result = result[:maxOutput] + "\n... (truncated)"
 	}
-
 	if err != nil {
-		return result + "\nError: " + err.Error(), nil // return output even on error
+		return result + "\nError: " + err.Error(), nil
 	}
 	return result, nil
 }
@@ -232,73 +223,61 @@ func (s *webFetchSkill) Execute(params map[string]string) (string, error) {
 	if rawURL == "" {
 		return "", fmt.Errorf("url is required")
 	}
-
 	if isPrivateURL(rawURL) {
 		return "", fmt.Errorf("blocked: cannot fetch private/internal URLs")
 	}
-
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("User-Agent", "LocalKin/1.0 (AI Agent Runtime)")
-
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 128*1024))
 	if err != nil {
 		return "", err
 	}
-
 	contentType := resp.Header.Get("Content-Type")
 	content := string(body)
-
 	if strings.Contains(contentType, "text/html") {
 		content = htmlToText(content)
 	}
-
 	const maxOutput = 32 * 1024
 	if len(content) > maxOutput {
 		content = content[:maxOutput] + "\n... (truncated)"
 	}
-
 	return "---BEGIN UNTRUSTED WEB CONTENT---\n" + content + "\n---END UNTRUSTED WEB CONTENT---", nil
 }
 
 func isPrivateURL(rawURL string) bool {
 	host := rawURL
-	if idx := strings.Index(host, "://"); idx >= 0 {
-		host = host[idx+3:]
+	for _, sep := range []string{"://", "/", ":"} {
+		if i := strings.Index(host, sep); i >= 0 {
+			if sep == "://" {
+				host = host[i+3:]
+			} else {
+				host = host[:i]
+			}
+		}
 	}
-	if idx := strings.IndexByte(host, '/'); idx >= 0 {
-		host = host[:idx]
-	}
-	if idx := strings.IndexByte(host, ':'); idx >= 0 {
-		host = host[:idx]
-	}
-
 	if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" {
 		return true
 	}
-
 	ip := net.ParseIP(host)
 	if ip == nil {
-		ips, err := net.LookupIP(host)
-		if err != nil || len(ips) == 0 {
-			return false
+		if ips, err := net.LookupIP(host); err == nil && len(ips) > 0 {
+			ip = ips[0]
 		}
-		ip = ips[0]
 	}
-
-	privateRanges := []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"}
-	for _, cidr := range privateRanges {
-		_, network, _ := net.ParseCIDR(cidr)
-		if network.Contains(ip) {
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"} {
+		if _, n, _ := net.ParseCIDR(cidr); n != nil && n.Contains(ip) {
 			return true
 		}
 	}
@@ -306,35 +285,46 @@ func isPrivateURL(rawURL string) bool {
 }
 
 func htmlToText(s string) string {
-	doc, err := html.Parse(strings.NewReader(s))
-	if err != nil {
-		return s
+	for _, tag := range []string{"script", "style"} {
+		for {
+			lo := strings.ToLower(s)
+			i := strings.Index(lo, "<"+tag)
+			if i < 0 {
+				break
+			}
+			j := strings.Index(lo[i:], "</"+tag+">")
+			if j < 0 {
+				break
+			}
+			s = s[:i] + s[i+j+len("</"+tag+">"):]
+		}
 	}
 	var sb strings.Builder
-	var f func(*html.Node)
-	f = func(n *html.Node) {
-		if n.Type == html.ElementNode && (n.Data == "script" || n.Data == "style") {
-			return
-		}
-		if n.Type == html.TextNode {
-			if t := strings.TrimSpace(n.Data); t != "" {
-				sb.WriteString(t + " ")
-			}
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			f(c)
+	inTag := false
+	for _, r := range s {
+		switch {
+		case r == '<':
+			inTag = true
+		case r == '>':
+			inTag = false
+			sb.WriteByte(' ')
+		case !inTag:
+			sb.WriteRune(r)
 		}
 	}
-	f(doc)
-	return strings.TrimSpace(sb.String())
+	return strings.Join(strings.Fields(sb.String()), " ")
 }
 
-type memorySkill struct {
-	store MemoryStore
+// MemoryBackend is the interface for the memory skill's storage.
+type MemoryBackend interface {
+	Save(key, value string) (string, error)
+	Recall(query string) (string, error)
 }
 
-func NewMemorySkill(store MemoryStore) Skill { return &memorySkill{store: store} }
-func (s *memorySkill) Name() string        { return "memory" }
+type memorySkill struct{ store MemoryBackend }
+
+func NewMemorySkill(store MemoryBackend) Skill { return &memorySkill{store: store} }
+func (s *memorySkill) Name() string            { return "memory" }
 func (s *memorySkill) Description() string {
 	return "Save or recall persistent memories. Use action=save to store key-value pairs, action=recall to search memories by query."
 }
@@ -374,7 +364,7 @@ func NewForgeSkill(skillsDir string, registry *Registry) Skill {
 	return &forgeSkill{skillsDir: skillsDir, registry: registry}
 }
 
-func (s *forgeSkill) Name() string        { return "forge" }
+func (s *forgeSkill) Name() string { return "forge" }
 func (s *forgeSkill) Description() string {
 	return "Create a new skill by generating a SKILL.md file. The new skill becomes immediately available."
 }
@@ -395,17 +385,14 @@ func (s *forgeSkill) Execute(params map[string]string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("name is required")
 	}
-
 	dir := filepath.Join(s.skillsDir, name)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
-
 	var sb strings.Builder
 	sb.WriteString("---\n")
 	sb.WriteString(fmt.Sprintf("name: %s\n", name))
 	sb.WriteString(fmt.Sprintf("description: %s\n", params["description"]))
-
 	cmdParts := strings.Fields(params["command"])
 	sb.WriteString("command: [")
 	for i, p := range cmdParts {
@@ -415,11 +402,9 @@ func (s *forgeSkill) Execute(params map[string]string) (string, error) {
 		sb.WriteString(fmt.Sprintf("%q", p))
 	}
 	sb.WriteString("]\n")
-
 	if args := params["args"]; args != "" {
 		sb.WriteString(fmt.Sprintf("args: %s\n", args))
 	}
-
 	if schema := params["schema"]; schema != "" {
 		var schemaMap map[string]interface{}
 		if err := json.Unmarshal([]byte(schema), &schemaMap); err == nil {
@@ -434,15 +419,12 @@ func (s *forgeSkill) Execute(params map[string]string) (string, error) {
 			}
 		}
 	}
-
 	sb.WriteString("---\n\n")
 	sb.WriteString(fmt.Sprintf("# %s\n\nForged by LocalKin agent.\n", name))
-
 	skillPath := filepath.Join(dir, "SKILL.md")
 	if err := os.WriteFile(skillPath, []byte(sb.String()), 0644); err != nil {
 		return "", err
 	}
-
 	if script := params["script_content"]; script != "" {
 		scriptName := "run.py"
 		if len(cmdParts) > 1 {
@@ -453,11 +435,9 @@ func (s *forgeSkill) Execute(params map[string]string) (string, error) {
 			return "", err
 		}
 	}
-
 	ext, err := LoadExternalSkill(skillPath)
 	if err == nil {
 		s.registry.Register(ext)
 	}
-
 	return fmt.Sprintf("Forged skill '%s' at %s", name, skillPath), nil
 }
