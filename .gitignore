@@ -14,3 +14,5 @@ Thumbs.db
 
 # LocalKin runtime
 .localkin/
+__pycache__/
+*.pyc
