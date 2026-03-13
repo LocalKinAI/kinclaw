@@ -681,9 +681,9 @@ func TestMemorySkill_NameAndDef(t *testing.T) {
 
 func TestSafeEnv_FiltersSecrets(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "secret")
-	t.Setenv("MY_SECRET", "hidden")
-	t.Setenv("DB_PASSWORD", "pass123")
-	t.Setenv("AUTH_TOKEN", "tok")
+	t.Setenv("OPENAI_API_KEY", "hidden")
+	t.Setenv("GITHUB_TOKEN", "tok")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "aws-secret")
 	t.Setenv("NORMAL_VAR", "visible")
 
 	env := SafeEnv()
@@ -691,14 +691,14 @@ func TestSafeEnv_FiltersSecrets(t *testing.T) {
 	if strings.Contains(envStr, "ANTHROPIC_API_KEY") {
 		t.Error("expected ANTHROPIC_API_KEY to be filtered")
 	}
-	if strings.Contains(envStr, "MY_SECRET") {
-		t.Error("expected MY_SECRET to be filtered")
+	if strings.Contains(envStr, "OPENAI_API_KEY") {
+		t.Error("expected OPENAI_API_KEY to be filtered")
 	}
-	if strings.Contains(envStr, "DB_PASSWORD") {
-		t.Error("expected DB_PASSWORD to be filtered")
+	if strings.Contains(envStr, "GITHUB_TOKEN") {
+		t.Error("expected GITHUB_TOKEN to be filtered")
 	}
-	if strings.Contains(envStr, "AUTH_TOKEN") {
-		t.Error("expected AUTH_TOKEN to be filtered")
+	if strings.Contains(envStr, "AWS_SECRET_ACCESS_KEY") {
+		t.Error("expected AWS_SECRET_ACCESS_KEY to be filtered")
 	}
 	if !strings.Contains(envStr, "NORMAL_VAR") {
 		t.Error("expected NORMAL_VAR to be present")

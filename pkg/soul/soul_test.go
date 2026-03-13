@@ -220,6 +220,22 @@ You are a full test soul.`)
 	}
 }
 
+func TestParseSoul_BootMessage(t *testing.T) {
+	data := []byte(`---
+name: booter
+boot:
+  message: "hello boot"
+---
+Boot test.`)
+	s, err := ParseSoul(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Meta.Boot.Message != "hello boot" {
+		t.Errorf("expected boot message 'hello boot', got %q", s.Meta.Boot.Message)
+	}
+}
+
 func TestLoadSoul_FromFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.soul.md")

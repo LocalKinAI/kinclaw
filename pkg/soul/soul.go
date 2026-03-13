@@ -35,6 +35,9 @@ type Meta struct {
 		OutputDir string   `yaml:"output_dir"`
 		Dir       string   `yaml:"dir"`
 	} `yaml:"skills"`
+	Boot struct {
+		Message string `yaml:"message"`
+	} `yaml:"boot"`
 }
 
 type Soul struct {

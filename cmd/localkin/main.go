@@ -18,9 +18,22 @@ import (
 )
 
 const (
-	version       = "0.3.0"
+	version       = "1.0.0"
 	maxToolRounds = 20
 )
+
+// session holds the mutable runtime state for the REPL.
+type session struct {
+	soul     *soul.Soul
+	brain    brain.Brain
+	registry *skill.Registry
+	toolDefs []json.RawMessage
+	store    *memory.SQLiteStore
+	id       string
+	history  []brain.Message
+	debug    bool
+	soulPath string
+}
 
 func main() {
 	soulPath := flag.String("soul", "", "Path to .soul.md file")
@@ -48,10 +61,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	s, err := soul.LoadSoul(path)
+	sess, err := newSession(path, *debug)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+	if sess.store != nil {
+		defer sess.store.Close()
+	}
+
+	fmt.Fprintf(os.Stderr, "\033[2m  LocalKin %s\n  Soul:     %s (%s)\n  Brain:    %s / %s\n  Skills:   %d loaded\033[0m\n\n",
+		version, sess.soul.Meta.Name, sess.soul.FilePath,
+		sess.soul.Meta.Brain.Provider, sess.soul.Meta.Brain.Model, len(sess.toolDefs))
+
+	if *execMsg != "" {
+		os.Exit(runOnce(sess, *execMsg))
+	}
+
+	InitHistory(filepath.Join(homeDir(), ".localkin", "readline_history"))
+	runREPL(sess)
+}
+
+func newSession(soulPath string, debug bool) (*session, error) {
+	s, err := soul.LoadSoul(soulPath)
+	if err != nil {
+		return nil, err
 	}
 
 	apiKey := s.Meta.Brain.APIKey
@@ -71,8 +105,7 @@ func main() {
 		if s.Meta.Brain.Provider == "claude" {
 			msg += "\n  Tip: run 'localkin -login' to authenticate with Claude (free tier)"
 		}
-		fmt.Fprintln(os.Stderr, msg)
-		os.Exit(1)
+		return nil, fmt.Errorf("%s", msg)
 	}
 
 	b := brain.NewBrain(s.Meta.Brain.Provider, s.Meta.Brain.Endpoint,
@@ -82,55 +115,60 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: memory unavailable: %v\n", err)
 	}
-	if store != nil {
-		defer store.Close()
-	}
 
-	registry := skill.NewRegistry()
-	skillsDir := "./skills"
-	if s.Meta.Skills.Dir != "" {
-		skillsDir = s.Meta.Skills.Dir
-	}
+	reg := buildRegistry(s)
 
-	if s.Meta.Permissions.Shell {
-		registry.Register(skill.NewShellSkill(s.Meta.Permissions.ShellTimeout))
-		registry.Register(skill.NewForgeSkill(skillsDir, registry))
-	}
-	registry.Register(skill.NewFileReadSkill())
-	registry.Register(skill.NewFileWriteSkill())
-	registry.Register(skill.NewFileEditSkill())
-	if s.Meta.Permissions.Network {
-		registry.Register(skill.NewWebFetchSkill())
-	}
-	if store != nil {
-		registry.Register(skill.NewMemorySkill(store))
-	}
-
-	for _, dir := range []string{skillsDir, homeSkillsDir()} {
-		exts, _ := skill.LoadExternalSkills(dir)
-		for _, ext := range exts {
-			registry.Register(ext)
-		}
-	}
-
-	toolDefs := registry.FilteredToolDefs(s.Meta.Skills.Enable)
-	fmt.Fprintf(os.Stderr, "\033[2m  LocalKin %s\n  Soul:     %s (%s)\n  Brain:    %s / %s\n  Skills:   %d loaded\033[0m\n\n",
-		version, s.Meta.Name, s.FilePath, s.Meta.Brain.Provider, s.Meta.Brain.Model, len(toolDefs))
 	sessionID := fmt.Sprintf("%s-%d", s.Meta.Name, os.Getpid())
 	var history []brain.Message
 	if store != nil {
 		history = store.LoadHistory(sessionID, 50)
 	}
-	if *execMsg != "" {
-		os.Exit(runOnce(b, s, registry, toolDefs, store, sessionID, history, *execMsg, *debug))
-	}
-	runREPL(b, s, registry, toolDefs, store, sessionID, history, *debug)
+
+	return &session{
+		soul: s, brain: b, registry: reg,
+		toolDefs: reg.FilteredToolDefs(s.Meta.Skills.Enable),
+		store: store, id: sessionID, history: history,
+		debug: debug, soulPath: soulPath,
+	}, nil
 }
 
-func runREPL(b brain.Brain, s *soul.Soul, registry *skill.Registry, toolDefs []json.RawMessage, store *memory.SQLiteStore, sessionID string, history []brain.Message, debug bool) {
+func buildRegistry(s *soul.Soul) *skill.Registry {
+	reg := skill.NewRegistry()
+	skillsDir := "./skills"
+	if s.Meta.Skills.Dir != "" {
+		skillsDir = s.Meta.Skills.Dir
+	}
+	if s.Meta.Permissions.Shell {
+		reg.Register(skill.NewShellSkill(s.Meta.Permissions.ShellTimeout))
+		reg.Register(skill.NewForgeSkill(skillsDir, reg))
+	}
+	reg.Register(skill.NewFileReadSkill())
+	reg.Register(skill.NewFileWriteSkill())
+	reg.Register(skill.NewFileEditSkill())
+	if s.Meta.Permissions.Network {
+		reg.Register(skill.NewWebFetchSkill())
+		reg.Register(skill.NewWebSearchSkill())
+	}
+	for _, dir := range []string{skillsDir, homeSkillsDir()} {
+		exts, _ := skill.LoadExternalSkills(dir)
+		for _, ext := range exts {
+			reg.Register(ext)
+		}
+	}
+	return reg
+}
+
+func runREPL(sess *session) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-	prompt := fmt.Sprintf("\033[1;36m%s>\033[0m ", s.Meta.Name)
+
+	// Boot message: auto-execute if configured
+	if msg := sess.soul.Meta.Boot.Message; msg != "" {
+		fmt.Fprintf(os.Stderr, "\033[2m[boot] %s\033[0m\n", msg)
+		handleUserMessage(ctx, sess, msg)
+	}
+
+	prompt := fmt.Sprintf("\033[1;36m%s>\033[0m ", sess.soul.Meta.Name)
 	for {
 		input, err := readLine(prompt)
 		if err != nil {
@@ -140,81 +178,36 @@ func runREPL(b brain.Brain, s *soul.Soul, registry *skill.Registry, toolDefs []j
 		if input == "" {
 			continue
 		}
-		switch {
-		case input == "/quit" || input == "/exit":
-			fmt.Fprintln(os.Stderr, "Goodbye.")
-			return
-		case input == "/help":
-			fmt.Println("\033[2m/quit    Exit\n/skills  List available skills\n/clear   Clear conversation history\033[0m")
-			continue
-		case input == "/skills":
-			for _, def := range toolDefs {
-				var tool struct {
-					Function struct {
-						Name string `json:"name"`
-					} `json:"function"`
-				}
-				json.Unmarshal(def, &tool)
-				fmt.Printf("  %s\n", tool.Function.Name)
+		if strings.HasPrefix(input, "/") {
+			if handleCommand(ctx, sess, input) {
+				return
 			}
 			continue
-		case input == "/clear":
-			history = nil
-			fmt.Println("\033[2mConversation cleared.\033[0m")
-			continue
 		}
-		userMsg := brain.Message{Role: brain.RoleUser, Content: input}
-		history = append(history, userMsg)
-		if store != nil {
-			store.SaveMessage(sessionID, userMsg)
-		}
-		messages := buildMessages(s, history)
-		onChunk := func(chunk string, thinking bool) error {
-			if thinking {
-				fmt.Fprint(os.Stderr, "\033[2m"+chunk+"\033[0m")
-			} else {
-				fmt.Print(chunk)
-			}
-			return nil
-		}
-		reply, toolHistory, err := chatLoop(ctx, b, messages, toolDefs, registry, onChunk, debug)
-		fmt.Println()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "\033[31mError: %v\033[0m\n", err)
-			continue
-		}
-		for _, msg := range toolHistory {
-			if store != nil {
-				store.SaveMessage(sessionID, msg)
-			}
-			history = append(history, msg)
-		}
-		assistantMsg := brain.Message{Role: brain.RoleAssistant, Content: reply}
-		history = append(history, assistantMsg)
-		if store != nil {
-			store.SaveMessage(sessionID, assistantMsg)
-		}
-		for _, msg := range toolHistory {
-			if msg.Role == brain.RoleAssistant {
-				for _, tc := range msg.ToolCalls {
-					if tc.Function.Name == "forge" {
-						toolDefs = registry.ToolDefs()
-						break
-					}
-				}
-			}
-		}
+		handleUserMessage(ctx, sess, input)
 	}
 }
 
-func runOnce(b brain.Brain, s *soul.Soul, registry *skill.Registry, toolDefs []json.RawMessage, store *memory.SQLiteStore, sessionID string, history []brain.Message, input string, debug bool) int {
+func runOnce(sess *session, input string) int {
 	ctx := context.Background()
-	userMsg := brain.Message{Role: brain.RoleUser, Content: input}
-	history = append(history, userMsg)
-	if store != nil {
-		store.SaveMessage(sessionID, userMsg)
+	handleUserMessage(ctx, sess, input)
+	if len(sess.history) > 0 {
+		last := sess.history[len(sess.history)-1]
+		if last.Role == brain.RoleAssistant && last.Content != "" {
+			return 0
+		}
 	}
-	messages := buildMessages(s, history)
+	return 0
+}
+
+func handleUserMessage(ctx context.Context, sess *session, input string) {
+	userMsg := brain.Message{Role: brain.RoleUser, Content: input}
+	sess.history = append(sess.history, userMsg)
+	if sess.store != nil {
+		sess.store.SaveMessage(sess.id, userMsg)
+	}
+
+	messages := buildMessages(sess.soul, sess.history)
 	onChunk := func(chunk string, thinking bool) error {
 		if thinking {
 			fmt.Fprint(os.Stderr, "\033[2m"+chunk+"\033[0m")
@@ -223,27 +216,45 @@ func runOnce(b brain.Brain, s *soul.Soul, registry *skill.Registry, toolDefs []j
 		}
 		return nil
 	}
-	reply, toolHistory, err := chatLoop(ctx, b, messages, toolDefs, registry, onChunk, debug)
+
+	reply, toolHistory, err := chatLoop(ctx, sess, messages, onChunk)
 	fmt.Println()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return 1
+		fmt.Fprintf(os.Stderr, "\033[31mError: %v\033[0m\n", err)
+		return
 	}
+
 	for _, msg := range toolHistory {
-		if store != nil {
-			store.SaveMessage(sessionID, msg)
+		if sess.store != nil {
+			sess.store.SaveMessage(sess.id, msg)
+		}
+		sess.history = append(sess.history, msg)
+	}
+	assistantMsg := brain.Message{Role: brain.RoleAssistant, Content: reply}
+	sess.history = append(sess.history, assistantMsg)
+	if sess.store != nil {
+		sess.store.SaveMessage(sess.id, assistantMsg)
+	}
+
+	// Check if forge created new skills
+	for _, msg := range toolHistory {
+		if msg.Role == brain.RoleAssistant {
+			for _, tc := range msg.ToolCalls {
+				if tc.Function.Name == "forge" {
+					sess.toolDefs = sess.registry.FilteredToolDefs(sess.soul.Meta.Skills.Enable)
+					return
+				}
+			}
 		}
 	}
-	if store != nil {
-		store.SaveMessage(sessionID, brain.Message{Role: brain.RoleAssistant, Content: reply})
-	}
-	return 0
 }
 
-func chatLoop(ctx context.Context, b brain.Brain, messages []brain.Message, toolDefs []json.RawMessage, registry *skill.Registry, onChunk brain.StreamFunc, debug bool) (string, []brain.Message, error) {
+func chatLoop(ctx context.Context, sess *session, messages []brain.Message, onChunk brain.StreamFunc) (string, []brain.Message, error) {
 	var intermediateHistory []brain.Message
+	cb := skill.NewCircuitBreaker()
+
 	for round := 0; round < maxToolRounds; round++ {
-		result, err := b.Chat(ctx, messages, toolDefs, onChunk)
+		result, err := sess.brain.Chat(ctx, messages, sess.toolDefs, onChunk)
 		if err != nil {
 			return "", nil, err
 		}
@@ -255,6 +266,7 @@ func chatLoop(ctx context.Context, b brain.Brain, messages []brain.Message, tool
 		}
 		messages = append(messages, assistantMsg)
 		intermediateHistory = append(intermediateHistory, assistantMsg)
+
 		var callInfos []skill.ToolCallInfo
 		for _, tc := range result.ToolCalls {
 			params, err := tc.ParseArguments()
@@ -264,14 +276,24 @@ func chatLoop(ctx context.Context, b brain.Brain, messages []brain.Message, tool
 				intermediateHistory = append(intermediateHistory, toolMsg)
 				continue
 			}
-			if debug {
+			if sess.debug {
 				fmt.Fprintf(os.Stderr, "\033[2m[tool: %s %v]\033[0m\n", tc.Function.Name, params)
 			}
 			callInfos = append(callInfos, skill.ToolCallInfo{ID: tc.ID, Name: tc.Function.Name, Params: params})
 		}
-		results := skill.ExecuteToolCalls(registry, callInfos)
+
+		results := skill.ExecuteToolCalls(sess.registry, callInfos)
+
+		// Circuit breaker check
+		if tripped, tripMsg := cb.Record(results); tripped {
+			fmt.Fprintf(os.Stderr, "\033[33m%s\033[0m\n", tripMsg)
+			cbMsg := brain.Message{Role: brain.RoleUser, Content: tripMsg}
+			messages = append(messages, cbMsg)
+			intermediateHistory = append(intermediateHistory, cbMsg)
+		}
+
 		for _, r := range results {
-			if debug {
+			if sess.debug {
 				display := r.Output
 				if len(display) > 200 {
 					display = display[:200] + "..."
@@ -286,6 +308,101 @@ func chatLoop(ctx context.Context, b brain.Brain, messages []brain.Message, tool
 	return "", intermediateHistory, fmt.Errorf("too many tool call rounds (max %d)", maxToolRounds)
 }
 
+// ─── Commands ─────────────────────────────────────────────
+
+// handleCommand processes slash commands. Returns true if REPL should exit.
+func handleCommand(ctx context.Context, sess *session, input string) bool {
+	parts := strings.Fields(input)
+	cmd := parts[0]
+	arg := ""
+	if len(parts) > 1 {
+		arg = strings.Join(parts[1:], " ")
+	}
+
+	switch cmd {
+	case "/quit", "/exit":
+		fmt.Fprintln(os.Stderr, "Goodbye.")
+		return true
+
+	case "/help":
+		fmt.Print("\033[2m" +
+			"/quit      Exit\n" +
+			"/skills    List available skills\n" +
+			"/clear     Clear conversation history\n" +
+			"/info      Show soul, model, and token stats\n" +
+			"/reload    Reload current soul file\n" +
+			"/soul      List or switch soul files\n" +
+			"\033[0m")
+
+	case "/skills":
+		for _, def := range sess.toolDefs {
+			var tool struct {
+				Function struct {
+					Name        string `json:"name"`
+					Description string `json:"description"`
+				} `json:"function"`
+			}
+			json.Unmarshal(def, &tool)
+			fmt.Printf("  \033[1m%-15s\033[0m %s\n", tool.Function.Name, truncate(tool.Function.Description, 60))
+		}
+
+	case "/clear":
+		sess.history = nil
+		fmt.Println("\033[2mConversation cleared.\033[0m")
+
+	case "/info":
+		tokens := estimateTokens(sess.history)
+		fmt.Printf("\033[2m"+
+			"  Version:  %s\n"+
+			"  Soul:     %s (%s)\n"+
+			"  Brain:    %s / %s\n"+
+			"  Skills:   %d loaded\n"+
+			"  History:  %d messages (~%d tokens)\n"+
+			"\033[0m", version, sess.soul.Meta.Name, sess.soul.FilePath,
+			sess.soul.Meta.Brain.Provider, sess.soul.Meta.Brain.Model,
+			len(sess.toolDefs), len(sess.history), tokens)
+
+	case "/reload":
+		s, err := soul.LoadSoul(sess.soulPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\033[31mReload failed: %v\033[0m\n", err)
+			break
+		}
+		sess.soul = s
+		sess.registry = buildRegistry(s)
+		sess.toolDefs = sess.registry.FilteredToolDefs(s.Meta.Skills.Enable)
+		fmt.Printf("\033[2mReloaded %s (%d skills)\033[0m\n", s.Meta.Name, len(sess.toolDefs))
+
+	case "/soul":
+		if arg == "" {
+			listSouls()
+		} else {
+			path := findSoulByName(arg)
+			if path == "" {
+				fmt.Fprintf(os.Stderr, "\033[31mSoul not found: %s\033[0m\n", arg)
+				break
+			}
+			s, err := soul.LoadSoul(path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\033[31mFailed to load: %v\033[0m\n", err)
+				break
+			}
+			sess.soul = s
+			sess.soulPath = path
+			sess.registry = buildRegistry(s)
+			sess.toolDefs = sess.registry.FilteredToolDefs(s.Meta.Skills.Enable)
+			sess.history = nil
+			fmt.Printf("\033[2mSwitched to %s (%s)\033[0m\n", s.Meta.Name, path)
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "\033[31mUnknown command: %s (try /help)\033[0m\n", cmd)
+	}
+	return false
+}
+
+// ─── Helpers ──────────────────────────────────────────────
+
 func buildMessages(s *soul.Soul, history []brain.Message) []brain.Message {
 	messages := []brain.Message{{Role: brain.RoleSystem, Content: s.SystemPrompt}}
 	return append(messages, history...)
@@ -295,8 +412,7 @@ func findSoulFile(explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
-	home, _ := os.UserHomeDir()
-	for _, dir := range []string{"./souls", filepath.Join(home, ".localkin", "souls")} {
+	for _, dir := range soulDirs() {
 		entries, err := os.ReadDir(dir)
 		if err == nil {
 			for _, e := range entries {
@@ -309,14 +425,21 @@ func findSoulFile(explicit string) string {
 	return ""
 }
 
+func soulDirs() []string {
+	return []string{"./souls", filepath.Join(homeDir(), ".localkin", "souls")}
+}
+
+func homeDir() string {
+	h, _ := os.UserHomeDir()
+	return h
+}
+
 func homeSkillsDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".localkin", "skills")
+	return filepath.Join(homeDir(), ".localkin", "skills")
 }
 
 func loadOAuthToken() string {
-	home, _ := os.UserHomeDir()
-	data, err := os.ReadFile(filepath.Join(home, ".localkin", "auth.json"))
+	data, err := os.ReadFile(filepath.Join(homeDir(), ".localkin", "auth.json"))
 	if err != nil {
 		return ""
 	}
@@ -325,4 +448,54 @@ func loadOAuthToken() string {
 		return ""
 	}
 	return a.AccessToken
+}
+
+func estimateTokens(messages []brain.Message) int {
+	total := 0
+	for _, m := range messages {
+		total += len(strings.Fields(m.Content))
+	}
+	return int(float64(total) * 1.3)
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-3] + "..."
+}
+
+func listSouls() {
+	found := false
+	for _, dir := range soulDirs() {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".soul.md") {
+				name := strings.TrimSuffix(e.Name(), ".soul.md")
+				fmt.Printf("  %s  \033[2m(%s)\033[0m\n", name, filepath.Join(dir, e.Name()))
+				found = true
+			}
+		}
+	}
+	if !found {
+		fmt.Println("  \033[2mNo soul files found.\033[0m")
+	}
+}
+
+func findSoulByName(name string) string {
+	if strings.HasSuffix(name, ".soul.md") {
+		if _, err := os.Stat(name); err == nil {
+			return name
+		}
+	}
+	for _, dir := range soulDirs() {
+		path := filepath.Join(dir, name+".soul.md")
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
 }

@@ -7,19 +7,29 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
 
+// envDenylist are exact env var names to strip from shell environment.
+var envDenylist = map[string]bool{
+	"ANTHROPIC_API_KEY": true, "OPENAI_API_KEY": true,
+	"AWS_SECRET_ACCESS_KEY": true, "AWS_SESSION_TOKEN": true,
+	"GITHUB_TOKEN": true, "GH_TOKEN": true,
+	"GOOGLE_API_KEY": true, "AZURE_API_KEY": true,
+	"DATABASE_URL": true, "REDIS_URL": true,
+}
+
 func SafeEnv() []string {
 	var env []string
 	for _, e := range os.Environ() {
-		k := strings.ToUpper(strings.SplitN(e, "=", 2)[0])
-		if strings.Contains(k, "KEY") || strings.Contains(k, "SECRET") ||
-			strings.Contains(k, "TOKEN") || strings.Contains(k, "PASSWORD") {
+		k := strings.SplitN(e, "=", 2)[0]
+		if envDenylist[k] {
 			continue
 		}
 		env = append(env, e)
@@ -47,29 +57,42 @@ func (s *shellSkill) ToolDef() json.RawMessage {
 		}, []string{"command"})
 }
 
-var shellBlocklist = []string{
-	"rm -rf /", "mkfs.", "dd if=", ":(){ :|:&",
-	"shutdown", "reboot", "halt",
+// blockedPatterns are regex patterns for dangerous shell commands.
+var blockedPatterns = []*regexp.Regexp{
+	// Destructive filesystem
+	regexp.MustCompile(`rm\s+-[a-z]*r[a-z]*f[a-z]*\s+/`),
+	regexp.MustCompile(`mkfs\.`),
+	regexp.MustCompile(`dd\s+if=`),
+	regexp.MustCompile(`:\(\)\s*\{`), // fork bomb
+
+	// System control
+	regexp.MustCompile(`\b(shutdown|reboot|halt|poweroff)\b`),
+
+	// Command obfuscation / injection
+	regexp.MustCompile(`\bbash\s+-c\b`),
+	regexp.MustCompile(`\beval\s+`),
+	regexp.MustCompile(`\|\s*(bash|sh|python[23]?|perl|ruby|node)\b`),
+	regexp.MustCompile(`\bcurl\s+.*\|\s*(ba)?sh\b`),
+	regexp.MustCompile(`\bwget\s+.*\|\s*(ba)?sh\b`),
+
+	// Reverse shells / data exfiltration
+	regexp.MustCompile(`\bnc\s+-[a-z]*e\b`),
+	regexp.MustCompile(`/dev/tcp/`),
+	regexp.MustCompile(`\bbase64\s+--decode\b`),
+
+	// Sensitive paths
+	regexp.MustCompile(`\.(ssh|aws|gnupg)/`),
+	regexp.MustCompile(`\.(env|bashrc|zshrc|bash_profile)\b`),
 }
-var pipeBlocklist = []string{"bash", "sh", "python", "perl", "ruby"}
 
 func (s *shellSkill) Execute(params map[string]string) (string, error) {
 	command := params["command"]
 	if command == "" {
 		return "", fmt.Errorf("command is required")
 	}
-	lower := strings.ToLower(command)
-	for _, pat := range shellBlocklist {
-		if strings.Contains(lower, pat) {
-			return "", fmt.Errorf("blocked: dangerous command pattern '%s'", pat)
-		}
-	}
-	if idx := strings.LastIndex(lower, "|"); idx >= 0 {
-		after := strings.TrimSpace(lower[idx+1:])
-		for _, interp := range pipeBlocklist {
-			if after == interp || strings.HasPrefix(after, interp+" ") {
-				return "", fmt.Errorf("blocked: piping to %s is not allowed", interp)
-			}
+	for _, pat := range blockedPatterns {
+		if pat.MatchString(command) {
+			return "", fmt.Errorf("blocked: dangerous command pattern '%s'", pat.String())
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
@@ -249,31 +272,27 @@ func (s *webFetchSkill) Execute(params map[string]string) (string, error) {
 }
 
 func isPrivateURL(rawURL string) bool {
-	host := rawURL
-	for _, sep := range []string{"://", "/", ":"} {
-		if i := strings.Index(host, sep); i >= 0 {
-			if sep == "://" {
-				host = host[i+3:]
-			} else {
-				host = host[:i]
-			}
-		}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "" {
+		return false
 	}
 	if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" {
 		return true
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		if ips, err := net.LookupIP(host); err == nil && len(ips) > 0 {
-			ip = ips[0]
-		}
-	}
-	if ip == nil {
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
 		return false
 	}
-	for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"} {
-		if _, n, _ := net.ParseCIDR(cidr); n != nil && n.Contains(ip) {
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
 			return true
+		}
+		if ip.Equal(net.ParseIP("169.254.169.254")) {
+			return true // cloud metadata endpoint
 		}
 	}
 	return false

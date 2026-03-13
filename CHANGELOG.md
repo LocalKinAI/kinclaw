@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.0.0] - 2026-03-13
+
+### Added
+- **`web_search` skill** — DuckDuckGo web search with zero configuration. No API key needed. Returns titles, URLs, and snippets. Gated on `permissions.network`.
+- **Command history** — Up/Down arrows navigate previous commands in the REPL. Persisted to `~/.localkin/readline_history` across sessions. Consecutive dedup, 500 entry max.
+- **Circuit breaker** — Detects runaway tool loops (3 consecutive or cumulative failures per skill) and forces the LLM to stop retrying. Saves API credits.
+- **`/info` command** — Shows version, soul, model, skill count, history messages, and estimated token usage.
+- **`/reload` command** — Hot-reload the current soul file and rebuild brain + skills without restarting.
+- **`/soul` command** — List available souls (`/soul`) or switch mid-session (`/soul researcher`).
+- **Boot message** — `boot.message` in soul YAML auto-sends a prompt on startup before the REPL.
+- **`researcher.soul.md`** — Example soul optimized for web research tasks (search + fetch, no shell).
+
+### Changed
+- **Shell safety upgraded** — Regex-based blocklist replaces string matching. Catches obfuscated patterns (`bash -c`, `eval`, `rm  -rf  /`), data exfiltration (`curl | bash`, reverse shells), and sensitive path access (`.ssh/`, `.aws/`, `.env`).
+- **Environment filtering** — Explicit key denylist (ANTHROPIC_API_KEY, OPENAI_API_KEY, GITHUB_TOKEN, AWS_SECRET_ACCESS_KEY, etc.) replaces heuristic pattern matching.
+- **SSRF protection** — `isPrivateURL` rewritten with `net/url.Parse` for correctness. Now also blocks cloud metadata endpoints (169.254.169.254).
+- **`/skills` command** — Now shows skill descriptions alongside names.
+- **Version 1.0** — Stable API. Soul file format, skill interface, and CLI considered stable.
+
+### Fixed
+- **Private URL detection** — Previous string-slicing approach could misparse URLs with unusual schemes.
+
 ## [0.3.0] - 2026-03-10
 
 ### Added
