@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LocalKinAI/localkin/pkg/soul"
+	"github.com/LocalKinAI/kinclaw/pkg/soul"
 	"gopkg.in/yaml.v3"
 )
 

@@ -1,5 +1,13 @@
+github.com/LocalKinAI/input-go v0.1.0 h1:LuKWYGlDs/zRawAqDo9jI2Mn7JRlKPi9bkILlBgGnKE=
+github.com/LocalKinAI/input-go v0.1.0/go.mod h1:gDzAln9kok34Z1J22RZ5nilKmWSHubH6wvqemxLEWZE=
+github.com/LocalKinAI/kinax-go v0.1.0 h1:26BrDkfwdZvL+wEByP3AOGP/yt9IeIeZglEfE/Lfb5A=
+github.com/LocalKinAI/kinax-go v0.1.0/go.mod h1:LEq7T5C7C46Exb3iGCw/0i7Ys/5pX8mNG0LhUvpySgA=
+github.com/LocalKinAI/sckit-go v0.1.0 h1:xFYpx8EILBfbsPo5RjpFvSRO06QoETeMyvXK7xhQbkc=
+github.com/LocalKinAI/sckit-go v0.1.0/go.mod h1:BpwC1gksZIzr0c9qygHNlWvdqHvBVxglDDTOgeCLowU=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
+github.com/ebitengine/purego v0.8.0 h1:JbqvnEzRvPpxhCJzJJ2y0RbiZ8nyjccVUrSM3q+GvvE=
+github.com/ebitengine/purego v0.8.0/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
 github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e h1:ijClszYn+mADRFY17kjQEVQ1XRhq2/JR1M3sGqeJoxs=
 github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e/go.mod h1:boTsfXsheKC2y+lKOCMpSfarhxDeIzfZG1jqGcPl3cA=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LocalKinAI/localkin/pkg/brain"
+	"github.com/LocalKinAI/kinclaw/pkg/brain"
 )
 
 func openTestDB(t *testing.T) *SQLiteStore {

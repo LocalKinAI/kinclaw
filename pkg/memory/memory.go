@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LocalKinAI/localkin/pkg/brain"
+	"github.com/LocalKinAI/kinclaw/pkg/brain"
 	_ "modernc.org/sqlite"
 )
 

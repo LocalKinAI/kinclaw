@@ -29,6 +29,16 @@ type Meta struct {
 			Allow []string `yaml:"allow"`
 			Deny  []string `yaml:"deny"`
 		} `yaml:"filesystem"`
+
+		// Computer-use capabilities — the three KinClaw "claws". macOS-only;
+		// harmless flags on other platforms (skills return a clean error).
+		// Each corresponds to one KinKit library and one macOS TCC prompt:
+		//   Screen — sckit-go (ScreenCaptureKit). Triggers Screen Recording.
+		//   Input  — input-go (CGEvent). Triggers Accessibility.
+		//   UI     — kinax-go (AXUIElement). Shares Accessibility with Input.
+		Screen bool `yaml:"screen"`
+		Input  bool `yaml:"input"`
+		UI     bool `yaml:"ui"`
 	} `yaml:"permissions"`
 	Skills struct {
 		Enable    []string `yaml:"enable"`

@@ -1,193 +1,270 @@
-# LocalKin
+# KinClaw
 
-**The embodied AI microkernel. ~2300 lines of Go. Zero compromise.**
+> **The self-fissioning lobster. Breeds its own swarm on demand.**
+> 可以裂变的龙虾 — 根据需求自己造龙虾群。
 
-LocalKin is a minimal, self-evolving AI agent runtime. Define a soul, pick a brain, and let it build its own skills.
+KinClaw is a computer-use agent for macOS. It sees your screen,
+understands your UI semantically, clicks, types, and — the part no
+one else has — **reproduces on demand** via two primitives:
 
-## Quick Start
+- **Soul Clone** (`pkg/clone`) — duplicate a specialist into N
+  parallel workers with small per-clone divergence.
+- **Skill Forge** (`pkg/skill` forge) — when an existing skill
+  can't handle a task, KinClaw drafts, writes, registers, and tests
+  a new one, then retries.
+
+Single binary, ~25 MB, Go 1.22+, MIT licensed. Runs on your actual
+Mac (not in a virtualized container like Anthropic's Computer Use or
+OpenAI's Operator).
+
+> *Same starter lobster for everyone. Every user's swarm is unique
+> after a month.*
+
+KinClaw grew out of the earlier `localkin` runtime (a minimal
+embodied-AI microkernel, ~2,300 lines). This repo is that same
+skeleton with the **three claws** bolted on: eye (ScreenCaptureKit),
+hand (CGEvent), visual cortex (Accessibility API) — each via its own
+zero-cgo KinKit library.
+
+## Quick start
 
 ```bash
-go install github.com/LocalKinAI/localkin/cmd/localkin@latest
+go install github.com/LocalKinAI/kinclaw/cmd/kinclaw@latest
 
-# Login with Claude (free tier)
-localkin -login
+# Claude OAuth login (free tier works for testing)
+kinclaw -login
 
-# Run
-localkin -soul souls/coder.soul.md
+# The demo soul: a pilot that drives your Mac
+export ANTHROPIC_API_KEY=sk-ant-...
+kinclaw -soul souls/pilot.soul.md
+
+# Then ask it something like:
+# > "What app is in front? Click the Save button if there is one."
 ```
+
+First run triggers two macOS TCC prompts:
+- **Screen Recording** (for `screen` skill via sckit-go)
+- **Accessibility** (for `input` + `ui` skills via input-go + kinax-go)
+
+Grant both; rerun.
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────┐
-│              Soul (.soul.md)             │
-│  YAML config + Markdown system prompt    │
-├──────────────────────────────────────────┤
-│               Brain (LLM)               │
-│  Claude │ OpenAI │ Ollama │ Groq │ any  │
-├──────────────────────────────────────────┤
-│              Skills (Tools)              │
-│  shell │ file_read/write/edit │ web_fetch│
-│  web_search │ memory │ forge            │
-│  + any SKILL.md plugin                  │
-├──────────────────────────────────────────┤
-│           Memory (SQLite)               │
-│  Chat history + key-value store          │
-└──────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│               Soul (.soul.md)                           │
+│  YAML frontmatter + Markdown system prompt              │
+│  capabilities: screen / input / ui                      │
+├─────────────────────────────────────────────────────────┤
+│                   Brain (LLM)                           │
+│  Claude · OpenAI · Ollama · Groq · DeepSeek · any       │
+├─────────────────────────────────────────────────────────┤
+│                     Skills (Tools)                      │
+│  shell · file_read/write/edit · web_fetch · web_search  │
+│  forge  (self-generate new skills)                      │
+│                                                         │
+│  ─── The three claws ───                                │
+│  screen ─ eye          ─► sckit-go  (ScreenCaptureKit)  │
+│  input  ─ hand         ─► input-go  (CGEvent)           │
+│  ui     ─ visual cortex─► kinax-go  (Accessibility API) │
+│                                                         │
+├─────────────────────────────────────────────────────────┤
+│              Fission primitives                         │
+│  clone  (Soul Clone)     — duplicate N specialists      │
+│  forge  (Skill Forge)    — author new skills from fail. │
+├─────────────────────────────────────────────────────────┤
+│            Memory (SQLite per session)                  │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Soul File
+### KinKit — the open-source claws
 
-A `.soul.md` file is all you need. YAML frontmatter for config, Markdown body for personality:
+All four sibling libraries are MIT, zero cgo, `go install`-able:
+
+| Library | Role | Dylib |
+|---------|------|-------|
+| [sckit-go](https://github.com/LocalKinAI/sckit-go) | ScreenCaptureKit — screenshots + live streams | ~130 KB |
+| [kinrec](https://github.com/LocalKinAI/kinrec) | Screen + audio recorder (MP4, h264/hevc) | ~130 KB |
+| [input-go](https://github.com/LocalKinAI/input-go) | CGEvent mouse + keyboard synthesis | ~85 KB |
+| [kinax-go](https://github.com/LocalKinAI/kinax-go) | Accessibility API UI tree access | ~88 KB |
+
+Each uses the **embedded dylib pattern** (`purego` + `//go:embed`),
+so downstream users never need `clang` or `CGO_ENABLED`. See
+[Paper #9 on localkin.dev](https://www.localkin.dev/papers/embedded-dylib)
+for the full architectural story.
+
+## Soul schema
+
+A soul file is YAML frontmatter + a Markdown system prompt.
 
 ```yaml
 ---
-name: "Coder"
+name: "KinClaw Pilot"
 brain:
-  provider: "claude"        # claude | openai | ollama
-  model: "claude-sonnet-4-6"
+  provider: "claude"
+  model: "claude-sonnet-4-5"
+  api_key: "$ANTHROPIC_API_KEY"
 permissions:
-  shell: true               # can it run commands?
-  network: true             # can it fetch URLs and search the web?
+  shell: false
+  network: false
+  screen: true       # sckit-go capability
+  input: true        # input-go capability
+  ui: true           # kinax-go capability
 skills:
-  enable: ["shell", "file_read", "file_write", "web_search"]
-boot:
-  message: "Check system status"  # optional: auto-execute on startup
+  enable: ["screen", "input", "ui", "file_read"]
 ---
-# Coder
-You are a senior software engineer. Write clean, working code.
+
+# You are KinClaw Pilot...
 ```
 
-## Features
+The `screen / input / ui` bits are the KinClaw addition. Each
+corresponds to one TCC prompt and one KinKit library. If a bit is
+false, the matching skill returns `permission denied: soul does not
+grant X capability` regardless of what the LLM asks for.
 
-**Dual LLM Engine** — Claude Messages API + OpenAI Chat Completions API. One interface, any provider. Ollama, DeepSeek, Groq — anything OpenAI-compatible works out of the box.
+## The three claws in action
 
-**9 Native Skills** — Shell execution (with regex safety blocklist), file read/write/edit, web search (DuckDuckGo, no API key needed), web fetch (with SSRF protection), persistent memory, and forge (self-evolution).
+### `ui` — semantic UI control (the killer feature)
 
-**Web Search** — `web_search` lets your agent find information on the internet. Zero configuration — powered by DuckDuckGo, no API key required.
+Click a button by its **title**, not pixel coordinates. This is what
+makes KinClaw different from Computer Use / Operator, which look at
+screenshots and guess.
 
-**SKILL.md Plugins** — Drop a `SKILL.md` in `./skills/` or `~/.localkin/skills/` and it's instantly available. No code changes. No recompilation.
+```
+user: Click "Save"
+LLM:  ui action=click role=AXButton title=Save
+      → clicked AXButton "Save" (matched role=AXButton title="Save")
+```
 
-**Forge** — The agent can create new skills at runtime. It writes a `SKILL.md`, registers it, and starts using it — in the same conversation.
+Other `ui` actions: `focused_app`, `tree` (dump the AX tree),
+`find` (list matching elements), `read` (read element value),
+`at_point` (hit-test a coordinate).
 
-**Circuit Breaker** — Detects when a skill keeps failing (3 consecutive or cumulative) and forces the LLM to stop retrying. Saves your API credits from runaway tool loops.
+### `input` — raw mouse + keyboard
 
-**Command History** — Up/Down arrows navigate previous commands. History persists to `~/.localkin/readline_history` across sessions.
+When there's no AX element (canvas apps, games, some WebGL), fall
+back to coordinates:
 
-**Interactive REPL** — `/info` shows token stats, `/reload` hot-reloads your soul file, `/soul` switches agents mid-session. Full CJK character support.
+```
+LLM: input action=click x=842 y=523
+LLM: input action=type text="hello 世界 👋"
+LLM: input action=hotkey mods="cmd+shift" key="t"
+```
 
-**Boot Message** — Set `boot.message` in your soul to auto-execute a prompt on startup. Great for status checks and initialization.
+### `screen` — just take a picture
 
-**Permission Gates** — `shell: false` blocks shell + forge. `network: false` blocks web_fetch + web_search. `skills.enable` whitelists which tools the LLM can see.
+```
+LLM: screen action=screenshot
+     → ~/Library/Caches/kinclaw/screens/screen-20260424-001312.000.png
+```
 
-**SQLite Memory** — Conversations persist across sessions. Key-value memory lets the agent remember facts long-term.
+The LLM can then read the PNG back (if `file_read` is enabled) and
+reason about it visually.
 
-**Claude OAuth** — `localkin -login` opens your browser, authenticates via PKCE, and saves the token. Same flow as Claude Code.
+## Soul Clone (fission primitive #1)
 
-## Usage
+```go
+import (
+    "github.com/LocalKinAI/kinclaw/pkg/clone"
+    "github.com/LocalKinAI/kinclaw/pkg/soul"
+)
+
+// Make 10 parallel email readers, each assigned one email.
+paths, _ := clone.Clone("souls/email_reader.soul.md", clone.CloneOptions{
+    Count: 10,
+    FrontmatterPatch: func(i int, meta *soul.Meta) {
+        meta.Name = fmt.Sprintf("Email Reader #%d", i)
+    },
+})
+// Clones land next to the parent, discovered on /reload.
+```
+
+Cheap (kilobytes), fast (milliseconds), no model calls. Task
+fission becomes an N-way parallel tool invocation.
+
+## Skill Forge (fission primitive #2)
+
+Inherited from the `localkin` base. When the LLM asks for a skill
+that doesn't exist, `forge` drafts a `SKILL.md` + implementation
+script, validates syntax, registers it in the live registry, and
+retries the original task. See `pkg/skill/native.go` for the forge
+skill.
+
+## CLI reference
+
+```
+kinclaw -soul PATH         Launch REPL with a specific soul
+kinclaw -soul PATH -exec S Run one message, print response, exit
+kinclaw -login             Claude OAuth PKCE (Max subscription)
+kinclaw -login-openai      OpenAI API key setup
+kinclaw -soul PATH -debug  Print tool calls & raw API traffic
+
+In-REPL commands:
+  /soul [name]     List / switch soul files
+  /reload          Re-read the current soul + discover new skills
+  /skills          List active skills
+  /history         Show session messages
+  /info            Version / soul / model / skill count / tokens
+  /quit            Exit
+```
+
+## Not in v0.1 scope
+
+This is the computer-use skeleton. The full "self-fissioning swarm"
+vision layers these on top later:
+
+- **Conductor** — multi-clone orchestration (pick N, assign, reconvene).
+- **Genesis Protocol** — generate new specialist souls from a knowledge
+  corpus (YouTube / PDF / doc site → new expert). Lives in LocalKin's
+  private commercial engine today; partial open-source release TBD.
+- **Observer subscriptions** (kinax-go v0.2) — react to UI change
+  events rather than poll.
+- **Cross-window coordination** — two KinClaws across two displays.
+- **Undo layer** — record every OS-touching action so it can be
+  reversed.
+
+Each happens when the v0.1 pilot has real users filing real issues.
+
+## Why not Computer Use / Operator?
+
+Both of those products are architecturally single agents with a
+fixed toolbelt, clicking around a virtualized browser in Anthropic's
+or OpenAI's infrastructure. KinClaw:
+
+- **Runs on your actual Mac**, not a container. macOS native
+  (ScreenCaptureKit, CGEvent, Accessibility) rather than a
+  virtualized X11.
+- **Go, not Python** — single binary, no `pip install` drift, no
+  environment setup.
+- **Swarm, not singleton** — Soul Clone is table stakes.
+- **Local-first brain option** — Ollama / Qwen3-VL for
+  privacy-sensitive tasks.
+- **Self-forges skills** — when a skill doesn't exist, it's written
+  and registered at runtime. No competitor has this.
+
+None of this is magic; it's boring engineering applied consistently.
+
+## Contributing
 
 ```bash
-# Interactive REPL
-localkin -soul souls/my-agent.soul.md
-
-# Single command (pipe-friendly)
-localkin -soul souls/my-agent.soul.md -exec "what files are in this directory?"
-
-# Debug mode (shows tool calls)
-localkin -soul souls/my-agent.soul.md -debug
-
-# Login to Claude
-localkin -login
-
-# Show version
-localkin -version
+git clone https://github.com/LocalKinAI/kinclaw
+cd kinclaw
+go build -o kinclaw ./cmd/kinclaw
+go test ./...
 ```
 
-### REPL Commands
-
-| Command | Action |
-|---------|--------|
-| `/quit` | Exit |
-| `/skills` | List available skills with descriptions |
-| `/clear` | Clear conversation history |
-| `/info` | Show soul, model, skill count, and token usage |
-| `/reload` | Hot-reload current soul file |
-| `/soul` | List souls or switch: `/soul researcher` |
-| `/help` | Show help |
-
-## Souls
-
-```bash
-# Claude with full access
-localkin -soul souls/coder.soul.md
-
-# Web researcher (search + fetch, no shell)
-localkin -soul souls/researcher.soul.md
-
-# Locked down — read-only, no shell, no network
-localkin -soul souls/locked.soul.md
-
-# Local Ollama (zero cloud dependency)
-localkin -soul souls/ollama.soul.md
-
-# OpenAI GPT-4o
-OPENAI_API_KEY=sk-xxx localkin -soul souls/openai.soul.md
-
-# DeepSeek (cheap coding model)
-DEEPSEEK_API_KEY=sk-xxx localkin -soul souls/deepseek.soul.md
-
-# Groq Cloud (free Llama, blazing fast)
-GROQ_API_KEY=gsk_xxx localkin -soul souls/groq.soul.md
-```
-
-## Creating Skills
-
-Create `./skills/greet/SKILL.md`:
-
-```yaml
----
-name: greet
-description: Greet someone by name
-command: [echo, "Hello, {{name}}!"]
-schema:
-  name:
-    type: string
-    description: Name to greet
-    required: true
----
-```
-
-The agent can now use the `greet` tool. Or better — let the agent forge its own skills with the `forge` tool.
-
-## API Key Resolution
-
-LocalKin checks for API keys in this order:
-
-1. `brain.api_key` in the soul file (supports `$ENV_VAR` syntax)
-2. Environment variable (`$ANTHROPIC_API_KEY` or `$OPENAI_API_KEY`)
-3. OAuth token from `~/.localkin/auth.json` (Claude only, via `localkin -login`)
-
-## Security
-
-- **Regex shell blocklist**: Catches obfuscated patterns like `rm  -rf  /`, `bash -c`, `eval`, reverse shells (`nc -e`, `/dev/tcp/`)
-- **Pipe detection**: `curl ... | bash`, `| python`, `| sh` patterns are blocked
-- **Sensitive path protection**: `.ssh/`, `.aws/`, `.env`, `.bashrc` access is blocked
-- **Env filtering**: Known API keys (ANTHROPIC, OPENAI, AWS, GitHub) are stripped from subprocess environments
-- **SSRF protection**: Private IPs, localhost, and cloud metadata endpoints are blocked in web_fetch
-- **Prompt injection defense**: Web content is wrapped in `UNTRUSTED WEB CONTENT` markers
-- **Circuit breaker**: Prevents runaway tool loops from burning API credits
-- **Permission gates**: Shell and network access are opt-in per soul file
-
-## Project Stats
-
-| | |
-|---|---|
-| **Source code** | ~2300 lines (non-test Go) |
-| **Tests** | ~140 tests across 6 packages |
-| **Dependencies** | yaml, sqlite, term |
-| **Binary size** | ~15 MB |
-| **Packages** | 6 (brain, skill, soul, memory, auth, cmd) |
+A soul file that does something interesting is the best first
+contribution. PRs adding `souls/community/<your_name>.soul.md`
+welcome.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+MIT. See `LICENSE`.
+
+## See also
+
+- The four KinKit libraries (table above).
+- [LocalKin.dev papers](https://www.localkin.dev/papers) —
+  architectural essays: Grep Retrieval, Thin Soul + Fat Skill,
+  Autonomous Heart, Embedded Dylib (paper #9 explains this repo's
+  claw layer), more.

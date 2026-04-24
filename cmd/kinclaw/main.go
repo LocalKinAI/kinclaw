@@ -10,15 +10,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/LocalKinAI/localkin/pkg/auth"
-	"github.com/LocalKinAI/localkin/pkg/brain"
-	"github.com/LocalKinAI/localkin/pkg/memory"
-	"github.com/LocalKinAI/localkin/pkg/skill"
-	"github.com/LocalKinAI/localkin/pkg/soul"
+	"github.com/LocalKinAI/kinclaw/pkg/auth"
+	"github.com/LocalKinAI/kinclaw/pkg/brain"
+	"github.com/LocalKinAI/kinclaw/pkg/memory"
+	"github.com/LocalKinAI/kinclaw/pkg/skill"
+	"github.com/LocalKinAI/kinclaw/pkg/soul"
 )
 
 const (
-	version       = "1.0.0"
+	version       = "2.0.0"
 	maxToolRounds = 20
 )
 
@@ -44,7 +44,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("localkin %s\n", version)
+		fmt.Printf("kinclaw %s\n", version)
 		return
 	}
 	if *login {
@@ -103,7 +103,7 @@ func newSession(soulPath string, debug bool) (*session, error) {
 	if apiKey == "" && s.Meta.Brain.Provider != "ollama" {
 		msg := "Error: API key not set. Set brain.api_key in soul file or $ANTHROPIC_API_KEY / $OPENAI_API_KEY"
 		if s.Meta.Brain.Provider == "claude" {
-			msg += "\n  Tip: run 'localkin -login' to authenticate with Claude (free tier)"
+			msg += "\n  Tip: run 'kinclaw -login' to authenticate with Claude (free tier)"
 		}
 		return nil, fmt.Errorf("%s", msg)
 	}
@@ -149,6 +149,12 @@ func buildRegistry(s *soul.Soul) *skill.Registry {
 		reg.Register(skill.NewWebFetchSkill())
 		reg.Register(skill.NewWebSearchSkill())
 	}
+	// KinClaw computer-use claws — macOS only; each gated by its own bit.
+	// On non-darwin builds these register no-op skills that return a clean
+	// "macOS-only" error.
+	reg.Register(skill.NewScreenSkill(s.Meta.Permissions.Screen, s.Meta.Skills.OutputDir))
+	reg.Register(skill.NewInputSkill(s.Meta.Permissions.Input))
+	reg.Register(skill.NewUISkill(s.Meta.Permissions.UI))
 	for _, dir := range []string{skillsDir, homeSkillsDir()} {
 		exts, _ := skill.LoadExternalSkills(dir)
 		for _, ext := range exts {
