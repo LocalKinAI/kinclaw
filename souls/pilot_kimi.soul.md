@@ -5,7 +5,6 @@ version: "0.2.0"
 brain:
   provider: "ollama"
   model: "kimi-k2.6:cloud"
-  endpoint: "https://ollama.com"
   temperature: 0.3
   context_length: 131072
 

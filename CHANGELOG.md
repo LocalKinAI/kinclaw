@@ -1,11 +1,19 @@
 # Changelog
 
-## [2.0.0] - 2026-04-24
+## [1.1.0] - 2026-04-24
 
-**The lobster is born.** `localkin` renamed to **KinClaw** and
-extended with the three computer-use claws and the first fission
-primitive (Soul Clone). Same minimal core (~2,300 lines of runtime)
-+ ~1,500 lines of claw + clone code.
+**The claws grow in.** `localkin` renamed to **KinClaw** and extended
+with the three computer-use claws + the first fission primitive
+(Soul Clone) + a `~` expansion fix and full-stack pilot souls. Same
+minimal core (~2,300 lines of runtime) + ~1,500 lines of claw +
+clone + upgrade.
+
+*On the version number: this was originally shipped as 2.0.0 → 2.0.1
+but Go's Semantic Import Versioning requires v2+ modules to carry a
+`/v2` suffix in the import path. Since KinClaw 1.1 is purely additive
+over localkin 1.0 (no breaking API changes), collapsing back to a
+minor bump on the v1 line is the correct move. The v2.0.0 / v2.0.1
+tags were deleted before anyone relied on them.*
 
 ### Rename
 
@@ -56,11 +64,35 @@ primitive (Soul Clone). Same minimal core (~2,300 lines of runtime)
 
 ### Added — souls
 
-- **`souls/pilot.soul.md`** — the first KinClaw soul that actually
-  drives the computer. Claude Sonnet 4.5 brain, shell+network off,
-  screen+input+ui on. Includes guardrails (never type passwords,
-  never send messages/commits, never bypass "are you sure"
-  dialogs) and a first-run ritual that verifies each claw.
+- **`souls/pilot.soul.md`** — Claude Sonnet 4.5 pilot. Full 10-skill
+  stack (screen/input/ui/shell/file_read/file_write/file_edit/
+  web_fetch/web_search/forge). Guardrails in system prompt (never
+  type passwords, never send/commit without in-turn consent, never
+  bypass "are you sure" dialogs, no sudo, no curl-pipe-sh, no
+  writing to ~/.ssh ~/.aws ~/.config/gcloud). First-run ritual
+  that verifies each claw + shell + lists existing forged skills.
+- **`souls/pilot_kimi.soul.md`** — same guardrails + skill stack
+  but running Kimi K2.6 via Ollama Cloud (`provider: ollama`,
+  `model: kimi-k2.6:cloud`). Chinese-leaning style.
+
+### Added — Makefile
+
+- `make sign` — rebuild + sign with stable `com.localkinai.kinclaw`
+  adhoc identifier. TCC grants (Screen Recording, Accessibility)
+  key off the identifier, so a stable one means the macOS permission
+  entry survives every rebuild.
+- `make run` / `make run-claude` / `make tcc-reset` / `make clean`.
+
+### Fixed
+
+- **`~` / `~/...` in `output_dir`** was being treated as a literal
+  directory name (Go's filepath package doesn't expand tildes — shells
+  do). Added `expandHome` helper in `pkg/skill/screen.go`. Before this
+  fix, screenshots from pilot souls landed in `./~/Library/...` under
+  the kinclaw cwd instead of `$HOME/Library/Caches/kinclaw/pilot/`.
+- Screenshot tool result is now formatted across three lines
+  (`path:`, `dimensions:`, `display_id:`) so LLMs that summarize
+  can't accidentally drop the file path.
 
 ### Dependencies
 
