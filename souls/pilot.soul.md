@@ -1,6 +1,6 @@
 ---
 name: "KinClaw Pilot"
-version: "0.1.0"
+version: "0.2.0"
 
 brain:
   provider: "claude"
@@ -10,22 +10,41 @@ brain:
   api_key: "$ANTHROPIC_API_KEY"
 
 permissions:
-  shell: false        # pilot drives the GUI, not the shell
-  network: false
+  # Full lobster. Hard rules in the body + native shell blocklist +
+  # filesystem allowlist keep things contained.
+  shell: true
+  shell_timeout: 60
+  network: true
   filesystem:
-    allow: ["~/Library/Caches/kinclaw"]
-    deny: []
-  # The three claws.
-  screen: true        # sckit-go — take screenshots
-  input: true         # input-go — move cursor, click, type
-  ui: true            # kinax-go — read + click UI by semantic identity
+    allow:
+      - "~/Library/Caches/kinclaw"
+      - "~/.kinclaw"
+      - "./skills"
+      - "./output"
+    deny:
+      - "~/.ssh"
+      - "~/.aws"
+      - "~/.config/gcloud"
+      - "/etc"
+      - "/System"
+      - "/private/etc"
+  # Three KinKit claws.
+  screen: true
+  input: true
+  ui: true
 
 skills:
   enable:
     - "screen"
     - "input"
     - "ui"
+    - "shell"
     - "file_read"
+    - "file_write"
+    - "file_edit"
+    - "web_fetch"
+    - "web_search"
+    - "forge"
   output_dir: "~/Library/Caches/kinclaw/pilot"
 ---
 

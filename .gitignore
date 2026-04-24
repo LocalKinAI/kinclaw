@@ -1,7 +1,11 @@
-# Binary
+# Binaries
+/kinclaw
 /localkin
 dist/
 *.exe
+
+# Accidental tilde dir from un-expanded ~ path (pre-2.0.1 bug)
+/~/
 
 # OS
 .DS_Store

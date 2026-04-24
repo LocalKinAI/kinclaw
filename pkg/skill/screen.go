@@ -25,6 +25,7 @@ type screenSkill struct {
 // NewScreenSkill returns a skill that captures the macOS screen. If
 // allowed is false, Execute returns a permission error. outputDir is
 // where PNG files land; empty means ~/Library/Caches/kinclaw/screens/.
+// Leading "~" and "~/" in outputDir are expanded to the user's home.
 func NewScreenSkill(allowed bool, outputDir string) Skill {
 	if outputDir == "" {
 		base, _ := os.UserCacheDir()
@@ -33,7 +34,28 @@ func NewScreenSkill(allowed bool, outputDir string) Skill {
 		}
 		outputDir = filepath.Join(base, "kinclaw", "screens")
 	}
+	outputDir = expandHome(outputDir)
 	return &screenSkill{allowed: allowed, outputDir: outputDir}
+}
+
+// expandHome replaces a leading "~" or "~/" in p with the user's home
+// directory. A literal "~" as a filename (e.g. "~foo") is left alone.
+// Go's os/filepath doesn't do this — shells do, and CLI users expect it.
+func expandHome(p string) string {
+	if p == "" || p[0] != '~' {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	if len(p) > 1 && (p[1] == '/' || p[1] == filepath.Separator) {
+		return filepath.Join(home, p[2:])
+	}
+	return p
 }
 
 func (s *screenSkill) Name() string { return "screen" }
@@ -155,6 +177,8 @@ func (s *screenSkill) screenshot(ctx context.Context, params map[string]string) 
 	}
 
 	bounds := img.Bounds()
-	return fmt.Sprintf("screenshot saved: %s (%dx%d, display_id=%d)",
+	// Lead with the path on its own line so LLMs that like to summarize
+	// can't accidentally drop it.
+	return fmt.Sprintf("path: %s\ndimensions: %dx%d\ndisplay_id: %d",
 		outPath, bounds.Dx(), bounds.Dy(), target.ID), nil
 }
