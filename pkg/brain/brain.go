@@ -357,8 +357,13 @@ type oaiReq struct {
 	Tools       []json.RawMessage `json:"tools,omitempty"`
 }
 type oaiMsg struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
+	Role    string `json:"role"`
+	// NOTE: `content` must always serialize, even as "". OpenAI's own
+	// endpoint tolerates a missing content field for assistant messages
+	// with tool_calls, but Ollama Cloud / Kimi K2.x's OpenAI adapter
+	// strictly requires the field to exist — missing → "invalid message
+	// content type: <nil>" HTTP 400. So: no `omitempty` here.
+	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
