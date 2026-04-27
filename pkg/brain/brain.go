@@ -46,6 +46,16 @@ type Message struct {
 	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
+	// Images: paths to image files (PNG/JPEG/GIF/WebP) that should be
+	// attached to this message when sent to a vision-capable brain.
+	// The brain adapter base64-encodes the file and inlines it as an
+	// image_url content block (OpenAI) or image source block (Claude).
+	// Skills opt in by including `image://<path>` markers in their text
+	// output; the registry's ExecuteToolCalls strips the markers and
+	// populates the ToolResult.Images list, which chatLoop then copies
+	// into brain.Message.Images. Brains that don't support vision can
+	// safely ignore the field — the model just doesn't see the pixels.
+	Images []string `json:"-"`
 }
 
 type ToolCall struct {
@@ -117,7 +127,22 @@ type cBlock struct {
 	Name      string      `json:"name,omitempty"`
 	Input     interface{} `json:"input,omitempty"`
 	ToolUseID string      `json:"tool_use_id,omitempty"`
-	Content   string      `json:"content,omitempty"`
+	// `content` on a tool_result block accepts either a string (legacy
+	// text-only) or an array of blocks (multimodal: text + image).
+	// Type is interface{} so we can switch based on whether images are
+	// attached.
+	Content interface{}   `json:"content,omitempty"`
+	Source  *cImageSource `json:"source,omitempty"`
+}
+
+// cImageSource is the body of a Claude `image` block. Currently only
+// base64 inline is supported; URL-based image references are an
+// Anthropic API option but require the URL to be reachable from
+// Anthropic's servers, which doesn't apply to local screenshots.
+type cImageSource struct {
+	Type      string `json:"type"`       // always "base64"
+	MediaType string `json:"media_type"` // image/png · image/jpeg · etc.
+	Data      string `json:"data"`       // raw base64, no `data:` prefix
 }
 type cResp struct {
 	Content []cBlock `json:"content"`
@@ -161,10 +186,35 @@ func (b *claudeBrain) Chat(ctx context.Context, messages []Message, tools []json
 			}
 			convMsgs = append(convMsgs, cMsg{Role: "assistant", Content: blocks})
 		case m.Role == RoleTool:
+			// Build the tool_result block. If the message has attached
+			// images, content becomes an array of [text, image, image, …]
+			// instead of the bare string Claude accepts when there's no
+			// multimedia. Vision-capable models (Sonnet/Opus 3.5+, Haiku
+			// 3.5+) read the images alongside the text result.
+			var toolResultContent interface{}
+			if len(m.Images) > 0 {
+				inner := make([]cBlock, 0, 1+len(m.Images))
+				if m.Content != "" {
+					inner = append(inner, cBlock{Type: "text", Text: m.Content})
+				}
+				for _, p := range m.Images {
+					mt, b64, err := imageToBase64(p)
+					if err != nil {
+						continue // skip unreadable / unsupported
+					}
+					inner = append(inner, cBlock{
+						Type:   "image",
+						Source: &cImageSource{Type: "base64", MediaType: mt, Data: b64},
+					})
+				}
+				toolResultContent = inner
+			} else {
+				toolResultContent = m.Content
+			}
 			convMsgs = append(convMsgs, cMsg{
 				Role: "user",
 				Content: []cBlock{{
-					Type: "tool_result", ToolUseID: m.ToolCallID, Content: m.Content,
+					Type: "tool_result", ToolUseID: m.ToolCallID, Content: toolResultContent,
 				}},
 			})
 		default:
@@ -357,15 +407,33 @@ type oaiReq struct {
 	Tools       []json.RawMessage `json:"tools,omitempty"`
 }
 type oaiMsg struct {
-	Role    string `json:"role"`
-	// NOTE: `content` must always serialize, even as "". OpenAI's own
-	// endpoint tolerates a missing content field for assistant messages
-	// with tool_calls, but Ollama Cloud / Kimi K2.x's OpenAI adapter
-	// strictly requires the field to exist — missing → "invalid message
-	// content type: <nil>" HTTP 400. So: no `omitempty` here.
-	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role string `json:"role"`
+	// `content` must always serialize, even as "". OpenAI's own endpoint
+	// tolerates a missing content field for assistant messages with
+	// tool_calls, but Ollama Cloud / Kimi K2.x's OpenAI adapter strictly
+	// requires the field to exist — missing → "invalid message content
+	// type: <nil>" HTTP 400. So: no `omitempty`.
+	//
+	// Type is `interface{}` because the OpenAI vision API accepts content
+	// as either a plain string OR an array of content blocks. We send a
+	// string when there are no images attached (preserves the existing
+	// wire format for text-only flows) and an array of `oaiContentBlock`
+	// when images are attached (text + image_url blocks).
+	Content    interface{} `json:"content"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
+}
+
+// oaiContentBlock is a single element of a multimodal content array.
+// type=text uses Text; type=image_url uses ImageURL.
+type oaiContentBlock struct {
+	Type     string       `json:"type"`
+	Text     string       `json:"text,omitempty"`
+	ImageURL *oaiImageURL `json:"image_url,omitempty"`
+}
+
+type oaiImageURL struct {
+	URL string `json:"url"` // data:image/png;base64,...
 }
 type oaiResp struct {
 	Choices []struct {
@@ -393,9 +461,36 @@ type oaiResp struct {
 func (b *openAIBrain) Chat(ctx context.Context, messages []Message, tools []json.RawMessage, onChunk StreamFunc) (*ChatResult, error) {
 	var oaiMsgs []oaiMsg
 	for _, m := range messages {
-		msg := oaiMsg{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID}
+		msg := oaiMsg{Role: m.Role, ToolCallID: m.ToolCallID}
 		if len(m.ToolCalls) > 0 {
 			msg.ToolCalls = m.ToolCalls
+		}
+		// If the message has attached images, build a multimodal content
+		// array. Otherwise keep the simple string content for backward
+		// compatibility with strict OpenAI-compat servers (Ollama Cloud,
+		// Groq, etc. that may not all accept array content for every role).
+		if len(m.Images) > 0 {
+			blocks := make([]oaiContentBlock, 0, 1+len(m.Images))
+			if m.Content != "" {
+				blocks = append(blocks, oaiContentBlock{Type: "text", Text: m.Content})
+			}
+			for _, p := range m.Images {
+				url, err := imageToDataURL(p)
+				if err != nil {
+					// Don't fail the whole request — just skip the
+					// unreadable / unsupported image and continue.
+					// The text content still describes what should be
+					// attached, so the model has SOME context.
+					continue
+				}
+				blocks = append(blocks, oaiContentBlock{
+					Type:     "image_url",
+					ImageURL: &oaiImageURL{URL: url},
+				})
+			}
+			msg.Content = blocks
+		} else {
+			msg.Content = m.Content
 		}
 		oaiMsgs = append(oaiMsgs, msg)
 	}
