@@ -32,7 +32,7 @@ func (s *uiSkill) Description() string {
 		"identifier) via the Accessibility API. Prefer this over 'input click " +
 		"at x,y' whenever the element has an AX title — it's faster, reliable " +
 		"across resolutions, and survives app-layout changes. Actions: " +
-		"focused_app, tree, find, click, read, at_point. Requires macOS " +
+		"focused_app, tree, find, click, click_sequence, read, at_point. Requires macOS " +
 		"Accessibility permission."
 }
 
@@ -41,7 +41,7 @@ func (s *uiSkill) ToolDef() json.RawMessage {
 		map[string]map[string]string{
 			"action": {
 				"type":        "string",
-				"description": "focused_app | tree | find | click | read | at_point",
+				"description": "focused_app | tree | find | click | click_sequence | read | at_point",
 			},
 			"bundle_id": {
 				"type":        "string",
@@ -61,9 +61,29 @@ func (s *uiSkill) ToolDef() json.RawMessage {
 				"type":        "string",
 				"description": "AXIdentifier — stable automation ID set by app developer",
 			},
+			"description": {
+				"type":        "string",
+				"description": "AXDescription — short human-readable label, used by icon/symbol buttons that have no AXTitle (media play/pause, toolbar icons, dialpads, map zoom controls, calculator number keys, etc.). Check the `desc=...` column in `ui tree` output to find the right value.",
+			},
 			"depth": {"type": "integer", "description": "Search depth (default 20 for find/click, 6 for tree)"},
 			"x":     {"type": "number", "description": "X (for at_point)"},
 			"y":     {"type": "number", "description": "Y (for at_point)"},
+			"titles": {
+				"type":        "string",
+				"description": "For click_sequence: comma-separated AXButton titles to click in order. Whole sequence runs in ONE tool call — saves N round-trips for multi-button flows.",
+			},
+			"identifiers": {
+				"type":        "string",
+				"description": "For click_sequence: comma-separated AXIdentifiers — most reliable when the app exposes them.",
+			},
+			"descriptions": {
+				"type":        "string",
+				"description": "For click_sequence: comma-separated AXDescriptions — the right field for icon/symbol buttons (media controls, toolbar icons, dialpads, calculator-style number keys, etc.). Read the desc=... column from `ui tree` first.",
+			},
+			"force": {
+				"type":        "string",
+				"description": "Bypass click safety guards (true/false). Default false. The ui click action refuses by default to (a) act when the matcher hits 2+ elements, and (b) press destructive targets like AXCloseButton / 'Quit' / '关闭'. Pass force=true only after you've inspected the candidates with a 'find' first and you really mean to click.",
+			},
 		}, []string{"action"})
 }
 
@@ -88,6 +108,8 @@ func (s *uiSkill) Execute(params map[string]string) (string, error) {
 		return s.find(params, false)
 	case "click":
 		return s.find(params, true)
+	case "click_sequence":
+		return s.clickSequence(params)
 	case "read":
 		return s.read(params)
 	case "at_point":
@@ -140,10 +162,28 @@ func dumpTree(sb *strings.Builder, e *kinax.Element, indent, maxDepth int) {
 	role, _ := e.Role()
 	title, _ := e.Title()
 	id, _ := e.Identifier()
+	desc, _ := e.Description()
+	value, _ := e.Value()
 	pad := strings.Repeat("  ", indent)
 	line := pad + role
 	if title != "" {
 		line += fmt.Sprintf(" %q", title)
+	}
+	// Description is the matcher of choice for icon / symbol buttons
+	// where title is empty (Calculator number keys, media controls,
+	// toolbar icons). Showing it here makes the LLM's tree-reading
+	// step actually informative — earlier dumps hid this and led to
+	// "no usable matcher, fall back to input type" wrong calls.
+	if desc != "" && desc != title {
+		line += fmt.Sprintf(" desc=%q", desc)
+	}
+	// AXValue holds the *current displayed text* of static text
+	// readouts (Calculator's display, status labels, sliders, text
+	// fields). Without this column, verification after an action
+	// required a separate `ui read` call that often hit the wrong
+	// element. With it, a single re-tree shows what changed.
+	if value != "" && value != title && value != desc {
+		line += fmt.Sprintf(" value=%q", truncateValue(value))
 	}
 	if id != "" {
 		line += fmt.Sprintf(" [%s]", id)
@@ -177,6 +217,10 @@ func (s *uiSkill) matcher(params map[string]string) (kinax.Matcher, string, erro
 		matchers = append(matchers, kinax.MatchTitleContains(tc))
 		desc = append(desc, fmt.Sprintf("title~%q", tc))
 	}
+	if d := params["description"]; d != "" {
+		matchers = append(matchers, matchDescription(d))
+		desc = append(desc, fmt.Sprintf("desc=%q", d))
+	}
 	if id := params["identifier"]; id != "" {
 		matchers = append(matchers, kinax.MatchIdentifier(id))
 		desc = append(desc, "id="+id)
@@ -199,35 +243,295 @@ func (s *uiSkill) find(params map[string]string, clickFirst bool) (string, error
 		return "", err
 	}
 	depth := atoiDefault(params["depth"], 20)
+	force := parseBoolParam(params["force"], false)
 
-	if clickFirst {
-		el, ok := app.FindFirst(m, depth)
-		if !ok {
-			return "", fmt.Errorf("no element matching %s", desc)
+	hits := app.FindAll(m, depth)
+
+	// `find` (clickFirst=false): observation-only. List everything, no
+	// safety checks — the LLM is supposed to look before acting.
+	if !clickFirst {
+		defer closeAll(hits)
+		if len(hits) == 0 {
+			return fmt.Sprintf("no elements matching %s", desc), nil
 		}
-		defer el.Close()
-		if err := el.Perform(kinax.ActionPress); err != nil {
-			return "", fmt.Errorf("AXPress: %w", err)
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%d match(es) for %s:\n", len(hits), desc))
+		for _, h := range hits {
+			r, _ := h.Role()
+			t, _ := h.Title()
+			id, _ := h.Identifier()
+			d, _ := h.Description()
+			v, _ := h.Value()
+			// Output schema: role / title / desc / value / [id].
+			// Showing desc + value inline means a single `ui find` call
+			// is also a read — no separate `ui read` round-trip needed
+			// to grab a value off the matched element.
+			parts := []string{r}
+			if t != "" {
+				parts = append(parts, fmt.Sprintf("title=%q", t))
+			}
+			if d != "" && d != t {
+				parts = append(parts, fmt.Sprintf("desc=%q", d))
+			}
+			if v != "" && v != t && v != d {
+				parts = append(parts, fmt.Sprintf("value=%q", truncateValue(v)))
+			}
+			if id != "" {
+				parts = append(parts, "["+id+"]")
+			}
+			sb.WriteString("  " + strings.Join(parts, " ") + "\n")
+		}
+		return sb.String(), nil
+	}
+
+	// `click` (clickFirst=true): action — apply safety guards.
+	if len(hits) == 0 {
+		return "", fmt.Errorf("no element matching %s", desc)
+	}
+
+	// Guard 1 — ambiguity refusal. The pilot session that closed
+	// Calculator did so because a broad matcher hit AXCloseButton +
+	// the actual button, and the kernel happily clicked the first.
+	// Default behavior is now to refuse and list candidates so the
+	// caller can narrow with parent/window/identifier filters.
+	if len(hits) > 1 && !force {
+		defer closeAll(hits)
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf(
+			"ui click refused: %d elements matched %s. "+
+				"Add filters (identifier / role / parent) or pass force=true "+
+				"to click the first match. Candidates:\n",
+			len(hits), desc,
+		))
+		const maxList = 8
+		for i, h := range hits {
+			if i >= maxList {
+				sb.WriteString(fmt.Sprintf("  ... (%d more)\n", len(hits)-maxList))
+				break
+			}
+			r, _ := h.Role()
+			t, _ := h.Title()
+			id, _ := h.Identifier()
+			sb.WriteString(fmt.Sprintf("  %s\t%q\t[%s]\n", r, t, id))
+		}
+		return "", fmt.Errorf("%s", sb.String())
+	}
+
+	// Take the first hit, dispose of any others (only present when
+	// force=true with multiple matches).
+	el := hits[0]
+	for i := 1; i < len(hits); i++ {
+		hits[i].Close()
+	}
+	defer el.Close()
+
+	role, _ := el.Role()
+	title, _ := el.Title()
+
+	// Guard 2 — destructive-target refusal. Don't press window
+	// close/minimize buttons or buttons labeled Close/Quit/退出/关闭
+	// without explicit force=true. This is the second line of defense
+	// even if the matcher unambiguously hit the close button.
+	if !force && isDestructiveTarget(role, title) {
+		return "", fmt.Errorf(
+			"ui click refused: target %s %q looks destructive "+
+				"(close/quit/minimize). Pass force=true to click anyway.",
+			role, title,
+		)
+	}
+
+	if err := el.Perform(kinax.ActionPress); err != nil {
+		return "", fmt.Errorf("AXPress: %w", err)
+	}
+	return fmt.Sprintf("clicked %s %q (matched %s)", role, title, desc), nil
+}
+
+// closeAll releases every element in a FindAll result. Use when the
+// caller errors out before consuming the slice.
+func closeAll(els []*kinax.Element) {
+	for _, e := range els {
+		e.Close()
+	}
+}
+
+// matchDescription is a kinax.Matcher that selects elements whose
+// AXDescription equals `want`. kinax-go v0.1 doesn't ship a built-in
+// MatchDescription helper, but the Matcher type is just a func, so
+// we plug it in here. AXDescription is the canonical matcher for
+// icon-only / symbol buttons where AXTitle is empty (Calculator's
+// "1" / "+" / "Equals" keys, media play/pause, toolbar pins).
+func matchDescription(want string) kinax.Matcher {
+	return func(e *kinax.Element) bool {
+		got, _ := e.Description()
+		return got == want
+	}
+}
+
+// truncateValue caps very long AXValue strings so a tree dump of a
+// text editor or terminal doesn't blow the LLM's context. 200 chars
+// is plenty for verification — Calculator displays, status labels,
+// short text fields all fit.
+func truncateValue(s string) string {
+	const max = 200
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
+// clickSequence presses N elements in order in a single tool call.
+// Saves the per-call LLM round-trip for flows like calculator
+// (1 + 1 =), dialpads, multi-digit codes, sequential menu navigation.
+//
+// Either `titles` (comma-separated AXButton titles) or `identifiers`
+// (comma-separated AXIdentifiers) drives the sequence. Identifiers are
+// strongly preferred when available — they're stable across versions
+// and unambiguous.
+//
+// Each press follows the same safety rules as `click`: ambiguous
+// matches refuse unless force=true; destructive titles refuse unless
+// force=true.
+func (s *uiSkill) clickSequence(params map[string]string) (string, error) {
+	app, err := s.openTarget(params)
+	if err != nil {
+		return "", err
+	}
+	defer app.Close()
+
+	depth := atoiDefault(params["depth"], 20)
+	force := parseBoolParam(params["force"], false)
+
+	type field int
+	const (
+		byTitle field = iota
+		byIdentifier
+		byDescription
+	)
+	var items []string
+	var by field
+	switch {
+	case params["identifiers"] != "":
+		items = splitAndTrim(params["identifiers"])
+		by = byIdentifier
+	case params["descriptions"] != "":
+		items = splitAndTrim(params["descriptions"])
+		by = byDescription
+	case params["titles"] != "":
+		items = splitAndTrim(params["titles"])
+		by = byTitle
+	default:
+		return "", fmt.Errorf("click_sequence requires 'titles', 'identifiers', or 'descriptions'")
+	}
+	if len(items) == 0 {
+		return "", fmt.Errorf("click_sequence: empty list after parsing")
+	}
+
+	var log strings.Builder
+	for i, item := range items {
+		var matcher kinax.Matcher
+		var desc string
+		switch by {
+		case byIdentifier:
+			matcher = kinax.MatchIdentifier(item)
+			desc = "id=" + item
+		case byDescription:
+			matcher = kinax.MatchAll(
+				kinax.MatchRole("AXButton"),
+				matchDescription(item),
+			)
+			desc = fmt.Sprintf("role=AXButton desc=%q", item)
+		default: // byTitle
+			matcher = kinax.MatchAll(
+				kinax.MatchRole("AXButton"),
+				kinax.MatchTitle(item),
+			)
+			desc = fmt.Sprintf("role=AXButton title=%q", item)
+		}
+
+		hits := app.FindAll(matcher, depth)
+		if len(hits) == 0 {
+			closeAll(hits)
+			return log.String(), fmt.Errorf(
+				"click_sequence aborted at step %d/%d: no element matching %s",
+				i+1, len(items), desc,
+			)
+		}
+		if len(hits) > 1 && !force {
+			closeAll(hits)
+			return log.String(), fmt.Errorf(
+				"click_sequence aborted at step %d/%d: %d elements matched %s — narrow with identifiers or pass force=true",
+				i+1, len(items), len(hits), desc,
+			)
+		}
+		el := hits[0]
+		for j := 1; j < len(hits); j++ {
+			hits[j].Close()
 		}
 		role, _ := el.Role()
 		title, _ := el.Title()
-		return fmt.Sprintf("clicked %s %q (matched %s)", role, title, desc), nil
+		if !force && isDestructiveTarget(role, title) {
+			el.Close()
+			return log.String(), fmt.Errorf(
+				"click_sequence aborted at step %d/%d: %s %q looks destructive",
+				i+1, len(items), role, title,
+			)
+		}
+		if err := el.Perform(kinax.ActionPress); err != nil {
+			el.Close()
+			return log.String(), fmt.Errorf(
+				"click_sequence step %d/%d (%s): AXPress: %w",
+				i+1, len(items), desc, err,
+			)
+		}
+		el.Close()
+		fmt.Fprintf(&log, "  %d/%d: clicked %s %q\n", i+1, len(items), role, title)
 	}
+	return fmt.Sprintf("clicked %d elements:\n%s", len(items), log.String()), nil
+}
 
-	hits := app.FindAll(m, depth)
-	if len(hits) == 0 {
-		return fmt.Sprintf("no elements matching %s", desc), nil
+// splitAndTrim splits on commas and trims whitespace from each part,
+// dropping empties. Used for the comma-separated list params.
+func splitAndTrim(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t != "" {
+			out = append(out, t)
+		}
 	}
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%d match(es) for %s:\n", len(hits), desc))
-	for _, h := range hits {
-		r, _ := h.Role()
-		t, _ := h.Title()
-		id, _ := h.Identifier()
-		sb.WriteString(fmt.Sprintf("  %s\t%q\t[%s]\n", r, t, id))
-		h.Close()
+	return out
+}
+
+// isDestructiveTarget flags AX elements whose press tends to take a
+// window/app away from the user. Refusing these by default is the
+// kernel's safety net against the common LLM failure mode of broadly
+// matching "Calculator" and accidentally hitting AXCloseButton.
+//
+// The English keyword set uses word-boundary semantics (exact match
+// or "<keyword> <rest>") so legitimate non-destructive labels like
+// "Close-up View" or "Closed Captions" pass through. The Chinese
+// keyword set uses substring match — Chinese button labels are short
+// and 关闭/退出/注销 are unambiguous in context.
+func isDestructiveTarget(role, title string) bool {
+	switch role {
+	case "AXCloseButton", "AXMinimizeButton", "AXFullScreenButton":
+		return true
 	}
-	return sb.String(), nil
+	t := strings.ToLower(strings.TrimSpace(title))
+	if t != "" {
+		for _, kw := range []string{"close", "quit", "exit", "log out", "sign out"} {
+			if t == kw || strings.HasPrefix(t, kw+" ") {
+				return true
+			}
+		}
+	}
+	for _, kw := range []string{"退出", "关闭", "注销", "结束"} {
+		if strings.Contains(title, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *uiSkill) read(params map[string]string) (string, error) {

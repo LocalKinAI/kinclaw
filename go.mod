@@ -11,6 +11,7 @@ require (
 require (
 	github.com/LocalKinAI/input-go v0.1.0 // indirect
 	github.com/LocalKinAI/kinax-go v0.1.0 // indirect
+	github.com/LocalKinAI/kinrec v0.1.0 // indirect
 	github.com/LocalKinAI/sckit-go v0.1.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.8.0 // indirect

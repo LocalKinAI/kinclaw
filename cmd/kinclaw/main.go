@@ -18,8 +18,13 @@ import (
 )
 
 const (
-	version       = "1.1.0"
-	maxToolRounds = 20
+	version = "1.2.0"
+	// maxToolRounds caps the tool-call sequence per user turn. 20 was
+	// fine for kernel-only flows but compound demos (record start + tts
+	// + multi-step ui find/click/verify + tts + record stop) easily
+	// burn 30+ rounds. Bumped to 50; the circuit breaker + ambiguity
+	// guards still catch genuine runaways.
+	maxToolRounds = 50
 )
 
 // session holds the mutable runtime state for the REPL.
@@ -155,6 +160,7 @@ func buildRegistry(s *soul.Soul) *skill.Registry {
 	reg.Register(skill.NewScreenSkill(s.Meta.Permissions.Screen, s.Meta.Skills.OutputDir))
 	reg.Register(skill.NewInputSkill(s.Meta.Permissions.Input))
 	reg.Register(skill.NewUISkill(s.Meta.Permissions.UI))
+	reg.Register(skill.NewRecordSkill(s.Meta.Permissions.Record, s.Meta.Skills.OutputDir))
 	for _, dir := range []string{skillsDir, homeSkillsDir()} {
 		exts, _ := skill.LoadExternalSkills(dir)
 		for _, ext := range exts {
@@ -227,6 +233,26 @@ func handleUserMessage(ctx context.Context, sess *session, input string) {
 	fmt.Println()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\033[31mError: %v\033[0m\n", err)
+		// Persist the partial tool history + a synthesized abort note
+		// so the next user turn doesn't see back-to-back user messages
+		// (which the brain reads as "keep going on the prior task" and
+		// promptly reruns the failed loop). The note also gives the
+		// human something to react to: "continue" to resume or rephrase
+		// to start fresh.
+		for _, msg := range toolHistory {
+			if sess.store != nil {
+				sess.store.SaveMessage(sess.id, msg)
+			}
+			sess.history = append(sess.history, msg)
+		}
+		abortMsg := brain.Message{
+			Role:    brain.RoleAssistant,
+			Content: fmt.Sprintf("(Turn aborted: %v. Reply 'continue' to resume or rephrase to start fresh.)", err),
+		}
+		sess.history = append(sess.history, abortMsg)
+		if sess.store != nil {
+			sess.store.SaveMessage(sess.id, abortMsg)
+		}
 		return
 	}
 
@@ -306,7 +332,12 @@ func chatLoop(ctx context.Context, sess *session, messages []brain.Message, onCh
 				}
 				fmt.Fprintf(os.Stderr, "\033[2m[%s -> %s]\033[0m\n", r.Name, strings.ReplaceAll(display, "\n", " "))
 			}
-			toolMsg := brain.Message{Role: brain.RoleTool, Content: r.Output, ToolCallID: r.ToolCallID}
+			toolMsg := brain.Message{
+				Role:       brain.RoleTool,
+				Content:    r.Output,
+				ToolCallID: r.ToolCallID,
+				Images:     r.Images, // brain inlines image bytes for vision-capable models
+			}
 			messages = append(messages, toolMsg)
 			intermediateHistory = append(intermediateHistory, toolMsg)
 		}

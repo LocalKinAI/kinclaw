@@ -3,6 +3,7 @@ package skill
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -73,7 +74,43 @@ type ToolCallInfo struct {
 }
 type ToolResult struct {
 	ToolCallID, Name, Output string
-	Err                      error
+	// Images are file paths to attach to the tool message when the
+	// brain supports vision. Skills opt in by emitting `image://<path>`
+	// markers in their text output; ExecuteToolCalls strips those
+	// markers and populates this field. The brain adapter reads the
+	// files at send time and inlines them as image_url / image source
+	// blocks. Brains without vision support ignore the field, so
+	// adding markers in a skill is always safe.
+	Images []string
+	Err    error
+}
+
+// extractImageMarkers strips lines matching `image://<path>` from the
+// tool output and returns the cleaned text + the list of paths
+// encountered (de-duped, in order of first appearance). Skills can
+// emit any number of markers anywhere in their output; the markers
+// don't reach the LLM as text — they get rerouted into the message's
+// Images list, which becomes inline image content in the next
+// vision-capable API call.
+func extractImageMarkers(out string) (cleaned string, images []string) {
+	if !strings.Contains(out, "image://") {
+		return out, nil
+	}
+	seen := make(map[string]bool)
+	var keep []string
+	for _, line := range strings.Split(out, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "image://") {
+			path := strings.TrimSpace(strings.TrimPrefix(t, "image://"))
+			if path != "" && !seen[path] {
+				seen[path] = true
+				images = append(images, path)
+			}
+			continue
+		}
+		keep = append(keep, line)
+	}
+	return strings.TrimRight(strings.Join(keep, "\n"), "\n"), images
 }
 
 func ExecuteToolCalls(reg *Registry, calls []ToolCallInfo) []ToolResult {
@@ -90,7 +127,8 @@ func ExecuteToolCalls(reg *Registry, calls []ToolCallInfo) []ToolResult {
 		if err != nil {
 			return []ToolResult{{ToolCallID: c.ID, Name: c.Name, Output: fmt.Sprintf("Error: %v", err), Err: err}}
 		}
-		return []ToolResult{{ToolCallID: c.ID, Name: c.Name, Output: out}}
+		cleaned, imgs := extractImageMarkers(out)
+		return []ToolResult{{ToolCallID: c.ID, Name: c.Name, Output: cleaned, Images: imgs}}
 	}
 	results := make([]ToolResult, len(calls))
 	var wg sync.WaitGroup
@@ -108,7 +146,8 @@ func ExecuteToolCalls(reg *Registry, calls []ToolCallInfo) []ToolResult {
 				results[idx] = ToolResult{ToolCallID: ci.ID, Name: ci.Name, Output: fmt.Sprintf("Error: %v", err), Err: err}
 				return
 			}
-			results[idx] = ToolResult{ToolCallID: ci.ID, Name: ci.Name, Output: out}
+			cleaned, imgs := extractImageMarkers(out)
+			results[idx] = ToolResult{ToolCallID: ci.ID, Name: ci.Name, Output: cleaned, Images: imgs}
 		}(i, c)
 	}
 	wg.Wait()

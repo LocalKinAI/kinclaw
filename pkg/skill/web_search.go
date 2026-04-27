@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -22,13 +23,35 @@ var (
 	htmlTagRe    = regexp.MustCompile(`<[^>]*>`)
 )
 
-type webSearchSkill struct{}
+type webSearchSkill struct {
+	// searxngEndpoint, if non-empty, routes search through a local
+	// (or remote) SearXNG meta-search instance. The DDG HTML scrape
+	// stays as a fallback for when SearXNG is unreachable.
+	// Set via $SEARXNG_ENDPOINT (e.g. http://localhost:8080).
+	searxngEndpoint string
+}
 
-func NewWebSearchSkill() Skill { return &webSearchSkill{} }
+func NewWebSearchSkill() Skill {
+	return &webSearchSkill{
+		searxngEndpoint: strings.TrimRight(os.Getenv("SEARXNG_ENDPOINT"), "/"),
+	}
+}
 
-func (s *webSearchSkill) Name() string        { return "web_search" }
+func (s *webSearchSkill) Name() string { return "web_search" }
 func (s *webSearchSkill) Description() string {
-	return "Search the web using DuckDuckGo and return results with titles, URLs, and snippets. No API key needed."
+	if s.searxngEndpoint != "" {
+		return fmt.Sprintf(
+			"Search the web via local SearXNG meta-search at %s "+
+				"(privacy-respecting, aggregates DuckDuckGo / Google / "+
+				"Bing / Yahoo / etc.). Returns titles, URLs, snippets. "+
+				"Falls back to DuckDuckGo HTML scrape if SearXNG is "+
+				"unreachable.", s.searxngEndpoint)
+	}
+	return "Search the web using DuckDuckGo and return results with " +
+		"titles, URLs, and snippets. No API key needed. Set the " +
+		"SEARXNG_ENDPOINT env var (e.g. http://localhost:8080) to " +
+		"route through a local SearXNG meta-search for better " +
+		"reliability + multi-engine aggregation."
 }
 func (s *webSearchSkill) ToolDef() json.RawMessage {
 	return MakeToolDef("web_search", s.Description(),
@@ -43,16 +66,38 @@ func (s *webSearchSkill) Execute(params map[string]string) (string, error) {
 		return "", fmt.Errorf("query is required")
 	}
 
-	results, err := searchDuckDuckGo(query)
-	if err != nil {
-		return "", fmt.Errorf("search failed: %w", err)
+	// Backend dispatch: prefer SearXNG when configured, fall back to
+	// DuckDuckGo HTML scrape on any error. The fallback note is
+	// surfaced in the result so the LLM can see which path served it.
+	var (
+		results []searchResult
+		backend string
+	)
+	if s.searxngEndpoint != "" {
+		r, err := searchSearXNG(s.searxngEndpoint, query)
+		if err == nil {
+			results, backend = r, "searxng"
+		} else {
+			ddg, ddgErr := searchDuckDuckGo(query)
+			if ddgErr != nil {
+				return "", fmt.Errorf("searxng failed (%v) and DDG fallback also failed (%v)", err, ddgErr)
+			}
+			results, backend = ddg, fmt.Sprintf("duckduckgo (searxng unreachable: %v)", err)
+		}
+	} else {
+		r, err := searchDuckDuckGo(query)
+		if err != nil {
+			return "", fmt.Errorf("search failed: %w", err)
+		}
+		results, backend = r, "duckduckgo"
 	}
+
 	if len(results) == 0 {
-		return "No results found.", nil
+		return "No results found (via " + backend + ").", nil
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Search results for %q:\n\n", query))
+	sb.WriteString(fmt.Sprintf("Search results for %q (via %s):\n\n", query, backend))
 	for i, r := range results {
 		if i >= searchMaxResults {
 			break
@@ -63,6 +108,59 @@ func (s *webSearchSkill) Execute(params map[string]string) (string, error) {
 	return "---BEGIN UNTRUSTED WEB CONTENT---\n" +
 		strings.TrimSpace(sb.String()) +
 		"\n---END UNTRUSTED WEB CONTENT---", nil
+}
+
+// searchSearXNG queries a local or remote SearXNG meta-search instance
+// at /search?q=...&format=json. Response shape:
+//
+//	{
+//	  "query": "...",
+//	  "results": [
+//	    {"url": "...", "title": "...", "content": "...", ...},
+//	    ...
+//	  ]
+//	}
+//
+// SearXNG already dedupes across engines and ranks; we just take the
+// top N as-is.
+func searchSearXNG(endpoint, query string) ([]searchResult, error) {
+	u := endpoint + "/search?format=json&q=" + url.QueryEscape(query)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: searchTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("searxng request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("searxng HTTP %d", resp.StatusCode)
+	}
+
+	var raw struct {
+		Results []struct {
+			URL     string `json:"url"`
+			Title   string `json:"title"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("searxng decode: %w", err)
+	}
+
+	out := make([]searchResult, 0, len(raw.Results))
+	for _, r := range raw.Results {
+		out = append(out, searchResult{
+			title:   strings.TrimSpace(r.Title),
+			url:     r.URL,
+			snippet: strings.TrimSpace(r.Content),
+		})
+	}
+	return out, nil
 }
 
 type searchResult struct {

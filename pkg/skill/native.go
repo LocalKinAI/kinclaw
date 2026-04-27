@@ -376,7 +376,47 @@ type forgeSkill struct {
 func NewForgeSkill(skillsDir string, registry *Registry) Skill { return &forgeSkill{skillsDir: skillsDir, registry: registry} }
 func (s *forgeSkill) Name() string                             { return "forge" }
 func (s *forgeSkill) Description() string {
-	return "Create a new skill by generating a SKILL.md file. The new skill becomes immediately available."
+	return "Create a new skill by generating a SKILL.md file in skills/<name>/. " +
+		"The new skill becomes immediately available next round." +
+		"\n\n" +
+		"**WHEN to forge**: AFTER you successfully completed a multi-step task that's likely to be " +
+		"requested again in a parameterized form. Examples: `calc_compute`, `notes_create`, " +
+		"`reminders_add`, `safari_open_url`, `play_song`." +
+		"\n\n" +
+		"**Choose the SHORTEST execution path** — don't translate the UI-driving you just did into " +
+		"a script. Most Apple apps have direct AppleScript / shell APIs that skip the UI entirely:\n" +
+		"  - Reminders: `osascript -e 'tell application \"Reminders\" to make new reminder with properties {name:\"$1\"}'`\n" +
+		"  - Notes:    `osascript -e 'tell application \"Notes\" to make new note with properties {name:\"$1\", body:\"$2\"}'`\n" +
+		"  - Music:    `osascript -e 'tell application \"Music\" to play'`\n" +
+		"  - Calc:     `bc <<<\"$1\"` (headless math; no UI needed)\n" +
+		"  - Safari:   `osascript -e 'tell application \"Safari\" to open location \"$1\"'`\n" +
+		"  - Spotlight: `mdfind \"$1\"`\n" +
+		"\n" +
+		"Only fall back to UI-driving (input keystrokes, ui click) if the app has no scripting API " +
+		"and no relevant CLI." +
+		"\n\n" +
+		"**HARD rules for the `command` field — kernel REJECTS forge calls that violate these**:\n" +
+		"  - command[0] MUST be a real binary in $PATH: `sh`, `bash`, `python3`, `osascript`, `curl`, " +
+		"`jq`, `awk`, `mdfind`, `defaults`, `open`, `bc`, etc.\n" +
+		"  - command[0] must NEVER be a kinclaw skill name (`ui`, `input`, `screen`, `record`, `shell`, " +
+		"`tts`, `stt`, `web_*`, `forge`, `learn`, `app_open_clean`). Those live INSIDE kinclaw — " +
+		"there's no `ui` binary in $PATH. Calling them via subprocess always fails silently and " +
+		"produces a skill that lies about success forever after.\n" +
+		"  - For multi-line shell, use the `[sh, -c, \"<your script>\", \"_\"]` pattern. The trailing " +
+		"`\"_\"` is important — it gives the script `$0=_` so user args become `$1, $2, ...` cleanly.\n" +
+		"\n" +
+		"**A correct minimal `reminders_add`** (no UI, 3 lines):\n" +
+		"```yaml\n" +
+		"command: [osascript, -e]\n" +
+		"args: [\"tell application \\\"Reminders\\\" to make new reminder with properties {name:\\\"{{title}}\\\"}\"]\n" +
+		"schema: { title: { type: string, required: true } }\n" +
+		"```\n" +
+		"Robust because it bypasses the UI entirely — no AX flake, no first-launch modal." +
+		"\n\n" +
+		"**When NOT to forge**: task isn't actually working yet (forge proven recipes only); " +
+		"single-shot non-parameterizable (\"today buy milk\" no, \"add reminder titled X\" yes); " +
+		"same name already exists. Kernel pre-flight checks command[0] is in $PATH; if you get " +
+		"`forge rejected:` back, fix the recipe and retry."
 }
 func (s *forgeSkill) ToolDef() json.RawMessage {
 	return MakeToolDef("forge", s.Description(),
@@ -388,6 +428,51 @@ func (s *forgeSkill) ToolDef() json.RawMessage {
 			"schema":         {"type": "string", "description": "JSON object of parameter definitions"},
 			"script_content": {"type": "string", "description": "Content of the script file to create"},
 		}, []string{"name", "description", "command"})
+}
+
+// internalSkillNames is the set of names that must NEVER appear as
+// command[0] in a forged SKILL.md. They are kinclaw's own internal
+// skills — there's no executable by these names in $PATH, so a forge
+// that puts e.g. `command: ["ui", ...]` produces a SKILL.md that
+// silently fails on every call. Pre-flight check below rejects it.
+var internalSkillNames = map[string]bool{
+	"ui": true, "input": true, "screen": true, "record": true,
+	"shell": true, "tts": true, "stt": true, "forge": true,
+	"learn": true, "memory": true, "clone": true,
+	"file_read": true, "file_write": true, "file_edit": true,
+	"web_fetch": true, "web_search": true, "web_browse": true,
+	"app_open_clean": true,
+}
+
+// validateForgeCommand catches the most common LLM mistake when
+// forging skills: putting an internal kinclaw skill name as
+// command[0] (e.g. `command: ["ui", "action=click", ...]`). Those
+// don't exist in $PATH; the resulting SKILL.md would be broken from
+// day 1 and silently lie about success forever after.
+//
+// Also catches typos that don't resolve to anything in $PATH so the
+// agent gets a clear "command not found" message instead of shipping
+// a broken skill.
+func validateForgeCommand(cmdParts []string) error {
+	if len(cmdParts) == 0 {
+		return fmt.Errorf("command must not be empty")
+	}
+	cmd0 := cmdParts[0]
+	if internalSkillNames[cmd0] {
+		return fmt.Errorf(
+			"command[0] = %q is a kinclaw internal skill, not a shell binary. "+
+				"Forged skills run in a subprocess and can't call kinclaw skills directly. "+
+				"Use real OS tools instead: `osascript` for AppleScript, `sh -c` for shell, "+
+				"`python3` for scripts, `curl` for HTTP, `mdfind` for Spotlight, etc.",
+			cmd0)
+	}
+	if _, err := exec.LookPath(cmd0); err != nil {
+		return fmt.Errorf(
+			"command[0] = %q not found in $PATH. Use a real executable "+
+				"(sh, bash, python3, osascript, curl, jq, awk, mdfind, open, bc, ...).",
+			cmd0)
+	}
+	return nil
 }
 
 func (s *forgeSkill) Execute(params map[string]string) (string, error) {
@@ -404,6 +489,12 @@ func (s *forgeSkill) Execute(params map[string]string) (string, error) {
 	sb.WriteString(fmt.Sprintf("name: %s\n", name))
 	sb.WriteString(fmt.Sprintf("description: %s\n", params["description"]))
 	cmdParts := strings.Fields(params["command"])
+	// Pre-flight: refuse to write a SKILL.md whose command can't run.
+	if err := validateForgeCommand(cmdParts); err != nil {
+		// Clean up the empty dir so we don't leave a half-state turd.
+		os.Remove(dir)
+		return "", fmt.Errorf("forge rejected: %w", err)
+	}
 	sb.WriteString("command: [")
 	for i, p := range cmdParts {
 		if i > 0 {

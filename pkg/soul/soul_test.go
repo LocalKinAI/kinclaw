@@ -181,6 +181,10 @@ permissions:
   filesystem:
     allow: ["/tmp"]
     deny: ["/etc"]
+  screen: true
+  input: true
+  ui: true
+  record: true
 skills:
   enable: [shell, file_read]
   output_dir: /tmp/output
@@ -217,6 +221,238 @@ You are a full test soul.`)
 	}
 	if s.Meta.Skills.Dir != "/tmp/skills" {
 		t.Errorf("expected skills dir '/tmp/skills', got %q", s.Meta.Skills.Dir)
+	}
+	// All four KinKit claws should be parsed.
+	if !s.Meta.Permissions.Screen {
+		t.Error("expected screen permission to be true")
+	}
+	if !s.Meta.Permissions.Input {
+		t.Error("expected input permission to be true")
+	}
+	if !s.Meta.Permissions.UI {
+		t.Error("expected ui permission to be true")
+	}
+	if !s.Meta.Permissions.Record {
+		t.Error("expected record permission to be true")
+	}
+}
+
+// TestParseSoul_ClawPermissions exercises the four computer-use
+// permission bits in isolation, including the default-false behavior
+// when a soul omits a bit (older souls written before the claw was
+// added must continue to parse cleanly).
+func TestParseSoul_ClawPermissions(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want struct{ screen, input, ui, record bool }
+	}{
+		{
+			name: "all_off_default",
+			yaml: "---\nname: x\n---\nbody",
+			want: struct{ screen, input, ui, record bool }{false, false, false, false},
+		},
+		{
+			name: "all_on",
+			yaml: "---\nname: x\npermissions:\n  screen: true\n  input: true\n  ui: true\n  record: true\n---\nbody",
+			want: struct{ screen, input, ui, record bool }{true, true, true, true},
+		},
+		{
+			name: "record_only",
+			yaml: "---\nname: x\npermissions:\n  record: true\n---\nbody",
+			want: struct{ screen, input, ui, record bool }{false, false, false, true},
+		},
+		{
+			name: "legacy_no_record_key",
+			// Older soul written before record existed — must still parse,
+			// record defaults to false.
+			yaml: "---\nname: x\npermissions:\n  screen: true\n  input: true\n  ui: true\n---\nbody",
+			want: struct{ screen, input, ui, record bool }{true, true, true, false},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := ParseSoul([]byte(tt.yaml))
+			if err != nil {
+				t.Fatalf("ParseSoul: %v", err)
+			}
+			got := struct{ screen, input, ui, record bool }{
+				s.Meta.Permissions.Screen,
+				s.Meta.Permissions.Input,
+				s.Meta.Permissions.UI,
+				s.Meta.Permissions.Record,
+			}
+			if got != tt.want {
+				t.Errorf("permissions = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLocationContextSubstitution covers $KINCLAW_LOCATION env var
+// → {{location}} / {{lat}} / {{lon}} / {{city}} / {{country}}
+// substitutions in the soul prompt. All four supported formats:
+//
+//	"lat,lon"
+//	"lat,lon,city"
+//	"lat,lon,city,country"
+//	"" (unset → empty substitutions)
+func TestLocationContextSubstitution(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      string
+		wantLoc  string
+		wantLat  string
+		wantLon  string
+		wantCity string
+		wantCC   string
+	}{
+		{"unset", "", "", "", "", "", ""},
+		{"lat_lon_only", "39.9042,116.4074", "39.9042, 116.4074", "39.9042", "116.4074", "", ""},
+		{"with_city", "37.7749,-122.4194,SF", "SF (37.7749, -122.4194)", "37.7749", "-122.4194", "SF", ""},
+		{"full", "37.7749,-122.4194,SF,USA", "SF, USA (37.7749, -122.4194)", "37.7749", "-122.4194", "SF", "USA"},
+		{"chinese_city", "39.9042,116.4074,北京,中国", "北京, 中国 (39.9042, 116.4074)", "39.9042", "116.4074", "北京", "中国"},
+		{"whitespace_tolerated", " 1.0 , 2.0 , City ", "City (1.0, 2.0)", "1.0", "2.0", "City", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("KINCLAW_LOCATION", tt.env)
+			loc, lat, lon, city, country := locationContext()
+			if loc != tt.wantLoc {
+				t.Errorf("location = %q, want %q", loc, tt.wantLoc)
+			}
+			if lat != tt.wantLat {
+				t.Errorf("lat = %q, want %q", lat, tt.wantLat)
+			}
+			if lon != tt.wantLon {
+				t.Errorf("lon = %q, want %q", lon, tt.wantLon)
+			}
+			if city != tt.wantCity {
+				t.Errorf("city = %q, want %q", city, tt.wantCity)
+			}
+			if country != tt.wantCC {
+				t.Errorf("country = %q, want %q", country, tt.wantCC)
+			}
+		})
+	}
+}
+
+// TestLocationFullPipeline — verify the env var really makes it into
+// the rendered system prompt. Smoke-test for the integration.
+func TestLocationFullPipeline(t *testing.T) {
+	t.Setenv("KINCLAW_LOCATION", "39.9042,116.4074,北京,中国")
+	dir := t.TempDir()
+	path := dir + "/test.soul.md"
+	body := []byte("---\nname: t\n---\nbody.\n位置: {{location}}\n经纬: {{lat}}, {{lon}}")
+	os.WriteFile(path, body, 0644)
+	s, err := LoadSoul(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(s.SystemPrompt, "北京, 中国 (39.9042, 116.4074)") {
+		t.Errorf("expected formatted location in prompt, got %q", s.SystemPrompt)
+	}
+	if !strings.Contains(s.SystemPrompt, "经纬: 39.9042, 116.4074") {
+		t.Errorf("expected raw lat/lon substitution, got %q", s.SystemPrompt)
+	}
+}
+
+func TestTimezoneSubstitution(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/test.soul.md"
+	os.WriteFile(path, []byte("---\nname: t\n---\nTZ={{tz}}"), 0644)
+	s, _ := LoadSoul(path)
+	// Just verify the placeholder was replaced (don't assert specific TZ —
+	// depends on the test machine).
+	if strings.Contains(s.SystemPrompt, "{{tz}}") {
+		t.Error("{{tz}} was not substituted")
+	}
+	if !strings.Contains(s.SystemPrompt, "TZ=") {
+		t.Error("TZ= prefix missing")
+	}
+}
+
+// TestLoadSoul_LearnedNotebookInjection covers the kernel-level
+// injection of ~/.localkin/learned.md into every soul's system
+// prompt. This is the persistence layer for Genesis Protocol — the
+// agent's notebook of learnings travels with it across sessions.
+func TestLoadSoul_LearnedNotebookInjection(t *testing.T) {
+	// Redirect $HOME so we don't touch the user's real notebook.
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	if err := os.MkdirAll(tempHome+"/.localkin", 0755); err != nil {
+		t.Fatal(err)
+	}
+	notebook := "## com.apple.testapp\n- foo\n- bar\n"
+	if err := os.WriteFile(tempHome+"/.localkin/learned.md", []byte(notebook), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	soulPath := dir + "/test.soul.md"
+	os.WriteFile(soulPath, []byte("---\nname: tester\n---\nyou are tester."), 0644)
+
+	s, err := LoadSoul(soulPath)
+	if err != nil {
+		t.Fatalf("LoadSoul: %v", err)
+	}
+	if !strings.Contains(s.SystemPrompt, "已学到的") {
+		t.Errorf("system prompt should include '已学到的' header, got %q", s.SystemPrompt)
+	}
+	if !strings.Contains(s.SystemPrompt, "com.apple.testapp") {
+		t.Errorf("system prompt should include notebook content, got %q", s.SystemPrompt)
+	}
+}
+
+// TestLoadSoul_NoLearnedNotebook — soul still loads cleanly when
+// learned.md doesn't exist (typical first-time-running state).
+func TestLoadSoul_NoLearnedNotebook(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	// Note: no learned.md file created.
+
+	dir := t.TempDir()
+	soulPath := dir + "/test.soul.md"
+	os.WriteFile(soulPath, []byte("---\nname: tester\n---\nclean state."), 0644)
+
+	s, err := LoadSoul(soulPath)
+	if err != nil {
+		t.Fatalf("LoadSoul: %v", err)
+	}
+	if strings.Contains(s.SystemPrompt, "已学到的") {
+		t.Errorf("system prompt should NOT have learned section when notebook missing, got %q", s.SystemPrompt)
+	}
+}
+
+// TestLoadSoul_LearnedNotebookCappedAtSize — runaway notebooks get
+// truncated to the most recent 8KB so they can't blow context.
+func TestLoadSoul_LearnedNotebookCappedAtSize(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	os.MkdirAll(tempHome+"/.localkin", 0755)
+
+	// Generate ~12KB notebook with marker lines at the start and end.
+	var buf strings.Builder
+	buf.WriteString("MARKER_START_OLD\n")
+	for i := 0; i < 1200; i++ {
+		buf.WriteString("padding line that should be truncated\n")
+	}
+	buf.WriteString("MARKER_END_RECENT\n")
+	os.WriteFile(tempHome+"/.localkin/learned.md", []byte(buf.String()), 0644)
+
+	dir := t.TempDir()
+	soulPath := dir + "/test.soul.md"
+	os.WriteFile(soulPath, []byte("---\nname: tester\n---\nbody."), 0644)
+
+	s, err := LoadSoul(soulPath)
+	if err != nil {
+		t.Fatalf("LoadSoul: %v", err)
+	}
+	if strings.Contains(s.SystemPrompt, "MARKER_START_OLD") {
+		t.Error("oldest content should have been truncated")
+	}
+	if !strings.Contains(s.SystemPrompt, "MARKER_END_RECENT") {
+		t.Error("most recent content should be preserved")
 	}
 }
 

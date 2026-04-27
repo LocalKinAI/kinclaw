@@ -799,8 +799,217 @@ Body
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
+	// Both Command-side ({{greeting}}) and Args-side ({{name}})
+	// templates must be substituted. Pre-fix this test passed even
+	// though {{greeting}} was leaking through literally.
 	if !strings.Contains(result, "World") {
-		t.Errorf("expected output to contain 'World', got %q", result)
+		t.Errorf("expected output to contain 'World' (Args substitution), got %q", result)
+	}
+	if !strings.Contains(result, "Hi") {
+		t.Errorf("expected output to contain 'Hi' (Command substitution), got %q", result)
+	}
+	if strings.Contains(result, "{{") {
+		t.Errorf("expected no unsubstituted templates in output, got %q", result)
+	}
+}
+
+// TestExtractImageMarkers covers the image:// marker scanner that
+// reroutes screenshot paths from tool output text into the
+// ToolResult.Images list. Vision-capable brains then inline the
+// image bytes; text-only brains see the cleaned text without markers.
+func TestExtractImageMarkers(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantText  string
+		wantImgs  []string
+	}{
+		{
+			"no_markers",
+			"path: /a.png\ndimensions: 100x100",
+			"path: /a.png\ndimensions: 100x100",
+			nil,
+		},
+		{
+			"single_marker",
+			"path: /a.png\nimage:///a.png\ndimensions: 100x100",
+			"path: /a.png\ndimensions: 100x100",
+			[]string{"/a.png"},
+		},
+		{
+			"multiple_markers",
+			"image:///a.png\nimage:///b.jpg\nresult: ok",
+			"result: ok",
+			[]string{"/a.png", "/b.jpg"},
+		},
+		{
+			"dedup_same_path",
+			"image:///x.png\nfoo\nimage:///x.png\nbar",
+			"foo\nbar",
+			[]string{"/x.png"},
+		},
+		{
+			"marker_with_indent_trimmed",
+			"  image:///x.png  \nfoo",
+			"foo",
+			[]string{"/x.png"},
+		},
+		{
+			"marker_only",
+			"image:///solo.png",
+			"",
+			[]string{"/solo.png"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotText, gotImgs := extractImageMarkers(tt.input)
+			if gotText != tt.wantText {
+				t.Errorf("text = %q, want %q", gotText, tt.wantText)
+			}
+			if len(gotImgs) != len(tt.wantImgs) {
+				t.Fatalf("images = %v, want %v", gotImgs, tt.wantImgs)
+			}
+			for i := range gotImgs {
+				if gotImgs[i] != tt.wantImgs[i] {
+					t.Errorf("images[%d] = %q, want %q", i, gotImgs[i], tt.wantImgs[i])
+				}
+			}
+		})
+	}
+}
+
+// TestLoadExternalSkill_UnpassedTemplateStripped covers the second
+// bug in the substitution path: when a SKILL.md author uses `{{var}}`
+// inside a shell command as a "param wasn't passed" sentinel
+// (e.g. `[ "$X" = "{{wait}}" ] && X=""`), the substitution-everywhere
+// behavior rewrites BOTH the arg AND the sentinel literal — when the
+// caller DID pass `wait=true`, the test became `[ "true" = "true" ]`
+// → succeeds → the param value gets clobbered. The kernel now strips
+// any leftover `{{name}}` placeholders to "" so SKILL.md authors can
+// detect "missing param" with `[ -n "$X" ]` instead of brittle
+// sentinel comparisons.
+func TestLoadExternalSkill_UnpassedTemplateStripped(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "echo_args")
+	os.MkdirAll(skillDir, 0755)
+
+	content := `---
+name: echo_args
+description: Print the args verbatim so the test can see what shell received
+command: [sh, -c, "echo arg1=[$1] arg2=[$2]", "_"]
+args: ["{{required}}", "{{optional}}"]
+schema:
+  required:
+    type: string
+    required: true
+  optional:
+    type: string
+---
+body
+`
+	skillPath := filepath.Join(skillDir, "SKILL.md")
+	os.WriteFile(skillPath, []byte(content), 0644)
+	ext, err := LoadExternalSkill(skillPath)
+	if err != nil {
+		t.Fatalf("LoadExternalSkill: %v", err)
+	}
+
+	// Caller omits `optional` — should arrive as "" not "{{optional}}".
+	out, err := ext.Execute(map[string]string{"required": "value"})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "arg1=[value]") {
+		t.Errorf("expected arg1=[value], got %q", out)
+	}
+	if !strings.Contains(out, "arg2=[]") {
+		t.Errorf("expected arg2=[] (stripped), got %q", out)
+	}
+	if strings.Contains(out, "{{optional}}") {
+		t.Errorf("unsubstituted {{optional}} leaked into output: %q", out)
+	}
+}
+
+// TestLoadExternalSkill_SentinelPatternNotSelfDefeating covers the
+// concrete failure mode that motivated the strip: a SKILL.md uses
+// `{{var}}` literally in its shell payload AND the caller passes
+// var="true". Pre-fix, the substitution rewrote the literal to "true",
+// the sentinel comparison `[ "true" = "true" ]` succeeded, and the
+// branching went the wrong way. Post-fix, the leftover `{{var}}` form
+// in the shell payload is stripped (since the same template name was
+// already substituted to its value, there's nothing left to strip
+// — but if a template name appears in the shell that was never an
+// arg, it's stripped). The real defense: SKILL.md authors should now
+// use `[ -n "$X" ]` for missing-param detection.
+func TestLoadExternalSkill_SentinelPatternNotSelfDefeating(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "wait_check")
+	os.MkdirAll(skillDir, 0755)
+
+	// The shell uses `[ -n "$W" ]` as the proper missing-param check.
+	content := `---
+name: wait_check
+description: Print which branch
+command: [sh, -c, 'W="$1"; if [ "$W" = "true" ]; then echo BRANCH=blocking; elif [ -n "$W" ]; then echo BRANCH=other:$W; else echo BRANCH=missing; fi', "_"]
+args: ["{{wait}}"]
+schema:
+  wait:
+    type: string
+---
+body
+`
+	skillPath := filepath.Join(skillDir, "SKILL.md")
+	os.WriteFile(skillPath, []byte(content), 0644)
+	ext, _ := LoadExternalSkill(skillPath)
+
+	out, _ := ext.Execute(map[string]string{"wait": "true"})
+	if !strings.Contains(out, "BRANCH=blocking") {
+		t.Errorf("wait=true should produce BRANCH=blocking, got %q", out)
+	}
+	out, _ = ext.Execute(map[string]string{})
+	if !strings.Contains(out, "BRANCH=missing") {
+		t.Errorf("missing wait should produce BRANCH=missing, got %q", out)
+	}
+}
+
+// TestLoadExternalSkill_CommandSubstitution covers the historical bug
+// where a SKILL.md placing `{{var}}` directly inside a Command element
+// (the typical pattern for one-line forge'd skills like weather's
+// [curl, "-s", "https://wttr.in/{{location}}"]) silently leaked the
+// literal template into the executed command.
+func TestLoadExternalSkill_CommandSubstitution(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "echo_only")
+	os.MkdirAll(skillDir, 0755)
+
+	content := `---
+name: echo_only
+description: Substitution must work even with no args field at all
+command: [echo, "hello {{who}}"]
+schema:
+  who:
+    type: string
+    required: true
+---
+Body
+`
+	skillPath := filepath.Join(skillDir, "SKILL.md")
+	os.WriteFile(skillPath, []byte(content), 0644)
+
+	ext, err := LoadExternalSkill(skillPath)
+	if err != nil {
+		t.Fatalf("LoadExternalSkill failed: %v", err)
+	}
+	result, err := ext.Execute(map[string]string{"who": "Lobster"})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !strings.Contains(result, "hello Lobster") {
+		t.Errorf("expected 'hello Lobster' in output, got %q", result)
+	}
+	if strings.Contains(result, "{{who}}") {
+		t.Errorf("template {{who}} should have been substituted, got %q", result)
 	}
 }
 
@@ -913,5 +1122,81 @@ func TestForgeSkill_WithScript(t *testing.T) {
 	}
 	if string(data) != "print('hello')" {
 		t.Errorf("unexpected script content: %q", string(data))
+	}
+}
+
+// TestForgeSkill_RejectsInternalSkillName covers the most common LLM
+// foot-gun: forging a script that calls kinclaw skills (`ui`, `input`,
+// `screen`, ...) as if they were shell binaries. Live observation:
+// agent forged a `reminders_add` whose Python ran
+// `subprocess.run(["ui", "action=click", ...])` — silently failed every
+// call but the script's print said "success", producing a skill that
+// lied about its work forever. Kernel now refuses up front.
+func TestForgeSkill_RejectsInternalSkillName(t *testing.T) {
+	internals := []string{"ui", "input", "screen", "record", "shell", "tts", "stt", "forge", "learn", "web_fetch"}
+	for _, name := range internals {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			reg := NewRegistry()
+			s := NewForgeSkill(dir, reg)
+			_, err := s.Execute(map[string]string{
+				"name":        "broken_" + name,
+				"description": "tries to call kinclaw skill via subprocess",
+				"command":     name + " action=foo",
+			})
+			if err == nil {
+				t.Fatalf("expected forge rejection for command starting with %q, got nil", name)
+			}
+			if !strings.Contains(err.Error(), "forge rejected") {
+				t.Errorf("expected 'forge rejected' in error, got %v", err)
+			}
+		})
+	}
+}
+
+// TestForgeSkill_RejectsCommandNotInPath covers typos / hallucinated
+// binary names — agent invents `reminderctl` or `foo-tool` that
+// doesn't exist. Kernel rejects before writing the SKILL.md, so the
+// agent gets a clear "not found in $PATH" message and can retry.
+func TestForgeSkill_RejectsCommandNotInPath(t *testing.T) {
+	dir := t.TempDir()
+	reg := NewRegistry()
+	s := NewForgeSkill(dir, reg)
+	_, err := s.Execute(map[string]string{
+		"name":        "bogus",
+		"description": "uses a binary that doesn't exist",
+		"command":     "totally_not_a_real_binary_xyz123 --foo",
+	})
+	if err == nil {
+		t.Fatal("expected forge rejection for nonexistent command, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found in $PATH") {
+		t.Errorf("expected 'not found in $PATH' in error, got %v", err)
+	}
+}
+
+// TestForgeSkill_AcceptsRealBinary — the happy path: command[0] is a
+// real binary in $PATH. Pre-flight passes, SKILL.md gets written.
+func TestForgeSkill_AcceptsRealBinary(t *testing.T) {
+	cases := []string{
+		"sh -c 'echo hi'",
+		"osascript -e 'return 1'",
+		"python3 -c 'pass'",
+		"bc",
+	}
+	for _, cmd := range cases {
+		t.Run(strings.Fields(cmd)[0], func(t *testing.T) {
+			dir := t.TempDir()
+			reg := NewRegistry()
+			s := NewForgeSkill(dir, reg)
+			_, err := s.Execute(map[string]string{
+				"name":        "ok_" + strings.Fields(cmd)[0],
+				"description": "uses a real binary",
+				"command":     cmd,
+			})
+			if err != nil {
+				t.Fatalf("expected accept for %q, got %v", cmd, err)
+			}
+		})
 	}
 }
