@@ -41,6 +41,19 @@ type session struct {
 }
 
 func main() {
+	// Subcommand dispatch — runs BEFORE flag.Parse so subcommands own their
+	// own flag sets without polluting top-level kinclaw flags. The
+	// distinguishing rule: first arg is a known verb that doesn't start with
+	// "-". Adding more subcommands later (memory / doctor / forge) follows
+	// this same shape — no shared flags to leak between modes.
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "probe":
+			runProbe(os.Args[2:])
+			return
+		}
+	}
+
 	soulPath := flag.String("soul", "", "Path to .soul.md file")
 	execMsg := flag.String("exec", "", "Execute a single message and exit")
 	debug := flag.Bool("debug", false, "Show debug output")
