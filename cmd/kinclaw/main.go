@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/LocalKinAI/kinclaw/pkg/applifecycle"
 	"github.com/LocalKinAI/kinclaw/pkg/auth"
 	"github.com/LocalKinAI/kinclaw/pkg/brain"
 	"github.com/LocalKinAI/kinclaw/pkg/memory"
@@ -59,6 +60,7 @@ func main() {
 	debug := flag.Bool("debug", false, "Show debug output")
 	showVersion := flag.Bool("version", false, "Show version")
 	login := flag.Bool("login", false, "Login with Claude OAuth (free tier)")
+	cleanup := flag.Bool("cleanup-apps", false, "On exit, quit any apps that weren't running when kinclaw started (leaves your pre-existing workspace alone)")
 	flag.Parse()
 
 	if *showVersion {
@@ -71,6 +73,31 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+
+	// Snapshot running apps BEFORE the agent starts opening anything new,
+	// so cleanup at exit only quits things kinclaw caused. Capturing here
+	// (not in newSession) ensures the snapshot covers the whole process
+	// lifetime including any pre-soul-load activity.
+	var preexistingApps []string
+	if *cleanup {
+		apps, err := applifecycle.RunningApps()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: -cleanup-apps couldn't snapshot running apps: %v\n", err)
+		} else {
+			preexistingApps = apps
+		}
+		// Best-effort cleanup on Ctrl-C as well as natural exit. The signal
+		// handler doesn't try to drain the chat loop — kinclaw was going down
+		// anyway, we just want apps closed.
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt)
+		go func() {
+			<-c
+			runCleanup(preexistingApps)
+			os.Exit(130) // 128 + SIGINT
+		}()
+		defer runCleanup(preexistingApps)
 	}
 
 	path := findSoulFile(*soulPath)
@@ -548,4 +575,28 @@ func findSoulByName(name string) string {
 		}
 	}
 	return ""
+}
+
+// runCleanup quits any apps that started during this kinclaw process. Pre-
+// existing apps (anything in `preexisting`) are left alone. This is the
+// hook for `-cleanup-apps`: snapshot at start, diff at end.
+//
+// Soft on errors — cleanup is a courtesy, not a contract. If an app refuses
+// to quit (unsaved-work modal, AE timeout), we report it and move on.
+func runCleanup(preexisting []string) {
+	if len(preexisting) == 0 {
+		// Either snapshot failed at startup, or cleanup was never armed.
+		// Either way, nothing safe to do — bail rather than risk quitting
+		// the user's whole desktop.
+		return
+	}
+	quit, failed := applifecycle.QuitNew(preexisting)
+	if len(quit) > 0 {
+		fmt.Fprintf(os.Stderr, "\033[2m  Cleanup: quit %d app(s) opened during this session: %s\033[0m\n",
+			len(quit), strings.Join(quit, ", "))
+	}
+	if len(failed) > 0 {
+		fmt.Fprintf(os.Stderr, "\033[2m  Cleanup: %d app(s) refused to quit (unsaved work or AE timeout): %s\033[0m\n",
+			len(failed), strings.Join(failed, ", "))
+	}
 }

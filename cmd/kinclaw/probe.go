@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LocalKinAI/kinclaw/pkg/applifecycle"
 	"github.com/LocalKinAI/kinclaw/pkg/probe"
 )
 
@@ -64,6 +65,7 @@ Flags:
 	openTimeout := fs.Duration("open-timeout", probe.DefaultOpenTimeout, "How long to wait for process to appear")
 	settle := fs.Duration("settle", probe.DefaultActivateSettle, "Sleep after `osascript activate` for AppKit/Catalyst/Electron to draw windows")
 	noActivate := fs.Bool("no-activate", false, "Skip `osascript activate` (for already-foregrounded apps; cold-launched apps will report nodes=1)")
+	noCleanup := fs.Bool("no-cleanup", false, "Don't quit apps the probe opened (useful for single-app probe when you want to interact afterwards). Default: cleanup ON in -batch, OFF for single-app.")
 
 	if err := fs.Parse(argv); err != nil {
 		os.Exit(2)
@@ -91,7 +93,7 @@ Flags:
 			fmt.Fprintln(os.Stderr, "probe: -batch + -json not yet supported (use -batch alone for CSV).")
 			os.Exit(2)
 		}
-		runBatch(opts)
+		runBatch(opts, !*noCleanup)
 		return
 	}
 
@@ -142,7 +144,34 @@ Flags:
 //   - stdin: bundle IDs, one per line, blank/comment lines ignored
 //   - stdout: CSV (header + one row per app)
 //   - stderr: per-app progress (so you can `tee` the CSV and watch progress)
-func runBatch(opts probe.Options) {
+//
+// Batch mode also cleans up by default — apps the probe opened are quit
+// at the end, so a 50-app scan doesn't leave you with 50 dock icons.
+// Pass `-no-cleanup` to suppress.
+func runBatch(opts probe.Options, cleanup bool) {
+	var preexisting []string
+	if cleanup {
+		apps, err := applifecycle.RunningApps()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: probe couldn't snapshot running apps for cleanup: %v\n", err)
+		} else {
+			preexisting = apps
+		}
+		defer func() {
+			if len(preexisting) == 0 {
+				return
+			}
+			quit, failed := applifecycle.QuitNew(preexisting)
+			if len(quit) > 0 {
+				fmt.Fprintf(os.Stderr, "─── Cleanup: quit %d new app(s)\n", len(quit))
+			}
+			if len(failed) > 0 {
+				fmt.Fprintf(os.Stderr, "─── Cleanup: %d app(s) refused to quit: %s\n",
+					len(failed), strings.Join(failed, ", "))
+			}
+		}()
+	}
+
 	if err := probe.WriteCSVHeader(os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "probe: csv header: %v\n", err)
 		os.Exit(1)
