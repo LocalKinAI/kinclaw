@@ -31,50 +31,105 @@ zero-cgo KinKit library.
 ```bash
 go install github.com/LocalKinAI/kinclaw/cmd/kinclaw@latest
 
-# Claude OAuth login (free tier works for testing)
-kinclaw -login
+# Default pilot runs Kimi K2.6 via Ollama Cloud. Sign in once:
+ollama signin
 
 # The demo soul: a pilot that drives your Mac
-export ANTHROPIC_API_KEY=sk-ant-...
 kinclaw -soul souls/pilot.soul.md
 
 # Then ask it something like:
 # > "What app is in front? Click the Save button if there is one."
 ```
 
+Want a different brain? Pick another soul:
+
+```bash
+# Claude (OAuth, free tier works for testing)
+kinclaw -login
+kinclaw -soul souls/coder.soul.md         # Claude
+kinclaw -soul souls/researcher.soul.md    # Claude
+kinclaw -soul souls/openai.soul.md        # set $OPENAI_API_KEY
+kinclaw -soul souls/ollama.soul.md        # 100% local Llama via Ollama
+```
+
 First run triggers two macOS TCC prompts:
-- **Screen Recording** (for `screen` skill via sckit-go)
+- **Screen Recording** (for `screen` + `record` skills via sckit-go / kinrec)
 - **Accessibility** (for `input` + `ui` skills via input-go + kinax-go)
 
-Grant both; rerun.
+Grant both; rerun. `record mic=true` adds a Microphone prompt; `location` skill adds a Location Services prompt; first browser launch downloads Chromium (~500MB).
+
+### Optional sidecars (peripheral capabilities)
+
+KinClaw stays a small Go binary; capabilities that need heavy deps
+ship as opt-in sidecars selected via env var:
+
+| Capability | Sidecar | Env var | Setup |
+|---|---|---|---|
+| Web research | SearXNG | `SEARXNG_ENDPOINT` | self-host (default: `http://localhost:8080`) |
+| Voice synthesis | Kokoro / LocalKin Service Audio | `TTS_ENDPOINT` | run server on `:8001` |
+| Voice recognition | SenseVoice | `STT_ENDPOINT` | run server on `:8000` |
+| Web automation | Playwright (Python) | none — `web` skill uses `python3 ./web.py` directly | `pip install playwright && playwright install chromium` |
+| Real-time GPS | corelocationcli | none — `location` skill calls binary | `brew install corelocationcli` |
+
+### Per-user context (auto-injected to every soul prompt)
+
+| Variable | Where it comes from |
+|---|---|
+| `{{current_date}}` | `time.Now()` at boot |
+| `{{tz}}` | local timezone (e.g. `PDT (UTC-7)`) |
+| `{{platform}}` | `runtime.GOOS` mapped to `macOS`/`Linux`/`Windows` |
+| `{{arch}}` | `runtime.GOARCH` (`arm64` / `amd64`) |
+| `{{location}}` `{{lat}}` `{{lon}}` `{{city}}` `{{country}}` | `$KINCLAW_LOCATION="lat,lon[,city[,country]]"` env var |
+| `## 已学到的` section | `~/.localkin/learned.md` (8KB tail) |
+
+After a few weeks of use, the agent boots with rich context: knows
+its OS, knows the user's general location + timezone, and remembers
+what worked + what didn't on every app it has driven.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│               Soul (.soul.md)                           │
-│  YAML frontmatter + Markdown system prompt              │
-│  capabilities: screen / input / ui                      │
-├─────────────────────────────────────────────────────────┤
-│                   Brain (LLM)                           │
-│  Claude · OpenAI · Ollama · Groq · DeepSeek · any       │
-├─────────────────────────────────────────────────────────┤
-│                     Skills (Tools)                      │
-│  shell · file_read/write/edit · web_fetch · web_search  │
-│  forge  (self-generate new skills)                      │
-│                                                         │
-│  ─── The three claws ───                                │
-│  screen ─ eye          ─► sckit-go  (ScreenCaptureKit)  │
-│  input  ─ hand         ─► input-go  (CGEvent)           │
-│  ui     ─ visual cortex─► kinax-go  (Accessibility API) │
-│                                                         │
-├─────────────────────────────────────────────────────────┤
-│              Fission primitives                         │
-│  clone  (Soul Clone)     — duplicate N specialists      │
-│  forge  (Skill Forge)    — author new skills from fail. │
-├─────────────────────────────────────────────────────────┤
-│            Memory (SQLite per session)                  │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                  Soul (.soul.md)                            │
+│  YAML frontmatter + Markdown system prompt                  │
+│  template subs: {{platform}} {{tz}} {{location}} ...        │
+│  + auto-loaded ~/.localkin/learned.md (cross-session)       │
+├─────────────────────────────────────────────────────────────┤
+│                       Brain (LLM)                           │
+│  Claude · OpenAI · Ollama · Kimi · GLM · Qwen · any         │
+│  multimodal images attached when brain supports vision      │
+├─────────────────────────────────────────────────────────────┤
+│                       Skills (Tools)                        │
+│                                                             │
+│  ─── The five claws ───                                     │
+│  screen ─ eye          ─► sckit-go  (ScreenCaptureKit)      │
+│  input  ─ hand         ─► input-go  (CGEvent)               │
+│  ui     ─ visual cortex─► kinax-go  (AX, semantic UI)       │
+│  record ─ memory       ─► kinrec    (video MP4 + audio)     │
+│  web    ─ open net     ─► Playwright (DOM render + scrape)  │
+│                                                             │
+│  ─── Classic kernel ───                                     │
+│  shell · file_read/write/edit · web_fetch · web_search      │
+│                                                             │
+│  ─── Self-evolution ───                                     │
+│  forge  — author new skills (with kernel quality gate)      │
+│  learn  — append cross-session lessons to learned.md        │
+│  clone  — duplicate souls into N parallel workers (lib)     │
+│                                                             │
+│  ─── External SKILL.md plugins (./skills/) ───              │
+│  tts / stt — Kokoro / SenseVoice via :8001 / :8000          │
+│  location  — corelocationcli (real-time GPS)                │
+│  app_open_clean — open + dismiss welcome modal              │
+│  any forge'd or hand-written SKILL.md is auto-loaded        │
+│                                                             │
+├─────────────────────────────────────────────────────────────┤
+│  Kernel guards (4-trigger circuit breaker)                  │
+│  · same-error consecutive  · cumulative failures           │
+│  · same-output no-progress · per-turn usage cap            │
+│  + ui click ambiguity refusal · destructive-target refusal  │
+├─────────────────────────────────────────────────────────────┤
+│       SQLite memory per session + learned.md across them    │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### KinKit — the open-source claws
@@ -101,28 +156,30 @@ A soul file is YAML frontmatter + a Markdown system prompt.
 ---
 name: "KinClaw Pilot"
 brain:
-  provider: "claude"
-  model: "claude-sonnet-4-5"
-  api_key: "$ANTHROPIC_API_KEY"
+  provider: "ollama"
+  model: "kimi-k2.6:cloud"
 permissions:
   shell: false
   network: false
   screen: true       # sckit-go capability
   input: true        # input-go capability
   ui: true           # kinax-go capability
+  record: true       # kinrec capability — video MP4 + audio
 skills:
-  enable: ["screen", "input", "ui", "file_read"]
+  enable: ["screen", "input", "ui", "record", "file_read", "tts", "stt"]
 ---
 
 # You are KinClaw Pilot...
 ```
 
-The `screen / input / ui` bits are the KinClaw addition. Each
-corresponds to one TCC prompt and one KinKit library. If a bit is
-false, the matching skill returns `permission denied: soul does not
-grant X capability` regardless of what the LLM asks for.
+The `screen / input / ui / record` bits are the KinClaw additions. Each
+corresponds to one or two TCC prompts and one KinKit library. If a bit
+is false, the matching skill returns `permission denied: soul does not
+grant X capability` regardless of what the LLM asks for. `record`
+shares Screen Recording TCC with `screen`; mic capture additionally
+requires Microphone TCC.
 
-## The three claws in action
+## The four claws in action
 
 ### `ui` — semantic UI control (the killer feature)
 
@@ -160,6 +217,61 @@ LLM: screen action=screenshot
 
 The LLM can then read the PNG back (if `file_read` is enabled) and
 reason about it visually.
+
+### `record` — non-blocking video capture
+
+`start` returns a recording_id immediately; the agent keeps operating
+the Mac while kinrec writes MP4 in the background. `stop` finalizes
+the file. Audio sources are independent: `audio=true` taps system
+output (everything coming out of your speakers), `mic=true` adds the
+microphone track. Both can be on at once for live-narrated demos.
+
+```
+LLM: record action=start audio=true show_clicks=true
+     → recording_id: rec-1745627812-1
+       path: ~/Library/Caches/kinclaw/recordings/rec-20260425-225612.mp4
+LLM: ui action=click title=Save
+LLM: record action=stop id=rec-1745627812-1
+     → path: ~/.../rec-20260425-225612.mp4
+       duration: 12.4s  bytes: 8.3M  frames: 372
+```
+
+Other actions: `list` (active recordings), `stats id=...` (live frame
+counters).
+
+## Audio I/O — talk to your Mac, hear it back
+
+`tts` and `stt` ship as **external SKILL.md plugins** in `skills/tts/`
+and `skills/stt/`. They wrap the [LocalKin Service Audio API](https://github.com/LocalKinAI/) — a local-first
+audio server running Kokoro (TTS) on `:8001` and SenseVoice (STT) on
+`:8000` by default. Override with `TTS_ENDPOINT` / `STT_ENDPOINT` env
+vars.
+
+```
+LLM: tts text="接下来打开计算器"
+     → CJK auto-detected; speaker=zf_xiaoxiao; Kokoro synthesizes;
+       afplay plays through speakers; record captures it as system
+       audio if a recording is in flight.
+LLM: tts text="Then I'll search for kinclaw" speaker=af_bella
+     → English voice on demand.
+LLM: stt path=~/Library/Caches/kinclaw/recordings/rec-XXXX.mp4
+     → text: "今天天气怎么样"
+       language: zh
+```
+
+> **Note on voice selection.** LocalKin Service Audio's `/synthesize`
+> takes the parameter `speaker`, not `voice` — passing `voice=...` is
+> silently ignored and falls back to the English-only Kokoro pipeline,
+> which mispronounces Chinese text as the literal phrase "chinese
+> letter". The `tts` SKILL.md auto-picks `zf_xiaoxiao` whenever the
+> text contains non-ASCII characters; override with `speaker=...` for
+> a different voice.
+
+Why external SKILL.md and not native? Because they're HTTP wrappers,
+exactly the shape `forge` would author. Keeping them external means
+the kernel stays thin and users can fork either file without
+recompiling. They also serve as forge templates for any next HTTP
+service you want to integrate.
 
 ## Soul Clone (fission primitive #1)
 

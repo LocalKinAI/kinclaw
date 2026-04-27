@@ -1,5 +1,1016 @@
 # Changelog
 
+## [1.2.0] - 2026-04-26
+
+**The lobster grows up.** Five claws (added `web` for the open
+internet via Playwright), audio in/out, real-time GPS, multimodal
+vision passthrough, cross-session memory, self-evolving skills with
+quality gates, and an honesty invariant. The pilot soul shrunk from
+433 prescriptive lines to ~90 lines of identity + safety axioms,
+trusting the kernel guards to catch failures.
+
+This release is the architectural shape Genesis Protocol asked for:
+a thin kernel, a growing helper layer, identity-not-prescription in
+the soul, and a memory file that travels across sessions.
+
+### Major: 5th claw — `web` (Playwright)
+
+`pkg/skill` doesn't host this one — it's an external SKILL.md +
+Python script (`skills/web/SKILL.md` + `web.py`). Single skill, 7
+flexible parameters covering the common web automation patterns:
+
+```
+web url=X                                   → fetch rendered text
+web url=X selector=".price" wait_for=...    → extract specific element
+web url=X click=".search" type_text="kc"    → fill form, then read
+web url=X screenshot=true                   → returns image:// marker
+web url=X js="document.title"               → run JS, JSON result
+```
+
+Each call launches a fresh Chromium (~2-3s cold start), executes the
+flow, closes. Stateless by design — multi-step tasks chain
+parameters in one call rather than splitting across rounds. No
+sidecar process, no port management. Setup once: `pip install
+playwright && playwright install chromium`.
+
+For sites Playwright can't crack (Cloudflare / DataDome / advanced
+anti-bot), the user can drive their own logged-in Safari via
+`osascript activate Safari` + `ui` skill — the slogan-true path no
+cloud agent has ("your real browser, your real session").
+
+### Major: audio I/O — `tts` + `stt`
+
+Two external SKILL.md plugins wrapping LocalKin Service Audio:
+- `tts` POSTs text to localhost:8001/synthesize (Kokoro), plays the
+  WAV via `afplay`. CJK text auto-routes to a Chinese voice;
+  ASCII goes server default.
+- `stt` POSTs an audio file to localhost:8000/transcribe (SenseVoice).
+
+Both endpoints overridable via `TTS_ENDPOINT` / `STT_ENDPOINT`. Both
+default to `wait=false` (background playback) so demos don't burn
+recording time on dead air; closing tts uses `wait=true` to give the
+final frame time to render before `record stop`.
+
+### Major: 4th claw — `record` (kinrec)
+
+`pkg/skill/record.go` wraps kinrec (ScreenCaptureKit + AVAudioEngine)
+for non-blocking video capture. Actions: `start` / `stop` / `list` /
+`stats`. Independent system-audio + microphone toggles, click
+highlighting, fps + display selection. `record start` blocks until
+the first frame is actually captured, so subsequent tool calls
+(activate / click / etc.) reliably appear in the recording.
+
+`permissions.record: bool` added to soul schema. Mic capture
+additionally requires Microphone TCC permission.
+
+### Major: `web_search` — SearXNG backend
+
+Multi-engine meta-search via local SearXNG (`SEARXNG_ENDPOINT` env
+var, default localhost:8080). Falls back to DuckDuckGo HTML scrape
+when SearXNG is unreachable. The result text includes `(via searxng)`
+or `(via duckduckgo)` so both LLM and user can see which backend
+served the query.
+
+### Major: vision passthrough for tool-result images
+
+`brain.Message` gains `Images []string`. The OpenAI brain builds a
+multimodal `content` array with `image_url` blocks; the Claude brain
+emits `image` source blocks in `tool_result`. Skills opt in by
+emitting `image://<path>` markers in their text output; the registry
+strips those markers and populates `ToolResult.Images`. Currently
+used by `screen` (screenshots) and `web` (Playwright PNGs).
+
+A multimodal brain (Kimi K2.5/2.6, Claude Sonnet 4.5+, GPT-5) now
+actually sees the pixels — for the first time, "drive UI by sight"
+works alongside "drive UI by AX tree".
+
+### Major: cross-session memory — `~/.localkin/learned.md`
+
+Soul.go reads the file at every boot, appends the content to the
+system prompt under a `## 已学到的` header (capped at 8KB tail-
+preserved). The `learn` SKILL.md is the agent's standardized way to
+write back, with an idempotent dedup check.
+
+The kernel doesn't enforce schema; the agent organizes notes by
+bundle_id or topic. Net effect: every user's KinClaw becomes uniquely
+expert in their own apps + workflows over time.
+
+### Major: real-time GPS via `corelocationcli`
+
+`skills/location/SKILL.md` wraps `corelocationcli` (`brew install
+corelocationcli`). 4 modes: coords / address / city / full. Each
+output is wrapped in a labelled "GPS:" preamble so smaller models
+don't return empty responses on bare lat/lon.
+
+Static soul context: `KINCLAW_LOCATION="lat,lon[,city[,country]]"`
+env var feeds `{{location}}` / `{{lat}}` / `{{lon}}` / `{{city}}` /
+`{{country}}` substitutions. Static is for "where the user generally
+is"; the skill is for "where the user is right now."
+
+### Major: kernel template substitutions — date / tz / platform / arch / location
+
+Soul prompts can reference `{{current_date}}` `{{tz}}` `{{platform}}`
+`{{arch}}` `{{location}}` `{{lat}}` `{{lon}}` `{{city}}`
+`{{country}}`. Soul YAML stays portable — same file runs on any
+host; the rendered prompt adapts to the runtime context. This is the
+seed of cross-OS portability (macOS today, Linux/Windows when KinKit
+ports arrive).
+
+### Major: Genesis loop infrastructure
+
+Soul prompt's `## 裂变` section frames `forge` + `learn` + final
+report as **all part of task completion** — task isn't "done" until
+all three are. Identity-level invariant.
+
+`forge` got a kernel pre-flight quality gate: `command[0]` must be
+in `$PATH` AND must not be a kinclaw internal skill name (`ui`,
+`input`, `screen`, `record`, `shell`, `tts`, `stt`, `forge`,
+`learn`, `web_*`). Live observation: agent forged a `reminders_add`
+skill whose Python ran `subprocess.run(["ui", "action=click", ...])`,
+silently failing every call but printing "success" — produces a
+forever-lying skill. Pre-flight refuses, agent has to retry with a
+real binary as `command[0]`.
+
+Tool description rewritten to teach agents the **shortest execution
+path** — direct AppleScript / shell APIs over UI-driving when the
+app supports it.
+
+### Major: pilot soul slim — 433 lines → ~90 lines
+
+Removed: 7-round demo flow, schema discovery 4-step protocol,
+matcher priority table, GUI hard constraints, speed rules, app-
+specific advice (Calculator etc.). Kept: identity (you're a lobster,
+4+1 claws, forge/learn/clone), safety axioms, style preferences.
+
+The kernel guards (ambiguity refusal, destructive refusal, no-
+progress loop detector, per-turn usage cap, record-start-blocks-
+until-first-frame) catch the cases the prescriptive rules used to.
+Trusting them frees the agent to discover task structure rather than
+follow prescriptive flow.
+
+### Major: honesty invariant in safety axioms
+
+Same shelf as "don't type passwords" / "don't sudo":
+
+> **不编造工具没抓到的事实**。任何写进给用户回复里的具体数字 /
+> 评分 / 奖项 / 价格 / 电话 / 地址 / 年份 / 商家名 / URL 必须能
+> 在你这一轮的某个 tool result 里字面找到。找不到就别写，或者
+> 明说"未确认"。宁可模糊不可造假。
+
+Live verification: agent driving a "find Thai restaurants near me"
+flow now fetches multiple restaurant websites (amarin / shanathai /
+tommy-thai) directly when Yelp blocks Playwright; reports only the
+addresses / phones / hours / ratings actually present in the fetched
+HTML. The 4.6⭐ / 40,323 reviews on Tommy Thai's listing came from
+Tommy's own embedded Google Maps widget — a real number, not a
+training-data hallucination.
+
+### Added — generic helper skills
+
+- `skills/app_open_clean/SKILL.md` — `open -a <app>` + AppleScript
+  walks frontmost windows/sheets, dismisses any of {Continue / Get
+  Started / Skip / Later / Not Now / Got It / Maybe Later / Done /
+  Cancel}. Fixes the "agent typed into the welcome modal" failure
+  mode for first-launch macOS apps (Reminders / Mail / Photos / Maps).
+- `skills/learn/SKILL.md` — idempotent append helper for the
+  cross-session notebook. `learn topic=<bundle_id> note=<line>`
+  appends if new, no-ops if exact line already exists.
+- `skills/location/SKILL.md` — corelocationcli wrapper, 4 output
+  modes, K2.5-friendly text-framed output.
+
+### Added — kernel guards (4-trigger circuit breaker)
+
+`pkg/skill/circuit.go`:
+1. Same skill + same error 3× consecutive (tight error loop).
+2. Same skill fails 3× total this turn (cumulative).
+3. Same skill returns same successful output 3× consecutive (no-
+   progress loop — `ui find` returning "no elements matching"
+   without changing matcher).
+4. Same skill called ≥ 8× this turn regardless of outcome (over-
+   iteration / fix-and-retry spiral).
+
+Each trigger emits a `[SYSTEM]` hint into the conversation; agent
+sees it and is expected to replan rather than burn round budget.
+
+### Added — `ui` skill safety + ergonomics
+
+- `ui click` ambiguity refusal: when ≥ 2 elements match, kernel
+  refuses with the candidate list and instructions to add filters.
+  Override with `force=true`. Caught the live failure where an
+  AXCloseButton + the real button both matched a broad query and
+  the kernel happily clicked the close button (= window gone, demo
+  broken, agent narrating to empty desktop).
+- `ui click` destructive-target refusal: AXCloseButton /
+  AXMinimizeButton / AXFullScreenButton / titles matching
+  Close|Quit|Exit|Log Out|Sign Out (English word-boundary) or
+  退出|关闭|注销|结束 (Chinese substring) refuse without
+  `force=true`.
+- New action `ui click_sequence` — N buttons in one tool call,
+  saves N-1 round trips for calculator-style flows. Three matcher
+  modes (`titles=` / `descriptions=` / `identifiers=`).
+- `ui tree` / `ui find` output now shows AXDescription and AXValue
+  alongside title and identifier. Calculator's number buttons have
+  empty titles but rich descriptions; without this column the agent
+  saw "no usable matcher" and (wrongly) fell back to `input type`,
+  which fails under macOS focus protection.
+
+### Added — `record start` blocks until first frame
+
+Without this, kinrec returned its `recording_id` while the
+ScreenCaptureKit pipeline was still warming up; the next tool calls
+(activate / click) ran during the warmup window and never appeared
+in the final video. Frame 1 of every demo showed Calculator already
+in its result state, with no demo content. Now `record start` polls
+`r.Stats().Frames` until first frame is captured (1s cap), so
+subsequent calls are guaranteed to be in-frame.
+
+### Fixed — chatLoop stranded the conversation on error
+
+When `chatLoop` errored mid-sequence (e.g. tool-call round budget
+exhausted), `handleUserMessage` printed the error and returned
+without persisting the partial tool history or any assistant
+message. The conversation became `user→user→user→...` with no
+assistant turns, which the brain on the next user message read as
+"keep working on the prior task" → re-ran the same compound action,
+exhausted the budget again, etc. Live observation: typing "你好"
+right after a failed demo hit the round limit immediately.
+
+Now the partial `toolHistory` is persisted and a synthesized abort
+note is added: `"Turn aborted: <err>. Reply 'continue' to resume or
+rephrase to start fresh."`
+
+### Changed — `maxToolRounds` 20 → 50
+
+20 was sized for kernel-only flows. Compound demos (record start +
+tts + multi-step ui find/click/verify + tts + record stop) routinely
+take 30+ rounds even when nothing goes wrong.
+
+### Fixed — `{{var}}` substitution bugs (two)
+
+- `{{var}}` inside a SKILL.md `command:` element used to leak
+  through literally — only `args:` was substituted. Affected the
+  shipped forge'd skills (git_commit, weather, summarize, translate)
+  on every call. Substitution now applies to both Command and Args.
+- Leftover `{{name}}` placeholders (param not provided) used to stay
+  literal in the rendered command. SKILL.md authors used this to
+  detect "param missing" via sentinel comparison
+  (`[ "$X" = "{{name}}" ] && X=""`); when the caller DID provide
+  `name="true"`, the substitution rewrote BOTH sides of the test
+  and the param value got clobbered. Kernel now strips unsubstituted
+  templates to "" so authors detect missing with the cleaner
+  `[ -n "$X" ]` idiom.
+
+### Changed — pilot soul collapsed to one file
+
+`souls/pilot.soul.md` is now the Kimi-driven canonical pilot. The
+old Claude-driven `pilot.soul.md` was deleted; the Kimi pilot was
+renamed in via `git mv` so history is preserved.
+
+### Build
+
+- `go build ./...` ✅
+- `GOOS=linux go build ./...` ✅ (non-darwin stubs intact)
+- `go test ./...` ✅ — all pre-existing tests + 50+ new cases pass
+
+### Added — the fourth claw
+
+- **`record` skill** (`pkg/skill/record.go`) — wraps
+  [kinrec](https://github.com/LocalKinAI/kinrec) (ScreenCaptureKit +
+  AVAudioEngine). Non-blocking: `start` returns a `recording_id`
+  immediately so the agent keeps operating the Mac while kinrec writes
+  MP4 in the background; `stop` finalizes the file. Actions: `start`,
+  `stop`, `list`, `stats`. Independent system-audio (`audio=true`) +
+  microphone (`mic=true`) toggles, optional click-highlight, frame-rate
+  override, display selection. `_other.go` no-op stub keeps non-darwin
+  builds clean.
+- **`permissions.record: bool`** added to soul schema. Defaults to
+  false; older souls written before the bit existed continue to parse
+  cleanly. Mic capture additionally requires the Microphone TCC bucket
+  on first use.
+
+### Added — audio I/O via external SKILL.md plugins
+
+- **`skills/tts/SKILL.md`** — synthesize speech via LocalKin Service
+  Audio (`:8001` / Kokoro by default), play through `afplay`. When
+  `record audio=true` is in flight, kinrec captures the spoken output
+  as system audio — high-quality multilingual narration in demo videos
+  with no extra plumbing. Replaces `shell say` in the pilot demo flow.
+  The voice parameter is `speaker:` (matches the server's actual JSON
+  field — `voice:` is silently ignored and falls back to English-only
+  Kokoro). The skill auto-picks `zf_xiaoxiao` whenever the text
+  contains CJK characters so naive `tts text="你好"` calls don't
+  mispronounce Chinese as the literal phrase "chinese letter".
+- **`skills/stt/SKILL.md`** — transcribe audio files via LocalKin
+  Service Audio (`:8000` / SenseVoice by default). Pairs with
+  `record mic=true` to turn a mic track into text.
+- Both shipped as external SKILL.md (not native) on principle: HTTP
+  wrappers belong in fat-skill territory, not the kernel. They also
+  serve as forge templates for any next local HTTP service.
+- Endpoints overridable via `TTS_ENDPOINT` / `STT_ENDPOINT` env vars
+  for users running their audio servers on different ports or hosts.
+
+### Changed — pilot soul prompt hardened
+
+- New `## GUI 操作硬约束` section codifying the lessons from the first
+  v1.2 demo run: every `ui click` must follow `ui find`; never press
+  AXCloseButton / AXMinimizeButton / AXFullScreenButton; never press
+  Close/Quit/退出/关闭 labeled buttons; after `shell open -a` the
+  agent must verify `focused_app` before proceeding; every successful
+  click must be followed by an observation step.
+- App-launch recipe rewritten around the macOS focus-protection
+  reality: from a Terminal-driven agent, the OS frequently refuses
+  to bring another app frontmost. The pilot used to insist on
+  `focused_app == X` after `open -a` / `osascript activate`, which
+  put it in a doomed loop (live observation: `打开 Safari` → activate
+  4 times in a row, all returning "Terminal still focused", each time
+  Kimi tried a different trick). The new prompt teaches:
+  - **Most tasks don't need frontmost.** `ui` works on background
+    apps via `bundle_id` (`ui click bundle_id=com.apple.Safari ...`).
+    "Open Safari" succeeds when Safari is launched and reachable, not
+    when it's frontmost.
+  - **One activate, no retry.** If the user explicitly wants visual
+    front (e.g. recording a demo), the pilot does ONE
+    `osascript activate` + `focused_app` check. If still not frontmost,
+    it stops, asks the user to click the app's window, and waits.
+    No retry, no cmd+tab, no dock-click — focus protection won't yield.
+  - Default operation order updated to lead with "**`ui` + `bundle_id`**"
+    as the canonical pattern.
+- First-run ritual marked **session-once-only** with explicit "do not
+  re-run this on every user message" callout — Kimi was happily
+  burning 5 tool calls per turn re-running the boot self-check, on
+  top of the actual task.
+- Self-summary text fixed: "三把爪子" (three claws) → "四把爪子"
+  (four claws) + tts/stt to reflect v1.2's actual lineup.
+
+### Changed — pilot soul collapsed to one file
+
+- **`souls/pilot.soul.md`** is now the Kimi K2.6 (Ollama Cloud) version
+  by default. The old Claude-driven `pilot.soul.md` was deleted; the
+  Kimi pilot was renamed in via `git mv` so history is preserved. The
+  rationale: Kimi K2.6 has the strongest free Chinese tool-use today,
+  and shipping it as the default means a `kinclaw -soul souls/pilot.soul.md`
+  works for someone with `ollama signin` already done — no API key
+  setup required.
+- Pilot soul body rewritten to introduce four claws, the two audio
+  external skills, and a `## 录 demo 视频` section showing the
+  `record + tts + ui` pipeline for self-recorded narrated demos.
+- `souls/pilot_kimi.soul.md` removed (was the predecessor of the new
+  default).
+
+### Fixed — `forge` quality gate (refuse to write broken skills)
+
+Day-1 of the Genesis loop produced a forged `reminders_add` skill
+that **silently lied about success on every call**: the LLM wrote a
+Python script that did `subprocess.run(["ui", "action=click", ...])`,
+treating kinclaw's internal skill names as shell binaries. Those
+don't exist in `$PATH`; the subprocess errored every call but the
+script's terminal `print("Created reminder: X")` ran regardless,
+producing a tool that confidently misreports success forever after.
+
+Two-line kernel pre-flight in `pkg/skill/native.go::Execute`:
+
+1. **Reject internal skill names as `command[0]`** — `ui`, `input`,
+   `screen`, `record`, `shell`, `tts`, `stt`, `forge`, `learn`,
+   `web_*`, etc. The error message names the violator and points at
+   the right alternative (`osascript`, `sh`, `python3`, `curl`...).
+2. **Reject `command[0]` not found in `$PATH`** via `exec.LookPath`
+   — catches typos / hallucinated binaries (`reminderctl`, etc.)
+   before the SKILL.md gets written.
+
+`forge` tool description rewritten with concrete examples of the
+shortest-path execution for common Apple apps (Reminders / Notes /
+Music / Safari / Calculator via `osascript` or `bc`, no UI driving)
+plus the hard rules and a complete correct `reminders_add` recipe
+showing 3-line shape.
+
+Pilot soul's `## 裂变` section reframed: forge / learn / report are
+**all part of task completion** — task isn't "done" until the
+checklist's 4 items are done. Identity-level invariant, same shelf
+as the safety axioms.
+
+`pkg/skill/skill_test.go` adds 15 new test cases:
+- `TestForgeSkill_RejectsInternalSkillName` — 10 sub-tests, one per
+  internal skill name, each confirming forge rejects the call.
+- `TestForgeSkill_RejectsCommandNotInPath` — typo / missing binary.
+- `TestForgeSkill_AcceptsRealBinary` — 4 sub-tests confirming the
+  happy path still works for `sh`, `osascript`, `python3`, `bc`.
+
+### Added — `learn` SKILL.md (cross-session lesson appender)
+
+External SKILL.md at `skills/learn/`. Idempotent append helper for
+the agent's notebook at `~/.localkin/learned.md` — kernel auto-loads
+that file at boot. Usage: `learn topic=<bundle_id> note=<one line>`.
+Creates section if missing, appends bullet if section exists, no-ops
+if the exact line is already there. Pure shell + awk; no Go state.
+
+Pilot soul's `## 你能裂变` section now frames forge + learn + the
+final report as **one task — the task isn't "done" until forge,
+learn, AND report are all done**. Identity-level rule, same shelf as
+the safety axioms. Tighter than the previous "by the way" framing,
+which the agent ignored on a live Reminders demo (created the
+reminder ✓, forgot to forge `reminder_add` ✗, forgot to learn the
+AXError -25205 quirk ✗).
+
+The `forge` skill's tool description also gains explicit when-to-use
+/ when-NOT-to-use guidance — naming examples (calc_compute,
+notes_create, reminder_add) and the warning to skip when a skill
+with the same name already exists.
+
+### Added — `app_open_clean` SKILL.md (welcome-modal dismisser)
+
+External SKILL.md at `skills/app_open_clean/`. Wraps `open -a` with
+a two-pass AppleScript that walks the frontmost app's windows +
+sheets and clicks any modal-dismiss button it finds (priority list:
+Continue · Get Started · Skip · Later · Not Now · Got It · Maybe
+Later · Done · Cancel). Solves the "agent typed into the welcome
+sheet instead of the app" failure mode observed live with Reminders,
+Mail, Photos and other Apple apps on first session-launch.
+
+Generic — handles any app following the standard macOS modal
+pattern. No-op when no modal is present, so safe to substitute for
+plain `shell open -a` everywhere.
+
+### Added — `~/.localkin/learned.md` cross-session memory
+
+Persistent notebook the agent writes to after discovering an app's
+AX schema quirks, working matchers, or workflow gotchas. Kernel
+auto-loads it at boot (in `pkg/soul/soul.go`) and appends the
+content to every soul's system prompt under a `## 已学到的` header.
+Capped at 8KB (tail-preserved) to bound context usage on long-lived
+notebooks.
+
+This is the **persistence layer for Genesis Protocol** — every user's
+KinClaw learns from its own operational history. Day 1 the notebook
+is empty; week 4 it has notes for ~20 apps and the agent boots
+already-knowing the schema quirks of every macOS app on this user's
+Mac.
+
+Pilot soul gets a new `## 你能裂变` section framing the loop as
+identity (capability), not behavioral prescription:
+- Successful multi-step on a new app → forge `<app>_<verb>` SKILL.md
+- Learned quirks → append to learned.md
+- First time opening unfamiliar app → use `app_open_clean` first
+
+`pkg/soul/soul_test.go` adds three regression cases: notebook
+injects when present, system prompt clean when missing, runaway
+notebooks tail-truncate at 8KB.
+
+### Added — vision passthrough for tool-result images
+
+Until now KinClaw shipped a multimodal brain (Kimi K2.6, Claude Sonnet 4)
+talking through a text-only adapter. Screenshots returned by the
+`screen` skill were just file paths in the tool message — the model
+had no way to see the pixels. Symptom: agent ran demos that involved
+"look at the page", read AX descriptions, and confidently fabricated
+specific values (prices, names, URLs) it had never actually seen.
+
+The fix threads images end-to-end:
+
+- `pkg/brain.Message` gets an `Images []string` field carrying paths
+  to image files attached to that message.
+- `pkg/brain/images.go` reads and base64-encodes PNG / JPG / GIF /
+  WebP files for inlining.
+- `openAIBrain.Chat` builds an OpenAI vision-style content array
+  (`[{type:text}, {type:image_url, image_url:{url:data:image/png;base64,...}}, ...]`)
+  when a message has images attached. Falls back to plain string
+  content otherwise — preserves wire compatibility with strict
+  OpenAI-compat servers (Ollama Cloud, Groq) that may reject array
+  content in unexpected places.
+- `claudeBrain.Chat` does the equivalent for Anthropic's API, putting
+  image source blocks (`{type:image, source:{type:base64, ...}}`)
+  inside the `tool_result` block alongside the text.
+- `pkg/skill.ToolResult` gets `Images []string`. Skills opt in by
+  emitting `image://<path>` marker lines in their text output;
+  `extractImageMarkers` strips the markers and populates the list.
+- `pkg/skill/screen.go` now emits an `image://<path>` line so its
+  PNG output reaches vision-capable brains as actual pixels, not
+  just a path string.
+- `cmd/kinclaw/main.go` chatLoop copies `r.Images` into the
+  `brain.Message.Images` field of the tool message it constructs.
+
+Tests:
+- `pkg/brain/images_test.go` — generates a 4×4 PNG fixture and
+  verifies `imageToDataURL` / `imageToBase64` / `mimeForExtension`
+  behavior including unsupported-extension and missing-file errors.
+- `pkg/skill/skill_test.go::TestExtractImageMarkers` — table-tests
+  marker scanning: no markers, single, multiple, dedup, indent
+  trimming, marker-only.
+
+The `Images []string` field is `json:"-"` on `brain.Message` — image
+paths shouldn't be serialized into chat history (the bytes go on the
+wire each round, but the path list is regenerated from tool results).
+
+### Added — `web_search` SearXNG backend with DDG fallback
+
+`pkg/skill/web_search.go` now supports routing through a local
+SearXNG meta-search instance via the `$SEARXNG_ENDPOINT` env var.
+DDG HTML scrape stays as the default and as a fallback when SearXNG
+is unreachable. The result string includes `(via searxng)` /
+`(via duckduckgo)` so the LLM and user can see which backend served
+the query.
+
+Why: the live DDG scrape is brittle (rate limits, occasional 200-with-
+empty-results, structural HTML changes). For users running a local
+SearXNG (e.g. on `localhost:8080`), routing through it gives:
+- multi-engine aggregation (Google / Bing / Yahoo / Wikipedia /...)
+- privacy (queries stay local, SearXNG proxies to engines)
+- better reliability (less likely to hit a single-engine ratelimit)
+
+Usage:
+```bash
+SEARXNG_ENDPOINT=http://localhost:8080 ./kinclaw -soul souls/pilot.soul.md
+```
+
+Soul YAML stays unchanged — keeping the configuration off-soul means
+the same soul file works whether SearXNG is up, down, or absent.
+
+`pkg/skill/web_search_test.go` adds three regression cases — happy
+path JSON parse, non-200 surfaces clearly, and the env-var-driven
+backend dispatch.
+
+### Fixed — `record start` returned before kinrec captured first frame
+
+Live observation across multiple v1.2 demo runs: the very first frame
+of every recording showed Calculator already in its final "2" state.
+The whole "open Calculator → click 1+1= → see 2" sequence happened
+DURING kinrec's startup window and got missed entirely — viewers see
+a finished calculator from frame 1, with no demo content.
+
+Root cause: `record start` returned the `recording_id` as soon as
+`kinrec.NewRecorder().Start()` returned, but kinrec's
+ScreenCaptureKit pipeline takes another 200-500ms to actually deliver
+frames. With the pilot prompt's parallel batch
+(`record start + osascript activate + tts` in one tool_calls array),
+osascript and tts goroutines completed in tens of milliseconds while
+kinrec was still warming up. By the time kinrec captured its first
+frame, the LLM was already in round 3+ doing click_sequence.
+
+`pkg/skill/record.go`: after `r.Start(ctx)`, the skill now polls
+`r.Stats().Frames` every 20ms with a 1-second cap. Returns success
+once the first frame is observed (or, on timeout, anyway — better
+to lose the first beat than to hang). The returned message includes
+`first_frame_after: Xms` so the LLM can see the warmup actually
+happened.
+
+Pilot prompt: `record start` is now mandated as **its own LLM round**
+(not parallel-batched with activate/tts). The 6-round demo flow
+becomes 7 rounds, but the visible-from-frame-1 ordering is now
+guaranteed:
+- Round 1: `record start` alone (kernel blocks until first frame)
+- Round 2: parallel `osascript activate <app>` + opening `tts`
+- Round 3+: tree, click_sequence, closing tts, stop, report
+
+Speed-rule 1 updated to highlight the exception ("but `record start`
+must be alone"). Recordings will be ~1-2s longer than before, but
+will actually show the demo from the start.
+
+### Fixed — `{{var}}` substitution in shell payload self-defeated optional-param sentinels
+
+When v1.2 added substitution to `Command` parts (so `weather`'s
+`[curl, "https://wttr.in/{{location}}"]` would actually work), it
+introduced a subtler bug: SKILL.md authors using `{{var}}` literally
+inside a shell command as a "param-missing" sentinel
+(`[ "$X" = "{{wait}}" ] && X=""`) had their checks self-defeat. When
+the caller DID pass `wait=true`, the substitution rewrote BOTH the
+arg AND the literal sentinel, so the comparison became
+`[ "true" = "true" ]` → true → param value clobbered.
+
+Live observation: `tts wait=true` was silently treated as
+`wait=false`. The "closing tts that blocks 2-4s to give the result
+frame time to render" recipe documented in the pilot prompt didn't
+actually block — kinrec stopped the recording right after the last
+button press and the audio cut mid-sentence. Same bug masked the
+explicit `speaker=` parameter, falling back to the auto-detect path
+silently.
+
+`pkg/skill/external.go`: after named substitution, any leftover
+`{{name}}` placeholder is regex-stripped to "". SKILL.md authors now
+detect missing optional params with the cleaner `[ -n "$X" ]` idiom
+instead of the broken sentinel pattern.
+
+`skills/tts/SKILL.md` and `skills/stt/SKILL.md`: removed the
+`[ "$X" = "{{name}}" ] && X=""` lines — no longer needed.
+
+`pkg/skill/skill_test.go`: two new regression cases —
+`TestLoadExternalSkill_UnpassedTemplateStripped` (kernel strips
+unsubstituted placeholders to empty) and
+`TestLoadExternalSkill_SentinelPatternNotSelfDefeating` (SKILL.md
+using `[ -n "$X" ]` correctly distinguishes "passed as 'true'" from
+"omitted").
+
+Net effect on demo recordings: closing TTS now actually blocks for
+its playback duration (~3s for "等于二"), giving kinrec time to
+capture the result frame. Recordings will be a few seconds longer
+than the ones produced under the bug, but that's the correct
+behavior — the bug-version recordings sometimes truncated mid-
+narration when kinrec's stop fired before afplay's background
+process had a chance to flush.
+
+### Changed — pilot prompt: explicit `fps=30` and TTS numeral preprocessing
+
+Two demo-quality nits hardened in the pilot prompt after a clean
+8.7s end-to-end run revealed them:
+
+- **`record start` must pass `fps=30`** for demos. kinrec's default
+  is conservative (~7 fps); recordings at that rate look choppy on
+  release video — fine for headless verification but not shippable
+  content. Speed-rules section gains rule 7 making fps=30 mandatory
+  for demos.
+- **Chinese TTS text must pre-render numerals + symbols as words**
+  before calling `tts`. Kokoro's Chinese tokenizer has known
+  ambiguities: `"1+1"` reads as "一亿" (one hundred million),
+  `"10x"` reads as "十次", `"GPT-4"` reads as "G P T 四" only if
+  spaced. Pilot prompt's speed-rule 8 now requires LLMs to rewrite:
+  `"1+1"` → `"一加一"`, `"100%"` → `"百分之一百"`, etc. English
+  speakers don't have this issue; rule scoped to CJK speakers only.
+
+### Added — circuit breaker per-turn usage cap
+
+A fourth trigger added to `pkg/skill/circuit.go`: any single skill
+called `cbUsageMax` (8) or more times in one user turn fires the
+breaker, regardless of whether each call succeeded or failed and
+regardless of whether outputs differed.
+
+Live observation: a v1.2 demo run where the LLM did
+ui tree → click_sequence → ui find → ui read → ui click → ui tree
+→ ui find → ui read → ui click ... bouncing between methods to
+"fix" an ambiguous verification. Each individual call was
+legitimate (no error, no identical-output streak), so triggers 1-3
+didn't fire. By call 12 the LLM had ground for ~60 seconds without
+making any actual progress.
+
+The cap catches over-iteration directly. A healthy demo uses ui 3-4
+times (tree + click_sequence + maybe one more). 8+ is the unmistakable
+"stuck in a fix-and-retry loop" signal.
+
+`circuit_test.go` adds two cases: trip at the 8th call to the same
+skill, and counting failures + successes together.
+
+### Changed — pilot demo flow drops the verification round
+
+Live observation: the LLM repeatedly succeeded at rounds 1-3 (record
+start + tree + click_sequence, all kernel-confirmed) then collapsed
+in round 4 trying to "verify the result" — Calculator-style apps
+have multiple AXStaticText elements (equation history strip + main
+display + hint label), `ui read` picked the wrong one, the LLM
+mis-interpreted the equation as the answer, decided clicks "didn't
+work", went into clean-and-retry, and eventually lost the Calculator
+process entirely.
+
+Insight: **for demo recording, the recording is the verification.**
+Asking the LLM to also verify-then-narrate just introduces a place
+the agent can tie itself in knots interpreting ambiguous AX output.
+
+The `## 录 demo 视频` section now codifies a 6-round demo flow with
+**no in-flight verification**:
+
+1. Parallel record start + activate + tts (1 round)
+2. ui tree (1 round)
+3. ui click_sequence — trust kernel return (1 round)
+4. closing tts wait=true (1 round, doubles as render-pad)
+5. record stop (1 round)
+6. report path (1 round)
+
+A separate "**何时才该验证**" section addresses non-demo tasks where
+the LLM genuinely needs the result value (e.g., "open Calc, compute
+1+1, tell me the answer"): single `ui find role=AXStaticText` returns
+all matches with their values inline (kernel change from earlier),
+LLM lists candidates rather than guessing which is "the result".
+
+`ui read` is now flagged as wrong tool for verification when multiple
+matches likely — it returns FindFirst, hiding the ambiguity.
+
+Speed-rules section also gained a rule 7: **on [SYSTEM] circuit-
+breaker warning, stop immediately** — don't retry, don't fallback,
+report current state and finish.
+
+### Fixed — `ui tree` and `ui find` hid AXValue, making result-verification expensive
+
+Live observation of the second v1.2 demo run: rounds 1-3 stayed
+fast, but round 4 (verify result) broke down — the LLM tried `ui
+read role=AXStaticText` to read Calculator's display, hit the wrong
+StaticText (Calculator has several), got nothing useful, and went
+into a 1-minute "is `=` the right key? try `Enter`. try `return`."
+loop without ever reading the actual displayed value.
+
+Root cause same shape as the AXDescription miss: `dumpTree` and
+`ui find` output never showed AXValue. Calculator's display is an
+`AXStaticText` whose `Value()` returns the current number; without
+that column, the LLM had to guess which StaticText was the display
+and call `ui read` separately, often hitting the wrong one.
+
+`pkg/skill/ui.go`:
+- **`dumpTree` adds `value="..."`** — every element with a non-empty
+  AXValue (and value ≠ title/desc) shows it inline. Status labels,
+  text-field contents, slider positions, calculator displays all
+  visible directly in tree output.
+- **`ui find` output adds `value="..."`** — a single `find` call now
+  doubles as a read for the matched elements. No separate round-trip.
+- `truncateValue` caps any single value at 200 chars so a tree dump
+  of a text editor doesn't blow context.
+
+Pilot prompt updated:
+- Round 2 default tree depth bumped from 3 → 6, with explicit
+  guidance to retry at depth=8/10 if target buttons aren't visible
+  (Calculator's number buttons are at depth 8).
+- Round 4 verification rewritten — re-run `ui tree`, look at the
+  `value=...` column for the changed display value. Single tool
+  call. No `ui read`. No `screen`.
+- Schema-discovery table now lists all five tree-output columns
+  (role / title / desc / value / [id]) with concrete examples and
+  flags `[_NS:n]`-style identifiers as auto-generated/unstable.
+
+### Fixed — `ui tree` hid AXDescription, sending the agent down `input type`
+
+Live observation of the v1.2 demo run: rounds 1-3 were ~3 seconds
+total (the new speed protocol working), but round 4 collapsed into
+~1m of retries. Diagnosis: the LLM correctly read `ui tree`, saw
+that Calculator's number/operator buttons had empty titles and
+auto-generated `[_NS:35]`-style identifiers, concluded "no usable
+matcher", and fell back to `input action=type text="1+1="`.
+`input type` requires focus on the target app; Calculator wasn't
+focused (focus protection from Terminal-launched agents); keys
+landed in Terminal; chaos.
+
+Root cause was on **our** side: `dumpTree` only printed
+role/title/identifier — it never showed AXDescription. Calculator's
+buttons have empty titles but rich descriptions ("1", "Add",
+"Equals"). The LLM made the right call given the tree it saw; the
+tree just wasn't telling the truth.
+
+Three changes in `pkg/skill/ui.go`:
+
+1. **`dumpTree` now prints `desc="..."`** for every element whose
+   AXDescription is non-empty and differs from the title. Tree
+   output for Calculator now looks like:
+   ```
+   AXButton desc="1" [_NS:35]
+   AXButton desc="Add" [_NS:36]
+   AXButton desc="Equals" [_NS:39]
+   ```
+   The LLM can immediately see which matcher to use.
+
+2. **`ui find` / `ui click` accept a `description="..."` param**.
+   kinax-go v0.1 doesn't ship `MatchDescription`, but the Matcher
+   type is just a func, so we plug in a tiny custom matcher that
+   calls `e.Description()`.
+
+3. **`ui click_sequence` accepts `descriptions="..."`** alongside
+   the existing `titles=` and `identifiers=` modes. Same comma-
+   separated grammar; same per-step ambiguity / destructive guards.
+
+Pilot prompt updated to make `ui click*` the **blessed method** and
+`input type` strictly conditional on focus being verified on the
+target. The old "use input type if app accepts keyboard" guidance
+removed — it was right in theory but wrong in practice for any
+KinClaw running from a Terminal session.
+
+### Added — `ui click_sequence` for fast multi-button flows
+
+A new `ui` action that presses N elements in a single tool call,
+saving the per-call LLM round-trip. Each round-trip with a cloud
+brain is 1-3 seconds; for a "tap 1+1=" flow that's 4 individual
+clicks → 4 rounds → 4-12 seconds of pure round-trip overhead with
+nothing happening locally.
+
+```
+ui action=click_sequence bundle_id=com.apple.calculator titles="1,+,1,="
+```
+
+Or with stable AX identifiers (preferred when the app exposes them):
+
+```
+ui action=click_sequence bundle_id=com.apple.X identifiers="btn-save,btn-confirm"
+```
+
+Same safety guards as `click`: ambiguous match refuses unless
+`force=true`; destructive-target check applies to each step. Aborts
+mid-sequence on the first failure and reports which step / why,
+returning a partial log of clicks that did succeed.
+
+Generic by design — usable for calculator-like apps, dialpads, code
+entry, sequential menu navigation, anywhere the agent needs to push
+N buttons in order.
+
+### Changed — pilot prompt rewritten for round-count optimization
+
+Live observation: a 15-second target Calculator demo took **1m49s**
+because the LLM did 30+ rounds of `ui find` + `screen screenshot` +
+single `ui click` per button + verify-after-each-step. The kernel
+work was milliseconds; the round-trips to the cloud brain were the
+real cost.
+
+New `## 录 demo 视频` section in `souls/pilot.soul.md` codifies a
+**7-round upper-bound protocol** that's independent of which app is
+being driven:
+
+1. Round 1 batches `record start` + `osascript activate` + `tts
+   wait=false` in **parallel tool calls** (kernel runs them
+   concurrently via `ExecuteToolCalls`).
+2. Round 2: `ui tree` once — never re-tree, the output is already
+   in the conversation history.
+3. Round 3: a single `ui click_sequence` for multi-button flows, OR
+   `input type` for keyboard-driven apps (Calculator, text fields,
+   most native apps).
+4. Round 4: a single `ui read` for verification — never `screen`
+   unless the value isn't in the AX tree.
+5. Round 5: closing `tts wait=true` (which doubles as the GUI
+   render-pad before stop).
+6. Round 6: `record stop`.
+7. Round 7: report the path back to the user.
+
+Seven explicit speed rules in the prompt's "速度规则" subsection:
+parallelize within rounds, never re-tree, prefer click_sequence over
+individual click, prefer input type over button click when
+applicable, ui read over screen, no per-step verification (only
+final), tts wait=false except the closer.
+
+Also tightened the discovery protocol's step 3 — verification
+happens at **logical-action-chain** boundaries (one read after
+click_sequence completes), not after every single button press.
+
+### Added — circuit breaker no-progress trigger
+
+The existing breaker tripped on consecutive errors, but didn't catch
+the much subtler "successful but stuck" loop: same skill returning
+the same successful output 3+ times in a row, signalling no actual
+progress. Live observation: pilot calling `ui find title="+"` three
+times getting "no elements matching" each time, no error, no
+intervention.
+
+`pkg/skill/circuit.go` adds a third trigger keyed on `skill name +
+first 200 chars of output`. When three consecutive identical results
+come back from the same skill, the breaker emits a `[SYSTEM]` hint
+asking the LLM to replan, change the matcher, or ask the user.
+Generic by design — works for any skill, any task, any app.
+
+False-positive shape (same skill + same args legitimately repeated,
+e.g. typing `1` three times) is acceptable: the breaker emits a hint,
+not a hard block, so the LLM can ignore it when warranted.
+
+`pkg/skill/circuit_test.go` adds 4 cases: same-output trip, different
+output resets the streak, different skill resets the streak, error in
+the middle resets the streak.
+
+### Changed — pilot prompt rewritten as a generic GUI protocol
+
+The original prompt accumulated app-specific advice ("Calculator's `+`
+is in description, not title"). That doesn't generalize and makes the
+pilot brittle when it encounters a new app. New section
+`## 操作未知 GUI 的通用流程（适用于任何 app）` codifies a four-step
+protocol that works regardless of which app the agent is driving:
+
+1. **Discover the AX schema** with `ui tree` before assuming anything.
+2. **Match by the right field** in priority `identifier > description
+   > role+title > title alone` — and always inspect first.
+3. **Verify each action with an observation** — a successful tool
+   return is not the same as the GUI actually changing. `input type
+   "1+1="` returning "typed 4 chars" only means CGEvent fired; it
+   doesn't mean those keys landed on the target app.
+4. **Pad the demo recording's tail** — `ui read` to verify, then a
+   `tts wait=true` final line to give the result frame time to render
+   into the recording, THEN `record stop`. GUI render lag is 50-300ms;
+   stopping immediately after the input keystroke captures pre-result
+   frames.
+
+Drops all Calculator-specific (and any other app-specific) hints. The
+protocol is the contract; the LLM applies it to whatever app the user
+points it at.
+
+### Changed — `tts` SKILL.md default switched to `wait=false`
+
+The `wait=true` default made `tts` block its caller for the full
+synthesis + playback duration (~3-8s for a typical sentence), which
+during a `record` session burned recording time on dead air while the
+agent waited to continue. New default: `wait=false` plays in the
+background and returns immediately, so the agent keeps acting while
+narration plays — recording captures both the audio and the actions.
+
+The pilot prompt's demo recipe now uses `wait=false` for narration
+calls and reserves `wait=true` for the **final** tts before
+`record stop` (which doubles as a GUI-render-pad as it blocks 2-4s,
+giving the result frame time to land in the recording).
+
+### Fixed — chatLoop strands the conversation when it errors
+
+When `chatLoop` returned an error (most often "too many tool call
+rounds"), `handleUserMessage` printed the error and returned without
+saving the partial tool history or any assistant response — leaving
+the persisted conversation as `user → user → user → ...` with no
+assistant turns between. The brain on the next user turn read those
+back-to-back user messages as "the prior task isn't done, keep
+going" and reran the same compound action, blowing the round budget
+again. Live observation: typing "你好" right after a failed demo
+hit the round limit immediately.
+
+Fix in `cmd/kinclaw/main.go`:
+- Persist the partial `toolHistory` even on error.
+- Synthesize an explicit assistant abort note ("Turn aborted:
+  <err>. Reply 'continue' to resume or rephrase to start fresh.")
+  and store it. Conversation structure stays valid; the next user
+  message sees a clean prior turn.
+
+### Changed — round budget bumped 20 → 50
+
+The 20-round cap was sized for kernel-only workflows. With v1.2's
+compound demos (record start + tts + multi-step ui find/click/verify
+loop + tts + record stop), 30+ rounds is normal even when nothing
+goes wrong. Bumped to 50; the existing circuit breaker + the new
+ambiguity guards catch genuine runaways earlier than the round cap
+would anyway.
+
+### Fixed — `ui click` ambiguity & destructive-target safety net
+
+Kernel-layer hardening prompted by an early v1.2 demo run where the
+pilot was supposed to drive Calculator + 1+1=2 but instead closed
+Calculator's window and continued narrating to an empty desktop. Root
+cause: the `ui click` action ran `FindFirst` and pressed whichever
+element came first in AX-tree traversal, with no check for ambiguity
+or for destructive targets. A broad matcher hit AXCloseButton + the
+real target, the close button came first, the window was gone, and the
+agent had no safety net.
+
+Two guards added in `pkg/skill/ui.go`:
+
+- **Ambiguity refusal.** `ui click` now uses `FindAll` and refuses
+  with a listing of candidates when ≥2 elements match. The caller
+  must add filters (identifier / role / parent) — or pass the new
+  `force=true` parameter to explicitly opt into "click the first
+  hit anyway".
+- **Destructive-target refusal.** `ui click` refuses on
+  AXCloseButton / AXMinimizeButton / AXFullScreenButton roles, and
+  on titles matching word-boundary `Close|Quit|Exit|Log Out|Sign Out`
+  (English) or substring `退出|关闭|注销|结束` (Chinese). Same
+  `force=true` opt-out. Conservative bias on purpose: false-refuse
+  is recoverable, false-press is not.
+
+Both guards documented in the new `## GUI 操作硬约束` section of
+`souls/pilot.soul.md`, which mandates `ui find` before every `ui
+click`, post-action verification, and `sleep 1` after `shell open
+-a` before further interaction.
+
+`pkg/skill/ui_test.go` covers `isDestructiveTarget` with 27 cases
+including the conservative false-positive ("Close Friends" → refused;
+the LLM uses force=true if it really means it).
+
+### Fixed — `{{var}}` substitution in external SKILL.md `command:`
+
+- Previously, only the `args:` array was templated. Any SKILL.md that
+  placed `{{var}}` directly inside a `command:` element (the pattern
+  used by all four shipped forge'd examples — `git_commit`, `weather`,
+  `summarize`, `translate`) leaked the literal `{{var}}` into the
+  executed command and silently misbehaved (e.g. weather hit
+  `https://wttr.in/{{location}}` and got nonsense back).
+- `pkg/skill/external.go` now substitutes templates in **both**
+  `Command` and `Args`. Backward-compatible: skills using only `args:`
+  behave identically. The four shipped forge'd skills now actually
+  work without a per-file edit.
+- Strengthened `TestLoadExternalSkill_Execute` to assert both sides of
+  the substitution; added focused `TestLoadExternalSkill_CommandSubstitution`
+  as regression cover.
+
+### Added — tests
+
+- `pkg/skill/record_test.go` — input-validation surface of the record
+  skill (permission gate, unknown action, stop/stats id requirements,
+  empty list, display_id / fps validation, name + description
+  invariants) plus `parseBoolParam` table-driven coverage. Actual
+  capture path runs through kinrec and isn't unit-testable; integration
+  tests live in kinrec itself.
+- `pkg/skill/util_test.go` — `expandHome` table tests covering empty,
+  bare `~`, `~/`, `~/path`, `~user` (left literal), absolute paths,
+  embedded tildes.
+- `pkg/soul/soul_test.go` — `TestParseSoul_FullFields` extended to
+  cover all four claw permission bits including `record`. New
+  `TestParseSoul_ClawPermissions` table test covers the all-off
+  default, all-on case, single-bit case, and a "legacy soul without
+  the new key" case to prove backward compatibility.
+
+### Changed — internals
+
+- Extracted `expandHome` from `pkg/skill/screen.go` (darwin-only) into
+  `pkg/skill/util.go` (cross-platform) so any skill — darwin claw or
+  cross-platform helper — can reuse it without an internal dependency
+  cycle.
+
+### Dependencies
+
+- `github.com/LocalKinAI/kinrec` v0.1.0 — the video claw's dylib.
+- LocalKin Service Audio (`:8001` Kokoro / `:8000` SenseVoice) — used
+  by `tts` / `stt` skills, **optional**: pilot continues to function
+  without them and falls back to `shell say` for narration when
+  documented.
+
+### Build
+
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- `go test ./...` ✅ (all pre-existing tests + new claw / soul / util
+  tests pass on darwin and linux cross-build)
+- `GOOS=linux go build ./...` ✅ (non-darwin stubs intact)
+
+---
+
 ## [1.1.0] - 2026-04-24
 
 **The claws grow in.** `localkin` renamed to **KinClaw** and extended
