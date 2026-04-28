@@ -201,6 +201,12 @@ func buildRegistry(s *soul.Soul) *skill.Registry {
 	reg.Register(skill.NewInputSkill(s.Meta.Permissions.Input))
 	reg.Register(skill.NewUISkill(s.Meta.Permissions.UI))
 	reg.Register(skill.NewRecordSkill(s.Meta.Permissions.Record, s.Meta.Skills.OutputDir))
+	// Sub-agent dispatch — gated by permissions.spawn. Kernel-side
+	// recursion limit (env guard) means child agents can't themselves
+	// spawn even if they declared the permission, so this is safe to
+	// register unconditionally; the skill self-disables when the
+	// permission bit is off.
+	reg.Register(skill.NewSpawnSkill(s.Meta.Permissions.Spawn, soulDirs()))
 	for _, dir := range []string{skillsDir, homeSkillsDir()} {
 		exts, _ := skill.LoadExternalSkills(dir)
 		for _, ext := range exts {

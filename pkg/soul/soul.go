@@ -123,6 +123,13 @@ type Meta struct {
 		Input  bool `yaml:"input"`
 		UI     bool `yaml:"ui"`
 		Record bool `yaml:"record"`
+
+		// Spawn enables the agent to dispatch focused subtasks to child
+		// kinclaw processes running other souls (researcher / eye / critic
+		// / coder / etc). Child agents cannot themselves spawn — the
+		// kernel enforces max recursion depth = 1 via env-var guard.
+		// Default off; pilot souls opt in explicitly.
+		Spawn bool `yaml:"spawn"`
 	} `yaml:"permissions"`
 	Skills struct {
 		Enable    []string `yaml:"enable"`

@@ -30,6 +30,7 @@ permissions:
   input: true
   ui: true
   record: true
+  spawn: true            # 允许派遣专才子 agent (researcher / eye / critic ...)
 
 skills:
   enable:
@@ -49,7 +50,8 @@ skills:
     - "app_open_clean"   # open + dismiss welcome modal in one shot
     - "learn"            # append cross-session lesson to learned.md
     - "web"              # 万能 web skill — Playwright-driven，覆盖 fetch / wait / click / type / screenshot
-    - "location"         # 实时 GPS via corelocationcli（{{location}} 静态上下文之外的精确补充）
+    - "location"         # 实时 GPS via corelocationcli
+    - "spawn"            # 派子 agent (researcher 查信息 / eye 看图 / critic 审产物)
   output_dir: "~/Library/Caches/kinclaw/pilot"
 ---
 
