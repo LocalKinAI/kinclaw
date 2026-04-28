@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // envDenylist are exact env var names to strip from shell environment.
@@ -395,21 +397,29 @@ func (s *forgeSkill) Description() string {
 		"Only fall back to UI-driving (input keystrokes, ui click) if the app has no scripting API " +
 		"and no relevant CLI." +
 		"\n\n" +
-		"**HARD rules for the `command` field — kernel REJECTS forge calls that violate these**:\n" +
-		"  - command[0] MUST be a real binary in $PATH: `sh`, `bash`, `python3`, `osascript`, `curl`, " +
-		"`jq`, `awk`, `mdfind`, `defaults`, `open`, `bc`, etc.\n" +
-		"  - command[0] must NEVER be a kinclaw skill name (`ui`, `input`, `screen`, `record`, `shell`, " +
-		"`tts`, `stt`, `web_*`, `forge`, `learn`, `app_open_clean`). Those live INSIDE kinclaw — " +
-		"there's no `ui` binary in $PATH. Calling them via subprocess always fails silently and " +
-		"produces a skill that lies about success forever after.\n" +
-		"  - For multi-line shell, use the `[sh, -c, \"<your script>\", \"_\"]` pattern. The trailing " +
-		"`\"_\"` is important — it gives the script `$0=_` so user args become `$1, $2, ...` cleanly.\n" +
+		"**HARD rules — kernel REJECTS forge calls that violate any of these**:\n" +
+		"  1. command[0] MUST be a real binary in $PATH (`sh`, `bash`, `python3`, `osascript`, " +
+		"`curl`, `jq`, `awk`, `mdfind`, `defaults`, `open`, `bc`, ...).\n" +
+		"  2. command[0] must NEVER be a kinclaw skill name (`ui`, `input`, `screen`, `record`, " +
+		"`shell`, `tts`, `stt`, `web_*`, `forge`, `learn`, `app_open_clean`). Calling them via " +
+		"subprocess always fails silently and produces a skill that lies about success forever after.\n" +
+		"  3. `args` MUST be a JSON array of strings — `[\"-e\", \"tell app...\"]`, NOT a hand-rolled " +
+		"YAML flow array `[-e tell app...]` (which won't parse).\n" +
+		"  4. NO hardcoded screen coordinates — `click at {760, 150}` works only on this machine, " +
+		"this resolution, this window position. Use a keyboard shortcut (cmd+F, cmd+L, ...) or " +
+		"AppleScript that targets the app directly.\n" +
+		"  5. `osascript` `-e` flags MUST be paired — each `-e` followed by a script string, " +
+		"not another flag, not nothing.\n" +
+		"  6. Every `{{var}}` in args MUST appear in `schema` (otherwise substitution silently " +
+		"strips it and the skill loses its parameterization).\n" +
+		"  7. The produced SKILL.md is round-tripped through the YAML loader before registering. " +
+		"If it doesn't reload, the forge is rejected and the dir is deleted.\n" +
 		"\n" +
-		"**A correct minimal `reminders_add`** (no UI, 3 lines):\n" +
-		"```yaml\n" +
-		"command: [osascript, -e]\n" +
-		"args: [\"tell application \\\"Reminders\\\" to make new reminder with properties {name:\\\"{{title}}\\\"}\"]\n" +
-		"schema: { title: { type: string, required: true } }\n" +
+		"**A correct minimal `reminders_add`** (no UI, no flake):\n" +
+		"```\n" +
+		"command: osascript\n" +
+		"args:    [\"-e\", \"tell application \\\"Reminders\\\" to make new reminder with properties {name:\\\"{{title}}\\\"}\"]\n" +
+		"schema:  {\"title\": {\"type\": \"string\", \"required\": true}}\n" +
 		"```\n" +
 		"Robust because it bypasses the UI entirely — no AX flake, no first-launch modal." +
 		"\n\n" +
@@ -475,57 +485,165 @@ func validateForgeCommand(cmdParts []string) error {
 	return nil
 }
 
+// hardcodedCoordPattern matches `click at {N, M}` — the AX anti-pattern that
+// the agent occasionally shells out to via osascript "click at {760, 150}".
+// Such coordinates depend on screen size + window position + display scaling,
+// so the skill works once on the agent's bench and is broken everywhere else.
+// We refuse it at forge time so the agent has to find a real solution
+// (keyboard shortcut, AX-relative click, search-by-title).
+var hardcodedCoordPattern = regexp.MustCompile(`(?i)click\s+at\s*\{\s*\d+\s*,\s*\d+\s*\}`)
+
+// templateVarPattern matches `{{name}}` placeholders inside args. Used to
+// check that every variable the args reference is actually declared in the
+// schema — otherwise the agent will pass an unrecognized param at runtime
+// and the substitution leaves a literal `{{name}}` in the command line.
+var templateVarPattern = regexp.MustCompile(`\{\{(\w+)\}\}`)
+
+// validateForgeArgs catches LLM mistakes one level deeper than command[0]:
+// the args themselves. Three categories of bad-skill we observed in the
+// wild and now refuse:
+//
+//  1. osascript with broken -e pairing: `-e` must be followed by a script
+//     string, not another flag, not nothing. Without this check, a skill
+//     forged as `args: ["-e", "tell ...", "-e"]` errors at every call.
+//  2. Hardcoded screen coordinates in `click at {N, M}`: works once on
+//     this agent's screen, broken on any other resolution / window size.
+//     Force the agent to find a robust path (keystroke / AX-relative).
+//  3. Template variables ({{x}}) referenced in args but not declared in
+//     schema: the kinclaw template engine strips unknown vars to ""
+//     (intentional — see external.go), so the args silently lose their
+//     parameterization. Forge should fail loudly here, not silently degrade.
+func validateForgeArgs(cmdParts []string, args []string, schema map[string]interface{}) error {
+	// (1) osascript -e flag pairing
+	if len(cmdParts) > 0 && filepath.Base(cmdParts[0]) == "osascript" {
+		for i, a := range args {
+			if a != "-e" {
+				continue
+			}
+			if i+1 >= len(args) {
+				return fmt.Errorf("osascript -e flag at args[%d] has no script after it (must be `-e <script>` pairs)", i)
+			}
+			next := args[i+1]
+			if next == "-e" || (strings.HasPrefix(next, "-") && len(next) <= 3) {
+				return fmt.Errorf("osascript -e flag at args[%d] is followed by another flag (%q) instead of a script", i, next)
+			}
+		}
+	}
+
+	// (2) hardcoded screen coordinates
+	for i, a := range args {
+		if hardcodedCoordPattern.MatchString(a) {
+			return fmt.Errorf(
+				"args[%d] contains hardcoded screen coordinates: %q. "+
+					"These work only on this exact screen size + window layout — "+
+					"use a robust alternative: `keystroke` for typed-text fields, "+
+					"a keyboard shortcut (cmd+F, cmd+L, etc.) for menu/search bars, "+
+					"or AX-relative click via the `ui` claw with role/title matchers.",
+				i, a)
+		}
+	}
+
+	// (3) template-var ↔ schema consistency
+	used := map[string]bool{}
+	for _, a := range args {
+		for _, m := range templateVarPattern.FindAllStringSubmatch(a, -1) {
+			used[m[1]] = true
+		}
+	}
+	for v := range used {
+		if _, ok := schema[v]; !ok {
+			return fmt.Errorf(
+				"args reference template variable {{%s}} but the schema doesn't declare a parameter named %q. "+
+					"Add %s to the schema (with type/description), or remove the placeholder from args.",
+				v, v, v)
+		}
+	}
+
+	return nil
+}
+
+// forgeSkillFile is the on-disk shape we marshal to. Mirrors the YAML
+// front-matter of an external SKILL.md (see external.go ExternalSkill).
+// Using a struct + yaml.Marshal (rather than hand-concatenated strings)
+// is what makes the produced YAML always parse cleanly — the agent
+// passes JSON-shaped inputs, we marshal to canonical block-list YAML.
+type forgeSkillFile struct {
+	Name        string                 `yaml:"name"`
+	Description string                 `yaml:"description"`
+	Command     []string               `yaml:"command"`
+	Args        []string               `yaml:"args,omitempty"`
+	Schema      map[string]interface{} `yaml:"schema,omitempty"`
+}
+
 func (s *forgeSkill) Execute(params map[string]string) (string, error) {
 	name := params["name"]
 	if name == "" {
 		return "", fmt.Errorf("name is required")
 	}
+	if !forgeNamePattern.MatchString(name) {
+		return "", fmt.Errorf("forge rejected: name %q must be alphanumeric + underscore (regex: %s)", name, forgeNamePattern.String())
+	}
+
+	cmdParts := strings.Fields(params["command"])
+	if err := validateForgeCommand(cmdParts); err != nil {
+		return "", fmt.Errorf("forge rejected: %w", err)
+	}
+
+	// Parse args as JSON array of strings. The contract advertised in
+	// ToolDef() is "JSON array" — we used to dump the raw string into
+	// YAML which the agent often hand-rolled with broken flow-array
+	// syntax. Round-tripping through JSON → []string → yaml.Marshal
+	// produces canonical block-list YAML that always parses.
+	var args []string
+	if a := strings.TrimSpace(params["args"]); a != "" {
+		if err := json.Unmarshal([]byte(a), &args); err != nil {
+			return "", fmt.Errorf(
+				"forge rejected: args must be a JSON array of strings, e.g. [\"-e\", \"tell app \\\"X\\\" to play\"]. Parse error: %w (got %q)",
+				err, a)
+		}
+	}
+
+	// Parse schema as JSON object.
+	var schema map[string]interface{}
+	if sc := strings.TrimSpace(params["schema"]); sc != "" {
+		if err := json.Unmarshal([]byte(sc), &schema); err != nil {
+			return "", fmt.Errorf("forge rejected: schema must be a JSON object: %w", err)
+		}
+	}
+
+	// Domain checks: osascript -e pairing, no hardcoded coords, schema
+	// covers all template vars referenced by args.
+	if err := validateForgeArgs(cmdParts, args, schema); err != nil {
+		return "", fmt.Errorf("forge rejected: %w", err)
+	}
+
+	// Build the SKILL.md content via yaml.Marshal — guarantees well-
+	// formed YAML even when args contain double-quotes, backslashes,
+	// braces, AppleScript syntax, etc.
+	sf := forgeSkillFile{
+		Name:        name,
+		Description: params["description"],
+		Command:     cmdParts,
+		Args:        args,
+		Schema:      schema,
+	}
+	yamlBytes, err := yaml.Marshal(sf)
+	if err != nil {
+		return "", fmt.Errorf("forge: yaml marshal: %w", err)
+	}
+	var content strings.Builder
+	content.WriteString("---\n")
+	content.Write(yamlBytes)
+	content.WriteString("---\n\n# ")
+	content.WriteString(name)
+	content.WriteString("\n\nForged by LocalKin agent.\n")
+
 	dir := filepath.Join(s.skillsDir, name)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
-	var sb strings.Builder
-	sb.WriteString("---\n")
-	sb.WriteString(fmt.Sprintf("name: %s\n", name))
-	sb.WriteString(fmt.Sprintf("description: %s\n", params["description"]))
-	cmdParts := strings.Fields(params["command"])
-	// Pre-flight: refuse to write a SKILL.md whose command can't run.
-	if err := validateForgeCommand(cmdParts); err != nil {
-		// Clean up the empty dir so we don't leave a half-state turd.
-		os.Remove(dir)
-		return "", fmt.Errorf("forge rejected: %w", err)
-	}
-	sb.WriteString("command: [")
-	for i, p := range cmdParts {
-		if i > 0 {
-			sb.WriteString(", ")
-		}
-		sb.WriteString(fmt.Sprintf("%q", p))
-	}
-	sb.WriteString("]\n")
-	if args := params["args"]; args != "" {
-		sb.WriteString(fmt.Sprintf("args: %s\n", args))
-	}
-	if schema := params["schema"]; schema != "" {
-		var schemaMap map[string]interface{}
-		if err := json.Unmarshal([]byte(schema), &schemaMap); err == nil {
-			sb.WriteString("schema:\n")
-			for k, v := range schemaMap {
-				if m, ok := v.(map[string]interface{}); ok {
-					sb.WriteString(fmt.Sprintf("  %s:\n", k))
-					for sk, sv := range m {
-						sb.WriteString(fmt.Sprintf("    %s: %v\n", sk, sv))
-					}
-				}
-			}
-		}
-	}
-	sb.WriteString("---\n\n")
-	sb.WriteString(fmt.Sprintf("# %s\n\nForged by LocalKin agent.\n", name))
-	skillPath := filepath.Join(dir, "SKILL.md")
-	if err := os.WriteFile(skillPath, []byte(sb.String()), 0644); err != nil {
-		return "", err
-	}
+
+	// Optional companion script (e.g. python3 run.py + run.py file).
 	if script := params["script_content"]; script != "" {
 		scriptName := "run.py"
 		if len(cmdParts) > 1 {
@@ -533,12 +651,33 @@ func (s *forgeSkill) Execute(params map[string]string) (string, error) {
 		}
 		scriptPath := filepath.Join(dir, scriptName)
 		if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+			os.RemoveAll(dir)
 			return "", err
 		}
 	}
-	ext, err := LoadExternalSkill(skillPath)
-	if err == nil {
-		s.registry.Register(ext)
+
+	skillPath := filepath.Join(dir, "SKILL.md")
+	if err := os.WriteFile(skillPath, []byte(content.String()), 0644); err != nil {
+		os.RemoveAll(dir)
+		return "", err
 	}
+
+	// Round-trip validate: read back the just-written SKILL.md via the
+	// same loader the registry uses at boot. If it doesn't parse here
+	// it'll print a warning at every boot — refuse the forge instead so
+	// the agent retries with a corrected recipe.
+	ext, err := LoadExternalSkill(skillPath)
+	if err != nil {
+		os.RemoveAll(dir)
+		return "", fmt.Errorf(
+			"forge rejected: produced SKILL.md doesn't reload — %w. The skill was written then deleted; nothing was registered.",
+			err)
+	}
+	s.registry.Register(ext)
 	return fmt.Sprintf("Forged skill '%s' at %s", name, skillPath), nil
 }
+
+// forgeNamePattern restricts forged skill names to identifiers — keeps
+// the on-disk dir / file names predictable and avoids weird shell-quoting
+// situations downstream when paths get echoed in logs.
+var forgeNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
