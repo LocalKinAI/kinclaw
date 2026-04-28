@@ -381,22 +381,32 @@ func (s *forgeSkill) Description() string {
 	return "Create a new skill by generating a SKILL.md file in skills/<name>/. " +
 		"The new skill becomes immediately available next round." +
 		"\n\n" +
-		"**WHEN to forge**: AFTER you successfully completed a multi-step task that's likely to be " +
-		"requested again in a parameterized form. Examples: `calc_compute`, `notes_create`, " +
-		"`reminders_add`, `safari_open_url`, `play_song`." +
-		"\n\n" +
-		"**Choose the SHORTEST execution path** — don't translate the UI-driving you just did into " +
-		"a script. Most Apple apps have direct AppleScript / shell APIs that skip the UI entirely:\n" +
-		"  - Reminders: `osascript -e 'tell application \"Reminders\" to make new reminder with properties {name:\"$1\"}'`\n" +
-		"  - Notes:    `osascript -e 'tell application \"Notes\" to make new note with properties {name:\"$1\", body:\"$2\"}'`\n" +
-		"  - Music:    `osascript -e 'tell application \"Music\" to play'`\n" +
-		"  - Calc:     `bc <<<\"$1\"` (headless math; no UI needed)\n" +
-		"  - Safari:   `osascript -e 'tell application \"Safari\" to open location \"$1\"'`\n" +
-		"  - Spotlight: `mdfind \"$1\"`\n" +
+		"**WHEN to forge — narrow on purpose**: ONLY when the UI-claw path actually FAILED for this " +
+		"app, or is fundamentally impossible. Forge produces a SCRIPT FALLBACK, not a fast lane. " +
+		"KinClaw's whole thesis is `5 claws drive UI` — translating every successful UI flow into " +
+		"AppleScript undermines that thesis on every reuse.\n" +
 		"\n" +
-		"Only fall back to UI-driving (input keystrokes, ui click) if the app has no scripting API " +
-		"and no relevant CLI." +
-		"\n\n" +
+		"Forge is justified when:\n" +
+		"  - app has no AX surface (menubar-only Docker, immersive games, AX-hostile shells)\n" +
+		"  - UI flow is reliably blocked (modal sheet that re-spawns, focus-stealing daemon)\n" +
+		"  - `ui click` / `input keystroke` failed ≥ 2 times for the same task — kernel will " +
+		"complain anyway, that's your signal\n" +
+		"\n" +
+		"Forge is NOT justified when:\n" +
+		"  - UI worked, you just want the script for speed (drive UI again next time — it's the " +
+		"hand you're supposed to be flexing)\n" +
+		"  - the task is single-shot (\"today buy milk\" — `learn` it, don't forge it)\n" +
+		"  - a `learn` line would capture the lesson without packing it into a skill\n" +
+		"\n" +
+		"A correctly-forged skill is a confession: \"the UI claw can't do this on this app, here's " +
+		"the bypass.\" It's never \"I chose the faster path.\"\n" +
+		"\n" +
+		"**Script reference (for the legitimate fallback cases)** — when you DO need to forge a " +
+		"script bypass, these are the cleanest patterns:\n" +
+		"  - osascript: `osascript -e 'tell app \"X\" to <action>'` (works without focus)\n" +
+		"  - shell:     `sh -c \"<your-script>\" _` (the trailing `_` makes user args $1, $2, ...)\n" +
+		"  - python3:   pair with `script_content` so the .py is forged alongside the SKILL.md\n" +
+		"\n" +
 		"**HARD rules — kernel REJECTS forge calls that violate any of these**:\n" +
 		"  1. command[0] MUST be a real binary in $PATH (`sh`, `bash`, `python3`, `osascript`, " +
 		"`curl`, `jq`, `awk`, `mdfind`, `defaults`, `open`, `bc`, ...).\n" +
@@ -415,18 +425,17 @@ func (s *forgeSkill) Description() string {
 		"  7. The produced SKILL.md is round-tripped through the YAML loader before registering. " +
 		"If it doesn't reload, the forge is rejected and the dir is deleted.\n" +
 		"\n" +
-		"**A correct minimal `reminders_add`** (no UI, no flake):\n" +
+		"**Example syntax (for legitimate bypass cases)**:\n" +
 		"```\n" +
 		"command: osascript\n" +
 		"args:    [\"-e\", \"tell application \\\"Reminders\\\" to make new reminder with properties {name:\\\"{{title}}\\\"}\"]\n" +
 		"schema:  {\"title\": {\"type\": \"string\", \"required\": true}}\n" +
 		"```\n" +
-		"Robust because it bypasses the UI entirely — no AX flake, no first-launch modal." +
+		"Use this shape when the UI path is genuinely blocked — not when you just want it faster." +
 		"\n\n" +
-		"**When NOT to forge**: task isn't actually working yet (forge proven recipes only); " +
-		"single-shot non-parameterizable (\"today buy milk\" no, \"add reminder titled X\" yes); " +
-		"same name already exists. Kernel pre-flight checks command[0] is in $PATH; if you get " +
-		"`forge rejected:` back, fix the recipe and retry."
+		"If you get `forge rejected:` back, the kernel's quality gate caught a malformed recipe; " +
+		"fix the specific issue it names and retry. Recovering from a rejection is normal — " +
+		"forging blindly is not."
 }
 func (s *forgeSkill) ToolDef() json.RawMessage {
 	return MakeToolDef("forge", s.Description(),
