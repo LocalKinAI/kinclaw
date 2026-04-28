@@ -305,11 +305,19 @@ skill.
 ## CLI reference
 
 ```
-kinclaw -soul PATH         Launch REPL with a specific soul
-kinclaw -soul PATH -exec S Run one message, print response, exit
-kinclaw -login             Claude OAuth PKCE (Max subscription)
-kinclaw -login-openai      OpenAI API key setup
-kinclaw -soul PATH -debug  Print tool calls & raw API traffic
+kinclaw -soul PATH                  Launch REPL with a specific soul
+kinclaw -soul PATH -exec S          Run one message, print response, exit
+kinclaw -soul PATH -cleanup-apps    On exit, quit any apps kinclaw started
+                                    (preserves apps you already had open)
+kinclaw -login                      Claude OAuth PKCE (Max subscription)
+kinclaw -login-openai               OpenAI API key setup
+kinclaw -soul PATH -debug           Print tool calls & raw API traffic
+
+Subcommands (own their own flag sets):
+  kinclaw probe Notes               Audit one app's AX tree, get a verdict
+  kinclaw probe -json com.apple.Notes
+  kinclaw probe -batch < ids.txt    CSV scan for many apps (auto-cleanup)
+  kinclaw probe -h                  Full probe help
 
 In-REPL commands:
   /soul [name]     List / switch soul files
@@ -319,6 +327,23 @@ In-REPL commands:
   /info            Version / soul / model / skill count / tokens
   /quit            Exit
 ```
+
+### `kinclaw probe` — 1-second app audit
+
+Before driving a new app, run `kinclaw probe <name>` to see if its AX
+surface is rich enough for the `ui` claw, or whether you'll need to fall
+back to `input` keystrokes / vision. Four verdicts:
+
+```
+🟢 rich     — `ui` claw alone drives it (≥ 50 nodes, ≥ 5 actionable)
+🟡 shallow  — `ui` + `input` (cmd-keys / type-text) hybrid
+🟠 blank    — needs `record` + screen + vision (menubar app, hostile shell)
+🔴 dead     — process didn't open (TCC / sandbox / not installed)
+```
+
+The same probe, fed bundle IDs from stdin, produced the 50-app validation
+that recorded **94% controllable, 88% pure-AX** on a real dev Mac — empirical
+evidence that the 5-claw thesis holds. It now ships in the box.
 
 ## Not in v0.1 scope
 

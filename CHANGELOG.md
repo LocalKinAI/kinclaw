@@ -1,5 +1,188 @@
 # Changelog
 
+## [1.2.1] - 2026-04-27
+
+**Polish on v1.2.0.** Genesis-loop validation surfaced four edges that
+needed sharpening: a real CLI for AX probing, automatic cleanup after
+sessions, deeper forge quality gates, and a doctrine correction that
+puts the UI claw back at the front of the line. No new architectural
+primitives — every change reinforces what v1.2.0 already shipped.
+
+### Added — `kinclaw probe` subcommand
+
+First-class CLI for "is this app driveable by the `ui` claw, or do I
+need to fall back to `input` / vision?" Same probe binary used in the
+50-app validation now ships in the box. Three modes:
+
+```
+kinclaw probe Notes                   # by app name (resolved via /Applications)
+kinclaw probe -json com.apple.Notes   # JSON output, machine-readable
+kinclaw probe -batch < ids.txt        # CSV scan, many apps, auto-cleanup
+```
+
+Verdicts (same thresholds as the 50-app validation):
+
+| Tier | Threshold | Meaning |
+|---|---|---|
+| 🟢 rich | nodes ≥ 50 AND actionable ≥ 5 | `ui` claw drives it |
+| 🟡 shallow | nodes ≥ 10 | `ui` + `input` hybrid |
+| 🟠 blank | nodes < 10 | needs `record` + vision |
+| 🔴 dead | process didn't open | TCC / sandbox / not installed |
+
+Where `actionable = AXButton + AXTextField + AXMenuItem` — counts
+menu-driven apps (iWork, QuickTime, Freeform) and Electron apps
+(VSCode, Cursor, Claude desktop) correctly even when they expose
+0 AXButton.
+
+Bundle resolution: bundle IDs pass through unchanged, app names
+resolve against `/Applications`, `/System/Applications`,
+`/System/Applications/Utilities`, `/Applications/Utilities`,
+`~/Applications`. Spotlight is intentionally not used — indexing
+is unreliable on dev machines and freshly-installed apps.
+
+`pkg/probe/` is the reusable core; `cmd/kinclaw/probe.go` wires it
+to the CLI via a git-style subcommand dispatch (preserves all
+existing top-level flags). Pattern is ready for the followups
+already on the polish list (`kinclaw memory`, `kinclaw doctor`).
+
+### Added — `-cleanup-apps` flag
+
+The 10-task validation surfaced this: after running `kinclaw -exec`
+through 10 different apps, all 10 dock icons stayed open. Now:
+
+```bash
+kinclaw -cleanup-apps -exec "..."
+```
+
+snapshots running apps at startup, quits any new ones at exit (defer
++ SIGINT handler). Pre-existing apps stay alive — your workspace is
+untouched. `kinclaw probe -batch` enables the same behavior by
+default; pass `-no-cleanup` to suppress when you want to interact
+with the probed apps afterwards.
+
+Why `osascript quit` and not `pkill`: graceful shutdown lets apps
+run `applicationWillTerminate` and surface unsaved-work dialogs the
+user expects to see. Each quit is bounded to 3s; refusals are
+reported but don't fail the cleanup.
+
+System processes (Dock / WindowServer / loginwindow) are filtered by
+AppleScript's `background only is false` — they never appear in the
+snapshot, so they never get quit. New `pkg/applifecycle/` package
+holds the snapshot/diff/quit primitives.
+
+### Changed — forge quality gate v2 (deeper validation)
+
+The v1.2.0 gate caught command[0] internal-name mistakes
+(`["ui", ...]` etc.) but missed the next layer of LLM forge bugs.
+Live observation: in tonight's 10-task validation, the agent
+forge'd 4 skills, 2 of which had unparseable YAML and silently
+crashed on every kinclaw boot. The gate now catches those before
+they get written:
+
+1. **Args parsed as JSON, re-emitted as YAML.** Agent used to pass
+   `args: [-e tell app "X" to play]` (YAML-flow style) which we
+   dumped into SKILL.md verbatim — invalid YAML. Now we
+   `json.Unmarshal` into `[]string` and let `yaml.Marshal` handle
+   quoting. Reject up front if not parseable.
+2. **Round-trip via `LoadExternalSkill` before registering.**
+   Failed reload triggers full dir cleanup + clear "produced
+   SKILL.md doesn't reload" rejection. (Before: forge wrote
+   SKILL.md, ignored LoadExternalSkill error, returned "success",
+   left a broken file.)
+3. **`osascript -e` pairing.** Each `-e` must be followed by a
+   script string. Catches `["-e", "...", "-e"]` (dangling) and
+   `["-e", "-e", "..."]` (consecutive flags).
+4. **No hardcoded screen coordinates.** Reject `click at {N, M}`
+   patterns — these worked once on the agent's bench and are broken
+   on any other resolution. Live observed: a `maps_search_location`
+   forged with `click at {760, 150}`. Now agent gets a clear
+   rejection pointing at `keystroke` / `cmd-key` / AX-relative
+   click as alternatives.
+5. **Template var ↔ schema consistency.** Every `{{var}}`
+   referenced in args must appear in the schema. Otherwise the
+   template engine strips unknown vars to `""` and the skill
+   silently loses parameterization.
+
+`forgeNamePattern` restricts skill names to `[a-zA-Z][a-zA-Z0-9_]{0,63}`.
+
+Tests: 25 new test cases across `pkg/skill/forge_validate_test.go`
+(unit) and `pkg/skill/forge_e2e_test.go` (full forge.Execute with
+`t.TempDir()`). Verifies AppleScript with nested quotes survives
+YAML round-trip intact, confirms bad inputs leave no on-disk droppings.
+
+### Fixed — UI claw is the FIRST resort, not a fallback
+
+Earlier soul + forge description nudged the agent toward "shortest
+path = AppleScript". Net effect on Apple-stock apps: agent stops
+driving UI after the first run, which empties out KinClaw's whole
+5-claw thesis on every reuse. Both texts reframed:
+
+`souls/pilot.soul.md` `## 裂变` section B:
+> Was: "可复用的模式要 forge"
+> Now: "UI 先行；走不通才 forge"
+
+Try `ui` claw first, even if slower. UI working = no forge needed
+(the claw IS the skill). Forge ONLY when UI is genuinely blocked:
+no AX surface (Docker menubar), reliable modal interruption, or ≥ 2
+consecutive ui failures.
+
+`pkg/skill/native.go` forge.Description():
+> Was: "Choose the SHORTEST execution path"
+> Now: "A correctly-forged skill is a confession that the UI claw
+> couldn't do this on this app — never 'I chose the faster path'."
+
+3 legitimate forge triggers (no AX surface / blocked modal /
+repeated ui failures) and 3 anti-cases (UI worked, single-shot
+task, learn would suffice).
+
+### Cleanup
+
+- Removed two broken forge'd skills from prior runs:
+  `skills/reminders_add/` and `skills/maps_search_location/` — both
+  had unparseable YAML that triggered boot warnings every session.
+  Boot is now warning-clean.
+- Promoted two GOOD forge'd skills as evidence the loop produces
+  useful artifacts when inputs are clean: `skills/music_play/` +
+  `skills/music_pause/` (both legitimate fallbacks — UI clicks fail
+  when Music is backgrounded, AppleScript works either way).
+
+### Removed — `cmd/probe-ax/`
+
+The standalone research binary used in the 50-app validation. Its
+logic moved into `pkg/probe/` and `cmd/kinclaw/probe.go` as the new
+subcommand. Drop-in compatible with the old binary's stdin/stdout
+contract, so the 50-app probe shell wrappers still work via
+`kinclaw probe -batch`.
+
+### Validation: 50-app probe + 10-task end-to-end
+
+While polishing v1.2.0, two empirical validation runs landed in
+`~/.localkin/research/`:
+
+- `50-app-validation.md` — AX-tree probe over 50 curated apps from
+  6 categories (Apple Native / Apple System / Utilities / Apple Pro
+  / Electron / Heavyweight). Result: 94% controllable today, 88%
+  pure-AX, 0 dead. Concrete proof the 5-claw thesis holds across
+  the macOS ecosystem.
+- `10-task-validation/REPORT.md` — End-to-end task validation across
+  10 categorically-different apps (Reminders / Music / Pages / Cursor
+  / Photos / Maps / Activity Monitor / Screenshot / Docker / Xcode).
+  Result: 8/10 ✅ via the agent's own self-reported markers, 2 timeouts
+  (Cursor + Photos — surfaced real edge cases worth follow-up).
+
+The probe subcommand is the productized form of the first; the
+`-cleanup-apps` flag is the reusable infrastructure surfaced by the
+second.
+
+### Build
+
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- `go test ./...` ✅ (71 test functions across 9 packages)
+- `GOOS=linux go build ./...` ✅ (non-darwin stubs intact)
+
+---
+
 ## [1.2.0] - 2026-04-26
 
 **The lobster grows up.** Five claws (added `web` for the open
