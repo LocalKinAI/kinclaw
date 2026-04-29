@@ -13,10 +13,10 @@ one else has — **reproduces on demand** via three primitives:
   can't handle a task, KinClaw drafts, writes, registers, and tests
   a new one, then retries.
 - **Sub-agent dispatch** (`spawn` skill) — fork-exec a specialist
-  child on a different brain (researcher / eye / critic ship in-box;
-  hierarchical, kernel-capped at depth 1).
+  child on a different brain (researcher / eye / critic / coder ship
+  in-box; hierarchical, kernel-capped at depth 1).
 
-Single binary, ~25 MB, Go 1.22+, MIT licensed. Runs on your actual
+Single binary, ~17 MB, Go 1.22+, MIT licensed. Runs on your actual
 Mac (not in a virtualized container like Anthropic's Computer Use or
 OpenAI's Operator).
 
@@ -25,19 +25,20 @@ OpenAI's Operator).
 
 KinClaw grew out of the earlier `localkin` runtime (a minimal
 embodied-AI microkernel, ~2,300 lines). This repo is that same
-skeleton with the **three claws** bolted on: eye (ScreenCaptureKit),
-hand (CGEvent), visual cortex (Accessibility API) — each via its own
-zero-cgo KinKit library.
+skeleton with the **five claws** bolted on: `screen` (ScreenCaptureKit),
+`input` (CGEvent), `ui` (Accessibility API), `record` (kinrec MP4 +
+audio), and `web` (Playwright) — the first four via their own zero-cgo
+KinKit libraries.
 
 ## Quick start
 
 ```bash
 go install github.com/LocalKinAI/kinclaw/cmd/kinclaw@latest
 
-# Default pilot runs Kimi K2.6 via Ollama Cloud. Sign in once:
+# Default pilot runs Kimi K2.5 via Ollama Cloud. Sign in once:
 ollama signin
 
-# The demo soul: a pilot that drives your Mac
+# The pilot soul — the generalist that drives your Mac
 kinclaw -soul souls/pilot.soul.md
 
 # Then ask it something like:
@@ -166,7 +167,7 @@ A soul file is YAML frontmatter + a Markdown system prompt.
 name: "KinClaw Pilot"
 brain:
   provider: "ollama"
-  model: "kimi-k2.6:cloud"
+  model: "kimi-k2.5:cloud"
 permissions:
   shell: false
   network: false
@@ -189,7 +190,7 @@ grant X capability` regardless of what the LLM asks for. `record`
 shares Screen Recording TCC with `screen`; mic capture additionally
 requires Microphone TCC.
 
-## The four claws in action
+## The five claws in action
 
 ### `ui` — semantic UI control (the killer feature)
 
@@ -263,6 +264,25 @@ LLM: record action=stop id=rec-1745627812-1
 
 Other actions: `list` (active recordings), `stats id=...` (live frame
 counters).
+
+### `web` — drive the open internet
+
+When the task lives outside macOS apps (login flows, dynamic SPAs,
+sites without a public API), the `web` claw runs Playwright headless-
+or-headed on top of Chromium. Ships as an external `SKILL.md` in
+`skills/web/` so it stays a thin Python shim around `python3 web.py`
+— forge can rewrite it without recompiling kinclaw.
+
+```
+LLM: web action=goto url="https://news.ycombinator.com"
+LLM: web action=text selector="h1"
+     → "Hacker News"
+LLM: web action=click selector="text=login"
+LLM: web action=type selector="input[name=acct]" text="..."
+```
+
+First launch downloads Chromium (~500 MB) into Playwright's cache.
+Subsequent launches reuse it.
 
 ## Audio I/O — talk to your Mac, hear it back
 
@@ -385,17 +405,19 @@ on its own model, and returns a string. **Hierarchical** (not peer),
 cannot themselves spawn. Sub-agent dispatch ≠ multi-agent: peer-swarm
 coordination stays an explicit non-goal in the kernel.
 
-Three specialists ship in `souls/`:
+Four specialists ship in `souls/`:
 
 | Soul | Brain | When to dispatch |
 |---|---|---|
 | `researcher` | `kimi-k2.6:cloud` (1T, 256k ctx) | external facts, deep web research |
 | `eye` | `kimi-k2.6:cloud` (multimodal) | AX-blind UI verification (canvas, dense icons) |
 | `critic` | `minimax-m2.7:cloud` | adversarial second opinion on plans / forge'd skills |
+| `coder` | `deepseek-v4-pro:cloud` | re-implement an external SKILL.md as KinClaw exec form (used by `harvest --inspire`) |
 
-Different labs on purpose: pilot is on Moonshot Kimi, critic is on
-Minimax — different model lineage means different blind spots, which
-is the whole point of asking for a second opinion.
+Different labs on purpose: pilot + researcher + eye on Moonshot Kimi,
+critic on Minimax, coder on DeepSeek — different model lineage means
+different blind spots, which is the whole point of asking for a second
+opinion (or a different style).
 
 Opt in via `permissions.spawn: true` in the soul. Specialists default
 to `false` — even if a child somehow got the schema it can't dispatch.
@@ -409,7 +431,6 @@ kinclaw -soul PATH -exec S          Run one message, print response, exit
 kinclaw -soul PATH -cleanup-apps    On exit, quit any apps kinclaw started
                                     (preserves apps you already had open)
 kinclaw -login                      Claude OAuth PKCE (Max subscription)
-kinclaw -login-openai               OpenAI API key setup
 kinclaw -soul PATH -debug           Print tool calls & raw API traffic
 
 Subcommands (own their own flag sets):
@@ -451,22 +472,62 @@ The same probe, fed bundle IDs from stdin, produced the 50-app validation
 that recorded **94% controllable, 88% pure-AX** on a real dev Mac — empirical
 evidence that the 5-claw thesis holds. It now ships in the box.
 
-## Not in v0.1 scope
+## Roadmap (post-1.4)
 
-This is the computer-use skeleton. The full "self-fissioning swarm"
-vision layers these on top later:
+What's shipped, what's next, and what's an explicit non-goal.
 
-- **Conductor** — multi-clone orchestration (pick N, assign, reconvene).
-- **Genesis Protocol** — generate new specialist souls from a knowledge
-  corpus (YouTube / PDF / doc site → new expert). Lives in LocalKin's
-  private commercial engine today; partial open-source release TBD.
-- **Observer subscriptions** (kinax-go v0.2) — react to UI change
-  events rather than poll.
-- **Cross-window coordination** — two KinClaws across two displays.
-- **Undo layer** — record every OS-touching action so it can be
-  reversed.
+**Shipped (1.0–1.4)**: 5 claws, soul clone, skill forge with v2 quality
+gate, sub-agent dispatch (4 specialists), `kinclaw probe` AX audit,
+`kinclaw harvest` skill ETL pipeline, background-safe input via
+`target_pid`, batched AX IPC (`Element.GetMany`, 2-5× tree dump
+speedup), launchd cron template, cross-session memory.
 
-Each happens when the v0.1 pilot has real users filing real issues.
+**Near-term v1.5+ candidates** (fluid):
+
+- **`harvest --inspire`** — extend the pipeline to take procedural-
+  style external SKILL.md (Claude Code / Hermes / Cursor rules) as
+  *inspiration* and route to the `coder` specialist to forge a
+  KinClaw-exec equivalent. Closes the loop on "we want every good
+  skill in the wider ecosystem, in our own form."
+- **`kinclaw memory`** — list / search / forget against the
+  cross-session `~/.localkin/learned.md` (currently write-mostly).
+- **`kinclaw doctor`** — sidecar health check (TTS / STT / SearXNG /
+  Playwright / kinrec). New-user pain point #1.
+- **Observer subscriptions** in `kinax-go` — push-based AX event
+  notifications (`AXObserverCreate` + CFRunLoop). Pairs with a TTL
+  element cache for quasi-realtime UI tracking. *Note: `kinax-go`
+  v0.2.0 shipped `GetMany` batched fetch, not Observer — that's still
+  ahead.*
+- **Homebrew tap** — `brew install localkinai/tap/kinclaw`.
+- **More specialists** — `quick` (DeepSeek Flash, fast yes/no
+  verifications), `linguist` (GLM 5.1, EN ↔ 中文 style rewrite).
+
+**Apple-cert blocked** (待 $99 Apple Developer Program 解锁):
+
+- **DMG + signing + notarization** — `kinclaw.localkin.ai/download`
+  one-click install for non-developers.
+- **Wails console + 🦞 menu bar** — visible swarm UI on top of CLI.
+- **Relay service** — reach your own KinClaw from anywhere
+  (`kinclaw.localkin.ai`, the actual monetization layer).
+- **iOS Shortcuts / Siri** integration.
+
+**Explicit non-goals** (not changing):
+
+- ❌ **Multi-agent peer swarm in the kernel.** Sub-agent dispatch
+  (`spawn`, hierarchical, depth-1) is OK and shipped. AutoGen-style
+  peer coordination belongs in the LocalKin platform layer, not in
+  KinClaw itself.
+- ❌ **Windows / Linux support.** macOS-native IS the positioning
+  (the Hermès craft, not the Zara mass-market).
+- ❌ **Token-markup pricing.** Software stays MIT. Revenue model is
+  the relay service when it ships.
+- ❌ **Fine-tuned KinClaw-specific model.** Brain stays swappable.
+- ❌ **OSWorld / benchmark leaderboard chasing.** Real-app,
+  real-task validation (`kinclaw probe -batch` 50-app reports) is
+  what we report.
+- ❌ **Rewriting in Rust / Swift.** `openclaw` (private Rust port
+  experiment) hit the `objc2` interop wall before the architectural
+  fun parts. Go + purego is the right shape.
 
 ## Why not Computer Use / Operator?
 

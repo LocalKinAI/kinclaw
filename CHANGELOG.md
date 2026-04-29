@@ -1,5 +1,74 @@
 # Changelog
 
+## [1.4.1] - 2026-04-29
+
+Maintenance release. No kernel or claw behavior changes — `souls/`
+trimmed to what's actually wired, README brought into sync with
+reality after several minor versions of drift.
+
+### Changed — `souls/` cleared of demo files; `coder` repurposed
+
+Removed five demo / generic-brain souls that nothing in the kernel
+referenced:
+
+- `souls/deepseek.soul.md` ("Deep" — generic DeepSeek-direct demo)
+- `souls/groq.soul.md` ("Bolt" — generic Groq Llama demo)
+- `souls/locked.soul.md` ("Locked" — sandboxed Claude demo)
+- `souls/ollama.soul.md` ("Local" — generic local Llama demo)
+- `souls/openai.soul.md` ("Sage" — generic GPT-4o demo)
+
+These were "switch-brain demos" from the pre-spawn era. Since v1.3.0
+shipped `spawn` + 4 specialist souls, pilot already covers all
+brain-routing use cases through specialization. Demo souls were noise.
+
+`souls/coder.soul.md` repurposed from a thin generic "engineer" soul
+on Claude Sonnet 4.6 into the specialist for the upcoming `kinclaw
+harvest --inspire`:
+
+- Brain: `deepseek-v4-pro:cloud`
+- Tools: `forge` + `file_read` + `file_write` (no shell, no network,
+  no spawn)
+- Job: given a procedural-style SKILL.md from another agent ecosystem
+  (Claude Code / Hermes / Cursor rules), re-implement the SAME
+  capability as a KinClaw exec-style SKILL.md via forge — NOT machine
+  translation. Refuses (`verdict: defer_to_procedural`) when the
+  original needs LLM round-trips, AX/vision, or pure prompt-
+  engineering that the exec form can't capture.
+
+`pkg/skill/spawn.go` ToolDef updated: `coder` is no longer marked
+"(when added)" in the available-specialist list.
+
+### Changed — README cleanup (multi-version drift fixed)
+
+The README accumulated staleness across v1.0 → v1.4. Rewritten /
+corrected:
+
+- Intro paragraph: "three claws" → "five claws" (record + web added
+  in v1.2.0); specialist count "researcher / eye / critic" → "/ coder";
+  binary size 25 MB → 17 MB (actual current)
+- Quick Start: "Default pilot runs Kimi K2.6" → K2.5 (matches actual
+  `souls/pilot.soul.md`)
+- Soul schema example: same K2.6 → K2.5 fix
+- "The four claws in action" → "The five claws in action"; added the
+  missing `web` claw subsection (Playwright over Chromium, ships as
+  external SKILL.md in `skills/web/`)
+- Sub-agent dispatch table: was 3 specialists, now lists all 4 with
+  `coder` and its harvest --inspire role
+- CLI reference: removed `-login-openai` (flag doesn't exist in
+  `main.go`; was misleading documentation)
+- Renamed "Not in v0.1 scope" (we're at v1.4.0!) to "Roadmap (post-1.4)"
+  — split into Shipped / Near-term v1.5+ / Apple-cert blocked /
+  Explicit non-goals. Corrected the misleading "Observer subscriptions
+  in kinax-go v0.2" hint — `kinax-go` v0.2 was `GetMany`, observer
+  is still ahead.
+- Removed dropped quick-start lines for the deleted demo souls
+  (already done in the cleanup commit, repeated here for the
+  changelog record).
+
+### Build
+
+`go build` / `go vet` / `go test ./...` — all green; no test changes.
+
 ## [1.4.0] - 2026-04-29
 
 **Behavior-defining minor.** v1.4.0 is the first KinClaw that doesn't
