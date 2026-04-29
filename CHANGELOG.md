@@ -1,5 +1,133 @@
 # Changelog
 
+## [1.3.0] - 2026-04-28
+
+**First minor after the v1.2 fortification.** v1.2.0 grew the 5 claws and
+v1.2.1 hardened the gates around them; v1.3.0 starts spending the
+capability they bought. The headline is sub-agent dispatch — pilot can
+hand a focused subtask to a specialist child running on a different
+brain, and recombine the result back into the main thread.
+
+This is **hierarchical, not peer**. Synchronous, not ambient. Kernel-
+hard-capped at depth 1. Sub-agent ≠ multi-agent: peer-swarm coordination
+stays an explicit non-goal in the KinClaw kernel — that layer belongs in
+the LocalKin platform.
+
+### Added — `spawn` skill (sub-agent dispatch)
+
+```
+spawn(soul=researcher, prompt="...", timeout_s=180)
+  → child stdout (text)
+```
+
+How it works (`pkg/skill/spawn.go`, 189 LOC):
+
+1. `exec.Command(self, -soul <resolved>, -exec <prompt>)` with
+   `KINCLAW_SPAWN_DEPTH=1` set in the child's env.
+2. `cmd.Output()` captures the child's `-exec` response. Boot banner
+   goes to stderr and is dropped, so the parent sees only the answer.
+3. Default 180s timeout, capped at 600s. Bogus `timeout_s` strings
+   fall back to default rather than erroring early.
+4. **Recursion guard**: the child's own `spawn` skill checks the env
+   var on boot and refuses any further dispatch. Max depth = 1, kernel-
+   enforced — the LLM cannot talk its way past it.
+
+Soul resolution: name `"researcher"` resolves against
+`./souls/researcher.soul.md` then `~/.localkin/souls/researcher.soul.md`
+(same dirs the kinclaw CLI already uses). Absolute paths pass through
+unchanged.
+
+Permission gate: `NewSpawnSkill(enabled, soulDirs)` is registered
+unconditionally but self-disables when `permissions.spawn` is false.
+Specialist souls don't set the bit, so even if a child somehow got the
+schema it can't actually dispatch — belt-and-suspenders with the env-
+var guard.
+
+### Added — 3 specialist souls
+
+Each plays to its model's strength. Different labs on purpose: pilot is
+on Moonshot Kimi, critic is on Minimax — different model lineage means
+different blind spots, which is the whole point of asking for a second
+opinion.
+
+| Soul | Brain | Role |
+|---|---|---|
+| `souls/researcher.soul.md` | `kimi-k2.6:cloud` (1T, 256k ctx) | Deep web search + long-context synthesis. Read-only: only `web_*`, `file_read`, `file_write`. The honesty invariant from pilot is repeated verbatim — every fact must trace to a fetched source or be marked "未确认". |
+| `souls/eye.soul.md` | `kimi-k2.6:cloud` (multimodal) | Pure visual verification. 2 skills only: `screen`, `file_read`. Answers 3 question shapes (*where is X / is state Y / is Z present*) with rigid output formats (coords + 1-line evidence). Forbidden from summarizing whole screens or fabricating non-visible elements. |
+| `souls/critic.soul.md` | `minimax-m2.7:cloud` | Adversarial second opinion on plans / forge'd skills / soul edits. Output is a fixed 3-section structure: ✓ what passes / ⚠ risks ranked / overall verdict. Strictly read-only. |
+
+All three set `permissions.spawn: false` explicitly — the YAML makes the
+"sub-agents can't themselves spawn" contract obvious at a glance, in
+addition to the env-var guard.
+
+### Changed — soul schema gains `permissions.spawn`
+
+```yaml
+permissions:
+  spawn: true     # default false; only pilot opts in today
+```
+
+`pkg/soul/soul.go` adds the bool field. Defaults to false to preserve
+existing soul behavior — no surprise capability bumps on upgrade.
+
+### Changed — pilot soul: routing guidance
+
+Pilot now opts in (`permissions.spawn: true`) and adds `"spawn"` to
+`skills.enable`. The soul body grows by 23 lines (135 → 173, still well
+under the 433-line bloat v1.2.0 cut from) with a decision-table-shaped
+section between the honesty axioms and `## 裂变`:
+
+**派 (when to dispatch):**
+- external facts (ratings / prices / docs) → `researcher`
+- AX-blind UI elements (canvas / dense icons) → `eye`
+- non-trivial skill about to be forged → `critic` first
+- genuinely parallel subtasks → multiple `spawn`
+
+**别派 (when NOT to dispatch):**
+- one-or-two-step task — just do it inline
+- answer already in current trace
+- pure UI driving is the agent's day job — don't delegate it
+- recursion is impossible anyway — kernel-capped at depth 1
+
+The text is a decision table, not prescriptive prose — matches the
+"thin soul" ethos. Without it, two failure modes were live: agent
+spawns for everything (over-decomposition; slow + expensive), or
+agent never spawns (specialists waste away unused).
+
+### Tests
+
+`pkg/skill/spawn_test.go` — 11 new cases:
+
+- Disabled-state refusal (no subprocess launched)
+- Recursion-guard via env var (child refuses second-level spawn)
+- Empty/whitespace `soul` or `prompt` rejected up front
+- Unknown soul name → clear not-found error
+- `resolveSoul`: by name from soul dirs, by absolute path
+- Bogus `timeout_s` string falls back to default 180 (no early error)
+- `ToolDef` contains `soul` / `prompt` / `timeout_s` + skill name
+- Description names `researcher` / `eye` / `critic` so LLM can route
+
+End-to-end smoke (manual): `kinclaw -soul souls/pilot.soul.md -exec
+"用 spawn 派 researcher 查 X"` → pilot dispatches → researcher boots,
+runs, returns `未找到` rather than fabricating. Honesty invariant held
+across the process boundary.
+
+`go test ./...` → 82 test functions across 9 packages (+11 from v1.2.1).
+
+### Why this matters
+
+The 5 claws answered "can KinClaw drive any Mac app?" (94% on the 50-
+app probe). Sub-agent dispatch starts answering the next question:
+"can KinClaw be smart about *which* model drives *which* part of a
+task?" Verification belongs on a multimodal brain. Web research belongs
+on a long-context brain. Adversarial review belongs on a different lab
+entirely. The pilot stays a generalist; the specialists are cheap to
+add.
+
+Sub-agent dispatch also makes the kernel-thin / soul-thin / fat-skills-
+and-memory architecture pay rent: a new specialist is one `.soul.md`
+file. No code changes, no kernel touches, no new schema. Just text.
+
 ## [1.2.1] - 2026-04-27
 
 **Polish on v1.2.0.** Genesis-loop validation surfaced four edges that

@@ -5,13 +5,16 @@
 
 KinClaw is a computer-use agent for macOS. It sees your screen,
 understands your UI semantically, clicks, types, and — the part no
-one else has — **reproduces on demand** via two primitives:
+one else has — **reproduces on demand** via three primitives:
 
 - **Soul Clone** (`pkg/clone`) — duplicate a specialist into N
   parallel workers with small per-clone divergence.
 - **Skill Forge** (`pkg/skill` forge) — when an existing skill
   can't handle a task, KinClaw drafts, writes, registers, and tests
   a new one, then retries.
+- **Sub-agent dispatch** (`spawn` skill) — fork-exec a specialist
+  child on a different brain (researcher / eye / critic ship in-box;
+  hierarchical, kernel-capped at depth 1).
 
 Single binary, ~25 MB, Go 1.22+, MIT licensed. Runs on your actual
 Mac (not in a virtualized container like Anthropic's Computer Use or
@@ -46,8 +49,10 @@ Want a different brain? Pick another soul:
 ```bash
 # Claude (OAuth, free tier works for testing)
 kinclaw -login
-kinclaw -soul souls/coder.soul.md         # Claude
-kinclaw -soul souls/researcher.soul.md    # Claude
+kinclaw -soul souls/coder.soul.md         # Claude Sonnet 4.6
+kinclaw -soul souls/researcher.soul.md    # Kimi K2.6 (1T, 256k ctx)
+kinclaw -soul souls/eye.soul.md           # Kimi K2.6 multimodal — visual verification
+kinclaw -soul souls/critic.soul.md        # Minimax M2.7 — adversarial review
 kinclaw -soul souls/openai.soul.md        # set $OPENAI_API_KEY
 kinclaw -soul souls/ollama.soul.md        # 100% local Llama via Ollama
 ```
@@ -115,6 +120,7 @@ what worked + what didn't on every app it has driven.
 │  forge  — author new skills (with kernel quality gate)      │
 │  learn  — append cross-session lessons to learned.md        │
 │  clone  — duplicate souls into N parallel workers (lib)     │
+│  spawn  — dispatch subtask to specialist child (depth-1)    │
 │                                                             │
 │  ─── External SKILL.md plugins (./skills/) ───              │
 │  tts / stt — Kokoro / SenseVoice via :8001 / :8000          │
@@ -165,6 +171,7 @@ permissions:
   input: true        # input-go capability
   ui: true           # kinax-go capability
   record: true       # kinrec capability — video MP4 + audio
+  spawn: false       # opt in to sub-agent dispatch (default off)
 skills:
   enable: ["screen", "input", "ui", "record", "file_read", "tts", "stt"]
 ---
@@ -301,6 +308,39 @@ that doesn't exist, `forge` drafts a `SKILL.md` + implementation
 script, validates syntax, registers it in the live registry, and
 retries the original task. See `pkg/skill/native.go` for the forge
 skill.
+
+## Sub-agent dispatch — `spawn`
+
+When a subtask wants a different brain than the pilot's main lineage —
+multimodal verification, deep web research, adversarial review — pilot
+can dispatch to a specialist child:
+
+```
+spawn(soul=researcher, prompt="...", timeout_s=180)
+  → child stdout (text)
+```
+
+The child boots from `souls/<name>.soul.md`, runs its own toolchain
+on its own model, and returns a string. **Hierarchical** (not peer),
+**synchronous** (not ambient), and kernel-capped at depth 1 — children
+cannot themselves spawn. Sub-agent dispatch ≠ multi-agent: peer-swarm
+coordination stays an explicit non-goal in the kernel.
+
+Three specialists ship in `souls/`:
+
+| Soul | Brain | When to dispatch |
+|---|---|---|
+| `researcher` | `kimi-k2.6:cloud` (1T, 256k ctx) | external facts, deep web research |
+| `eye` | `kimi-k2.6:cloud` (multimodal) | AX-blind UI verification (canvas, dense icons) |
+| `critic` | `minimax-m2.7:cloud` | adversarial second opinion on plans / forge'd skills |
+
+Different labs on purpose: pilot is on Moonshot Kimi, critic is on
+Minimax — different model lineage means different blind spots, which
+is the whole point of asking for a second opinion.
+
+Opt in via `permissions.spawn: true` in the soul. Specialists default
+to `false` — even if a child somehow got the schema it can't dispatch.
+See `pkg/skill/spawn.go` for the implementation.
 
 ## CLI reference
 
