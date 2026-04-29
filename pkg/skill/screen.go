@@ -3,6 +3,7 @@
 package skill
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -96,43 +97,26 @@ func (s *screenSkill) Execute(params map[string]string) (string, error) {
 	}
 }
 
-// ocr runs sckit-go's Vision-framework wrapper on either an existing
-// image file (path=...) or a fresh screen capture (path omitted).
+// ocr runs sckit-go's Vision-framework wrapper. Two input modes:
+//
+//   path=<file>    OCR an existing PNG/JPEG/TIFF on disk
+//   (no path)      Capture the screen ENTIRELY IN MEMORY (no disk
+//                  round-trip), encode to PNG bytes, OCR
+//
+// The fresh-capture path was redesigned for v1.7.1 — earlier code
+// piggy-backed on screenshot() which writes PNG to ~/Library/Caches
+// then re-reads it from disk. That worked but burned disk IO on every
+// OCR call (~ms latency, but more importantly ~5MB/file × N calls).
+// Capturing in memory drops it to a single in-process buffer.
+//
 // Returns text regions as a compact human-readable list — LLM can
-// re-parse if it needs structured access. For machine-friendly access
-// the underlying sckit.OCR API is the way; this skill is shaped for
-// LLM consumption.
+// re-parse if it needs structured access. For machine-friendly
+// access the underlying sckit.OCR API is the way; this skill is
+// shaped for LLM consumption.
 func (s *screenSkill) ocr(ctx context.Context, params map[string]string) (string, error) {
-	var imgBytes []byte
-	var label string
-	if p := params["path"]; p != "" {
-		p = expandHome(p)
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return "", fmt.Errorf("read %s: %w", p, err)
-		}
-		imgBytes = b
-		label = p
-	} else {
-		// Capture the screen first, then OCR. We keep the screenshot
-		// path in the result so the soul has a reference if it later
-		// wants to ALSO show it to a vision LLM.
-		shotResult, err := s.screenshot(ctx, params)
-		if err != nil {
-			return "", fmt.Errorf("screenshot for ocr: %w", err)
-		}
-		// shotResult's first line is the file path (see screenshot()).
-		shotPath := shotResult
-		if i := indexOfFirstNewline(shotResult); i > 0 {
-			shotPath = shotResult[:i]
-		}
-		shotPath = expandHome(shotPath)
-		b, err := os.ReadFile(shotPath)
-		if err != nil {
-			return "", fmt.Errorf("read fresh screenshot %s: %w", shotPath, err)
-		}
-		imgBytes = b
-		label = shotPath
+	imgBytes, label, err := s.imageForOCR(ctx, params)
+	if err != nil {
+		return "", err
 	}
 
 	regions, err := sckit.OCR(imgBytes)
@@ -151,13 +135,67 @@ func (s *screenSkill) ocr(ctx context.Context, params map[string]string) (string
 	return string(b), nil
 }
 
-func indexOfFirstNewline(s string) int {
-	for i, c := range s {
-		if c == '\n' {
-			return i
+// imageForOCR returns the PNG bytes the OCR call should consume,
+// plus a label for the human-readable result line. Either reads a
+// file from `path=<file>` or captures the screen in-memory (no
+// disk write — ocr does NOT call the screenshot action and does
+// NOT produce a file as side effect).
+func (s *screenSkill) imageForOCR(ctx context.Context, params map[string]string) ([]byte, string, error) {
+	if p := params["path"]; p != "" {
+		p = expandHome(p)
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil, "", fmt.Errorf("read %s: %w", p, err)
+		}
+		return b, p, nil
+	}
+
+	// Fresh capture, in-memory only. Same display-pick logic as
+	// screenshot() so display_id behaves the same across actions.
+	target, err := s.pickDisplay(ctx, params)
+	if err != nil {
+		return nil, "", err
+	}
+	img, err := sckit.Capture(ctx, target)
+	if err != nil {
+		return nil, "", fmt.Errorf("sckit.Capture: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, "", fmt.Errorf("png encode in-memory: %w", err)
+	}
+	bounds := img.Bounds()
+	label := fmt.Sprintf("<in-memory capture display=%d %dx%d>",
+		target.ID, bounds.Dx(), bounds.Dy())
+	return buf.Bytes(), label, nil
+}
+
+// pickDisplay resolves the target display from params (display_id
+// optional; default = main = displays[0]). Shared by screenshot()
+// and the OCR fresh-capture path.
+func (s *screenSkill) pickDisplay(ctx context.Context, params map[string]string) (sckit.Display, error) {
+	ds, err := sckit.ListDisplays(ctx)
+	if err != nil {
+		return sckit.Display{}, fmt.Errorf("sckit.ListDisplays: %w", err)
+	}
+	if len(ds) == 0 {
+		return sckit.Display{}, fmt.Errorf("no displays available")
+	}
+	target := ds[0]
+	if want := params["display_id"]; want != "" {
+		var found bool
+		for _, d := range ds {
+			if fmt.Sprintf("%d", d.ID) == want {
+				target = d
+				found = true
+				break
+			}
+		}
+		if !found {
+			return sckit.Display{}, fmt.Errorf("display_id %q not found", want)
 		}
 	}
-	return -1
+	return target, nil
 }
 
 func (s *screenSkill) listDisplays(ctx context.Context) (string, error) {
@@ -181,28 +219,9 @@ func (s *screenSkill) listDisplays(ctx context.Context) (string, error) {
 }
 
 func (s *screenSkill) screenshot(ctx context.Context, params map[string]string) (string, error) {
-	ds, err := sckit.ListDisplays(ctx)
+	target, err := s.pickDisplay(ctx, params)
 	if err != nil {
-		return "", fmt.Errorf("sckit.ListDisplays: %w", err)
-	}
-	if len(ds) == 0 {
-		return "", fmt.Errorf("no displays available")
-	}
-
-	// sckit-go returns the main display first by convention.
-	target := ds[0]
-	if want := params["display_id"]; want != "" {
-		var found bool
-		for _, d := range ds {
-			if fmt.Sprintf("%d", d.ID) == want {
-				target = d
-				found = true
-				break
-			}
-		}
-		if !found {
-			return "", fmt.Errorf("display_id %q not found", want)
-		}
+		return "", err
 	}
 
 	img, err := sckit.Capture(ctx, target)

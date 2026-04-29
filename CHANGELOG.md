@@ -1,5 +1,54 @@
 # Changelog
 
+## [1.7.1] - 2026-04-29
+
+Polish on v1.7.0. The OCR action's "fresh capture" path was wasteful:
+v1.7.0 piggybacked on `screenshot()` which writes a PNG to
+`~/Library/Caches/kinclaw/screens/` and then re-reads it from disk
+just to feed into Vision. Honest data flow was:
+
+  screen action=ocr → call screenshot() → png.Encode TO FILE →
+    parse path out of result string → os.ReadFile FROM FILE →
+    sckit.OCR
+
+A user-visible disk round-trip on every OCR call. ~5MB written +
+read back into the same buffer, ~5-20ms wasted, and a stray PNG
+file dropped on every call.
+
+### Changed — `screen action=ocr` is now in-memory
+
+```
+screen action=ocr  (fresh capture)
+  → pickDisplay
+  → sckit.Capture            (returns image.Image)
+  → png.Encode to bytes.Buffer  (no file)
+  → sckit.OCR                (reads buffer)
+  → text + boxes
+
+screen action=ocr path=<file>
+  → os.ReadFile              (still file-backed since user pointed there)
+  → sckit.OCR
+```
+
+Result label changed accordingly:
+
+  Before:  `OCR on /Users/.../kinclaw/screens/screen-20260429-143012.000.png`
+  After:   `OCR on <in-memory capture display=1 1920x1080>`
+
+### Refactored — shared `pickDisplay` helper
+
+Extracted `pickDisplay(ctx, params)` from `screenshot()` so both the
+file-writing screenshot path and the in-memory OCR path share the
+same `display_id` resolution logic. Pure cleanup; behavior preserved.
+
+`screenshot` still writes a file as before — that's its job. Only
+`ocr` (no path) skips disk.
+
+### Build
+
+`go build / vet / test ./...` — all green; no test changes (OCR
+integration tests live in sckit-go).
+
 ## [1.7.0] - 2026-04-29
 
 **Two new claw-level capabilities** wired up from upstream KinKit
