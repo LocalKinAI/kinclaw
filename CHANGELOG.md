@@ -1,5 +1,149 @@
 # Changelog
 
+## [1.3.1] - 2026-04-28
+
+**Polish on v1.3.0.** Sub-agent dispatch landed yesterday; today we point
+the gun at our own ecosystem. v1.3.1 ships a `kinclaw harvest` subcommand
+that pulls candidate skills from third-party agent repos, runs them
+through the existing forge quality gate v2 + critic soul, and stages
+survivors for human approval. No kernel changes — every new capability
+is a thin tool layer on top of what v1.2.x and v1.3.0 already shipped.
+
+### Added — `kinclaw harvest` subcommand
+
+```
+kinclaw harvest                          # all sources, run pipeline → stage
+kinclaw harvest --source claude-code     # one source
+kinclaw harvest --diff                   # dry-run, write nothing
+kinclaw harvest --review                 # list staged candidates
+kinclaw harvest --accept <id>            # promote staged → ./skills/
+kinclaw harvest --no-critic              # skip the critic spawn (cron / CI)
+```
+
+The pipeline (per source):
+
+1. `git clone --depth=1` to `~/.localkin/harvest/sources/<name>/`
+   (cached; re-runs do `git pull --ff-only`)
+2. **License gate** — auto-detects `LICENSE` / `LICENSE.md` / `COPYING`
+   header and matches against `license_allow` list (defaults: MIT /
+   Apache-2.0 / BSD-3-Clause; `["*"]` for self-owned repos)
+3. Glob `skill_paths` from manifest (supports `**` recursive matching)
+4. Parse via `LoadExternalSkill` — same loader the kinclaw registry
+   uses at boot, so anything that survives is guaranteed to load
+5. **Forge quality gate v2** — name pattern, `command[0]` in `$PATH`,
+   osascript `-e` pairing, no hardcoded coords, schema/template var
+   consistency. Hard reject; the candidate doesn't get staged.
+6. **Critic soul review** — spawns `souls/critic.soul.md` against each
+   surviving candidate. Critic *annotates* (`accept` / `warn` / `reject`)
+   but does not auto-reject — staging includes the verdict so human
+   review can sort fastest. Different lab from pilot on purpose
+   (Minimax M2.7 vs Kimi K2.5) — different model lineage, different
+   blind spots.
+7. **Stage** at `~/.localkin/harvest/staged/<source>/<skill-name>/`
+   with `SKILL.md` + `critic.md` + `meta.txt`. Final acceptance into
+   `./skills/` is always a manual `--accept` step. The pipeline never
+   auto-merges.
+
+Manifest is TOML at `~/.localkin/harvest.toml`:
+
+```toml
+[[source]]
+name         = "claude-code"
+url          = "https://github.com/anthropics/claude-code"
+skill_paths  = ["plugin-source/skills/**/SKILL.md"]
+license_allow = ["MIT", "Apache-2.0"]
+
+[[source]]
+name         = "openclaw"
+url          = "file:///Users/you/Code/openclaw"   # local, no clone
+skill_paths  = ["skills/**/SKILL.md"]
+license_allow = ["*"]                              # self-owned
+```
+
+See `harvest.example.toml` at the repo root for the canonical template.
+
+### Added — launchd cron template
+
+`scripts/com.localkin.kinclaw-harvest.plist` runs `kinclaw harvest
+--all --stage --no-critic` nightly at 03:00. Replace `USERNAME` and
+the `kinclaw` binary path, then:
+
+```bash
+cp scripts/com.localkin.kinclaw-harvest.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.localkin.kinclaw-harvest.plist
+```
+
+Cron defaults to `--no-critic` because critic is an LLM call and
+cron-time auth is brittle. Run `kinclaw harvest --review` in the
+morning, sort by critic verdict (which you can re-add manually), pick
+candidates, `--accept` them.
+
+### Added — `pkg/harvest/` package + `pkg/skill.ValidateSkillMeta`
+
+Reusable building blocks the harvest pipeline composes from:
+
+- `pkg/harvest/manifest.go` — TOML manifest schema + validation
+- `pkg/harvest/glob.go` — `**` doublestar globbing (no new dep, ~30
+  LOC backtracking matcher)
+- `pkg/harvest/source.go` — git cache + license header detection
+  for MIT / Apache-2.0 / BSD-3-Clause / MPL-2.0 / GPL-2.0/3.0
+- `pkg/harvest/critic.go` — wraps the critic soul spawn pattern
+  (mirror of `pkg/skill/spawn.go`); parses verdict line in EN + 中文
+- `pkg/harvest/pipeline.go` — orchestrator
+- `pkg/harvest/stage.go` — staging IO, `--review` listing, `--accept`
+  promotion (refuses to clobber existing skills)
+
+`pkg/skill/validate.go` exposes a public `ValidateSkillMeta` —
+previously the forge gate v2 lived only inside the forge skill.
+Lifting it lets the harvest pipeline (and any future linter) call the
+same checks the forge runs at write time, without re-implementing
+them.
+
+### Tests
+
+- `pkg/harvest/glob_test.go` — 16 cases for the glob matcher
+  (literal, `*`, `**`, trailing `**`, no-match) + 7 cases for license
+  allowlist semantics + `globFiles` skips `.git` / `node_modules`
+- `pkg/harvest/manifest_test.go` — valid manifest round-trip,
+  4 invalid-manifest rejection cases (empty, missing url, missing
+  skill_paths, duplicate name), 8 critic-verdict parse cases (EN +
+  中文 + missing verdict line falls back to `warn`)
+- End-to-end smoke (manual): point manifest at the kinclaw repo
+  itself (`file://` URL, 12 SKILL.md files in `skills/`), `--diff`
+  shows all 12 pass; real run stages all 12 to
+  `~/.localkin/harvest/staged/kinclaw-self/`
+
+`go test ./...` → 91 test functions across 10 packages (+9 from v1.3.0).
+
+### Changed — `pkg/skill.ExternalSkill.Meta()`
+
+Added a public getter so external code (the harvest pipeline,
+future linters) can re-validate a loaded skill's frontmatter without
+re-parsing the file.
+
+### Dependencies
+
+One new direct dep: `github.com/BurntSushi/toml v1.6.0` (TOML parser
+for the manifest). Self-contained, single package, well-maintained,
+~200KB binary impact. The harvest manifest format was chosen as TOML
+deliberately — a flat array-of-tables scheme reads cleanly under
+human edits and resists the fragility of YAML's whitespace + escape
+quirks.
+
+### Why this matters
+
+Harvest closes the loop on Genesis. v1.2.x produced skills via forge
+when the agent ran into a missing capability mid-task. v1.3.1 lets the
+agent (and the user behind it) absorb good ideas from the wider agent
+ecosystem — Claude Code, Hermes Agent, the user's own private repos —
+without writing them by hand. The forge gate keeps the bar honest;
+the critic soul adds a second-opinion review; staging keeps the human
+the final approver. No PR auto-merge, no surprise capability bumps.
+
+The `kinclaw harvest --no-critic` path also makes the launchd cron
+self-sufficient: clones stay warm, new candidates flow into staging
+nightly, the morning review session is one `--review` away.
+
 ## [1.3.0] - 2026-04-28
 
 **First minor after the v1.2 fortification.** v1.2.0 grew the 5 claws and

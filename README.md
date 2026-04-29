@@ -117,10 +117,11 @@ what worked + what didn't on every app it has driven.
 │  shell · file_read/write/edit · web_fetch · web_search      │
 │                                                             │
 │  ─── Self-evolution ───                                     │
-│  forge  — author new skills (with kernel quality gate)      │
-│  learn  — append cross-session lessons to learned.md        │
-│  clone  — duplicate souls into N parallel workers (lib)     │
-│  spawn  — dispatch subtask to specialist child (depth-1)    │
+│  forge   — author new skills (with kernel quality gate)     │
+│  learn   — append cross-session lessons to learned.md       │
+│  clone   — duplicate souls into N parallel workers (lib)    │
+│  spawn   — dispatch subtask to specialist child (depth-1)   │
+│  harvest — pull skills from other agent repos (CLI subcmd)  │
 │                                                             │
 │  ─── External SKILL.md plugins (./skills/) ───              │
 │  tts / stt — Kokoro / SenseVoice via :8001 / :8000          │
@@ -309,6 +310,47 @@ script, validates syntax, registers it in the live registry, and
 retries the original task. See `pkg/skill/native.go` for the forge
 skill.
 
+## Skill harvest — `kinclaw harvest`
+
+`kinclaw harvest` pulls candidate `SKILL.md` files from other agent
+repos (Claude Code, Hermes Agent, your own private repos), runs them
+through the forge quality gate v2 + critic soul review, and stages
+survivors at `~/.localkin/harvest/staged/` for human approval. Final
+acceptance into `./skills/` is always manual — the pipeline never
+auto-merges.
+
+```bash
+kinclaw harvest                          # all sources, run pipeline → stage
+kinclaw harvest --source claude-code     # one source only
+kinclaw harvest --diff                   # dry-run, write nothing
+kinclaw harvest --review                 # list staged candidates
+kinclaw harvest --accept claude-code/foo # promote staged → ./skills/
+```
+
+Manifest at `~/.localkin/harvest.toml`:
+
+```toml
+[[source]]
+name         = "claude-code"
+url          = "https://github.com/anthropics/claude-code"
+skill_paths  = ["plugin-source/skills/**/SKILL.md"]
+license_allow = ["MIT", "Apache-2.0"]
+
+[[source]]
+name         = "openclaw"
+url          = "file:///Users/you/Code/openclaw"   # local, no clone
+skill_paths  = ["skills/**/SKILL.md"]
+license_allow = ["*"]                              # self-owned
+```
+
+See `harvest.example.toml` at the repo root for the canonical template.
+
+A nightly cron template ships at
+`scripts/com.localkin.kinclaw-harvest.plist` — runs `kinclaw harvest
+--all --stage --no-critic` at 03:00 daily. Replace `USERNAME` then
+`launchctl load` it. New candidates flow into staging while you sleep;
+review them in the morning with `kinclaw harvest --review`.
+
 ## Sub-agent dispatch — `spawn`
 
 When a subtask wants a different brain than the pilot's main lineage —
@@ -358,6 +400,13 @@ Subcommands (own their own flag sets):
   kinclaw probe -json com.apple.Notes
   kinclaw probe -batch < ids.txt    CSV scan for many apps (auto-cleanup)
   kinclaw probe -h                  Full probe help
+
+  kinclaw harvest                   Pull candidate skills from other agent
+                                    repos (manifest at ~/.localkin/harvest.toml)
+  kinclaw harvest --diff            Dry-run; show what would happen
+  kinclaw harvest --review          List staged candidates
+  kinclaw harvest --accept <id>     Promote staged → ./skills/
+  kinclaw harvest -h                Full harvest help
 
 In-REPL commands:
   /soul [name]     List / switch soul files
