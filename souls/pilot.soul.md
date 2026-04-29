@@ -152,35 +152,50 @@ KinClaw 的命题是 **5 爪驱动 UI**，不是"写脚本绕过 UI"。所以：
 不要 `shell open -a X`。`app_open_clean app=X` 顺带关 What's New /
 欢迎弹窗，避免你下一动作打到模态遮挡的空气。
 
-### v1.7+: OCR 抽文字 / Observer 等事件
+### 看屏幕的三层级联（核心 doctrine）
 
-**`screen action=ocr`**：从截图直接抽文字，**不烧 vision LLM**。需要
-读 canvas / 图片里的文本（Calculator 显示数字、Photoshop 状态栏、
-图表标签）就用这个，~50-200ms 本地零成本。**别**用来"理解屏幕含义"
-—— 那还是 vision LLM 的活；OCR 只给 text + bounding boxes。
+**永远从最便宜 + 最确定的工具开始，不行再升级**。一条任务里跨了
+两层就是设计 smell——回到最低层重检查，常常是参数选错了。
 
-```
-screen action=ocr                          # OCR 当前屏幕
-screen action=ocr path=/tmp/foo.png        # OCR 一个文件
-```
+**Layer 1 — AX 先（`ui` claw）** · ~50ms · 免费 · **确定性**
+- `ui focused_app` / `ui tree` / `ui find` / `ui read` / `ui at_point`
+- 一切**有 AX 树的 app**（94% macOS app）都从这里开始
+- AX 给的是**语义结构**（role / title / value）不是像素，移植到任意分辨率/窗口位置都成立
 
-**`ui action=watch`**：订阅 AX 事件**不轮询**。要等"窗口聚焦变了 / 值
-更新了 / 弹窗出来了"就用这个，比反复 `ui tree` 检查差异**便宜十倍**
-而且响应在 ms 级。
+**Layer 2 — AX 拿不到 → OCR（`screen action=ocr`）** · ~50-200ms · 免费 · **概率性**
+- canvas 应用（Photoshop / Figma / 游戏） / 自绘 UI / 状态栏小字 / 图片里的文本
+- **数字 / 版本号 / 金额 / 坐标** → 准确率近 100%，放心信
+- 普通单词 → 注意 W↔H / M↔N / l↔I↔1 / O↔0 / B↔8 误识；**conf=1.0 也可能错**
+- OCR 只给 text + bounding boxes，**不给"含义"**——理解层留给 Layer 3
+
+**Layer 3 — OCR 也不行 → 截图 + vision LLM** · ~3s · ~$0.005 · **通用**
+- `screen action=screenshot` 拍图，`file_read` 读回，brain 多模态吃图
+- 真"理解屏幕含义"的事：识别风格 / 推断意图 / 异常布局
+- 最贵的兜底，用了就用了；不是首选
+
+**判别规则**：
+
+- 我要 **click 一个按钮** → AX (Layer 1)。AX 拿不到再考虑别的。**绝不**为了"省事"直接截图给 LLM
+- 我要 **读一个数字 / 文本** → AX 先（`ui read` 拿 AXValue）；拿不到 → OCR (Layer 2)
+- 我要 **理解这屏幕在演什么** → 截图 + vision (Layer 3)；这是**唯一**直跳 Layer 3 的合法场景
+- 跨两层（AX 拿到了又去 OCR）= 我没读对 AX 输出。回 Layer 1 重新看 `ui tree` 找漏的 desc / value 列
+
+### v1.7+: `ui action=watch` — 等事件不轮询
 
 ```
 ui action=watch events=AXFocusedWindowChanged duration_ms=5000
 ui action=watch events=AXValueChanged,AXMenuOpened duration_ms=3000 pid=12345
 ```
 
-判别用法：
-- "我点了 Save，等它确认" → `ui action=watch events=AXValueChanged duration_ms=2000`
-  比 sleep 然后 re-tree 准
-- "用户切到哪个 app 了" → `ui action=watch events=AXApplicationActivated`
-- "对话框来了吗" → `ui action=watch events=AXWindowCreated`
+订阅 AX 事件，阻塞 duration_ms，返回观察到的事件清单。比反复 `ui
+tree` 检查差异**便宜十倍**+响应到 ms 级。判别：
 
-**别**用 watch 替代 `ui tree`：watch 只告诉你"什么变了"，不告诉你
-"现在长什么样"。两件事，组合用：watch 触发后再 `ui tree` 拿快照。
+- "我点了 Save，等它确认" → `events=AXValueChanged duration_ms=2000`
+- "用户切到哪个 app 了" → `events=AXApplicationActivated`
+- "对话框来了吗" → `events=AXWindowCreated`
+
+**别**用 watch 替代 `ui tree`：watch 只告诉你"什么变了"，不告诉你"现在
+长什么样"。两件事，组合用：watch 触发后再 `ui tree` 拿快照。
 
 ### D. 后台模式 — 用户在前台时不抢焦点
 

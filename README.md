@@ -249,6 +249,28 @@ LLM: input action=click x=400 y=300 target_pid=12345
 LLM: input action=type text="hello" target_pid=12345
 ```
 
+### Reading the screen — three-tier cascade (v1.7+)
+
+```
+Layer 1 (cheapest)   ui claw            ~50ms     $0       deterministic
+Layer 2              screen action=ocr  ~50-200ms $0       probabilistic
+Layer 3 (priciest)   screen + vision    ~3s       ~$0.005  generic
+```
+
+- **Layer 1 (AX, default)** — `ui find` / `ui tree` / `ui read`. Works
+  on 94% of macOS apps because they expose Accessibility. Use this
+  ALWAYS unless AX literally returns nothing.
+- **Layer 2 (OCR)** — `screen action=ocr`. Drops to text-extraction
+  via Vision framework when AX is absent (canvas apps, status bars,
+  rendered images). ~99% accurate on digits / version strings; word
+  accuracy varies (see `screen action=ocr` notes below).
+- **Layer 3 (vision LLM)** — `screen action=screenshot` + `file_read`
+  + multimodal brain. The expensive fallback for "understand this
+  screen" tasks where Layer 1 + 2 give text + boxes but no semantics.
+
+The pilot soul has the doctrine baked in: never skip Layer 1 just
+because Layer 3 is more flexible.
+
 ### `screen` — just take a picture (and read text out of it, v1.7+)
 
 ```
