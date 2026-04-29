@@ -29,7 +29,11 @@ import (
 func Judge(ctx context.Context, kinclawBin, curatorSoulPath string, inv *SkillInventory, candidate JudgeCandidate) (*JudgeResult, error) {
 	prompt := buildJudgePrompt(inv, candidate)
 
-	ctx, cancel := withTimeout(ctx, 60*time.Second)
+	// 120s — Kimi K2.6 cloud round-trips average 5-15s but slower
+	// candidates (longer body excerpts, network jitter) occasionally
+	// push past 60s. Tighter than 120s causes spurious timeouts;
+	// longer than 120s wastes worker time on hung calls.
+	ctx, cancel := withTimeout(ctx, 120*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, kinclawBin,
@@ -39,7 +43,7 @@ func Judge(ctx context.Context, kinclawBin, curatorSoulPath string, inv *SkillIn
 
 	out, err := cmd.Output()
 	if ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("curator timed out after 60s")
+		return nil, fmt.Errorf("curator timed out after 120s")
 	}
 	if err != nil {
 		stderr := ""

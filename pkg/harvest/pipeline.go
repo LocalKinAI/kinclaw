@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/LocalKinAI/kinclaw/pkg/soul"
@@ -40,6 +41,7 @@ type Options struct {
 	DryRun           bool           // --diff: scan + judge but don't write to staging
 	Out              io.Writer      // human-readable progress, default os.Stderr
 	CloneTimeout     time.Duration  // per-source git clone/pull deadline (default 120s)
+	JudgeWorkers     int            // parallel curator spawns (default 8)
 }
 
 // Result is the per-source outcome of a pipeline run.
@@ -119,11 +121,38 @@ func RunSource(ctx context.Context, src Source, opts Options) Result {
 		}
 	}
 
-	for _, path := range matches {
-		rel, _ := filepath.Rel(repoDir, path)
-		rel = filepath.ToSlash(rel)
-		processCandidate(ctx, &r, src, opts, repoDir, path, rel, out)
+	// Concurrency: curator spawns are LLM round-trips, ~10-15s each.
+	// Sequential = brutal (85 × ~15s = 21 min per source). With 8
+	// workers it drops to ~3 min. r and out are mutated from goroutines
+	// — guard with a single mutex (output reordering is fine; user
+	// reads candidate name on each line so cross-correlation works).
+	workers := opts.JudgeWorkers
+	if workers <= 0 {
+		workers = 8
 	}
+	if opts.SkipJudge || opts.CuratorSoulPath == "" {
+		// Cheap mode — no LLM calls, sequential is fine and avoids
+		// goroutine overhead entirely.
+		workers = 1
+	}
+
+	var mu sync.Mutex
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	for _, path := range matches {
+		path := path
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			rel, _ := filepath.Rel(repoDir, path)
+			rel = filepath.ToSlash(rel)
+			processCandidate(ctx, &r, &mu, src, opts, repoDir, path, rel, out)
+		}()
+	}
+	wg.Wait()
+
 	renderSourceSummary(out, &r, opts.SkipJudge)
 	return r
 }
@@ -133,9 +162,15 @@ func RunSource(ctx context.Context, src Source, opts Options) Result {
 // stage based on verdict. No forge, no critic, no special branching
 // between exec-style and procedural-style — they all flow through
 // the same triage.
+//
+// Called concurrently from the RunSource worker pool. mu guards
+// every r-write and every out-write so concurrent goroutines don't
+// race or interleave each other's output mid-line. The curator
+// LLM call (Judge) is the expensive bit; it runs OUTSIDE the lock.
 func processCandidate(
 	ctx context.Context,
 	r *Result,
+	mu *sync.Mutex,
 	src Source,
 	opts Options,
 	repoDir, path, rel string,
@@ -143,7 +178,9 @@ func processCandidate(
 ) {
 	content, err := os.ReadFile(path)
 	if err != nil {
+		mu.Lock()
 		r.Errors = append(r.Errors, fmt.Sprintf("%s: read: %v", rel, err))
+		mu.Unlock()
 		return
 	}
 
@@ -151,14 +188,20 @@ func processCandidate(
 
 	// --no-judge mode: just record presence, don't spawn curator.
 	// Used by cron / CI to keep source caches warm without LLM cost.
-	// Per-candidate output is silent here; the source summary line
-	// shows "N pending" and the README/help explains how to triage.
 	if opts.SkipJudge || opts.CuratorSoulPath == "" || opts.KinclawBin == "" {
+		mu.Lock()
 		r.Pending = append(r.Pending, cand.Name)
+		mu.Unlock()
 		return
 	}
 
+	// Judge is the slow path (LLM round-trip, ~10-15s). Outside the
+	// lock so peer workers can also call Judge concurrently.
 	res, err := Judge(ctx, opts.KinclawBin, opts.CuratorSoulPath, opts.Inventory, cand)
+
+	mu.Lock()
+	defer mu.Unlock()
+
 	if err != nil {
 		r.Errors = append(r.Errors, fmt.Sprintf("%s: judge: %v", rel, err))
 		fmt.Fprintf(out, "   ⚠ %s — judge failed: %v\n", rel, err)

@@ -57,6 +57,7 @@ Flags:
 	review := fs.Bool("review", false, "List staged candidates and exit")
 	accept := fs.String("accept", "", "Forge a staged candidate into ./skills/ (id: <source>/<skill-name>)")
 	noJudge := fs.Bool("no-judge", false, "Skip the curator triage. Just count candidates per source (cron / cheap mode)")
+	judgeWorkers := fs.Int("judge-workers", 8, "Parallel curator spawns. Higher = faster + more concurrent LLM calls (default 8). Set 1 for sequential.")
 	skillsDir := fs.String("skills-dir", "skills", "--accept destination for forged skills (default ./skills)")
 	libraryDir := fs.String("library-dir", "skills/library", "--accept fallback dir for coder-deferred candidates (default ./skills/library)")
 
@@ -124,6 +125,7 @@ Flags:
 		Inventory:       inv,
 		DryRun:          *diff,
 		Out:             os.Stderr,
+		JudgeWorkers:    *judgeWorkers,
 	}
 
 	ctx := context.Background()
