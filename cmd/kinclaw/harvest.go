@@ -158,7 +158,7 @@ Flags:
 			os.Exit(1)
 		}
 		r := harvest.RunSource(ctx, *src, opts)
-		printSummary([]harvest.Result{r}, *diff)
+		printSummary([]harvest.Result{r}, *diff, *inspire)
 		return
 	}
 
@@ -166,7 +166,7 @@ Flags:
 	for _, s := range manifest.Sources {
 		results = append(results, harvest.RunSource(ctx, s, opts))
 	}
-	printSummary(results, *diff)
+	printSummary(results, *diff, *inspire)
 }
 
 func runHarvestReview(home string) {
@@ -268,32 +268,55 @@ func resolveSoulFile(name string) string {
 	return ""
 }
 
-func printSummary(results []harvest.Result, dryRun bool) {
+func printSummary(results []harvest.Result, dryRun, inspireOn bool) {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "── summary")
-	totalCandidates, totalPassed, totalInspired, totalProcedural, totalRejected := 0, 0, 0, 0, 0
+
+	var totalCand, totalStaged, totalInspired, totalProcDef, totalProcPend, totalBroken, totalErr int
 	for _, r := range results {
-		totalCandidates += r.Candidates
-		totalPassed += len(r.Passed)
+		totalCand += r.Candidates
+		totalStaged += len(r.Passed)
 		totalInspired += len(r.Inspired)
-		totalProcedural += len(r.Procedural)
-		totalRejected += len(r.Rejected)
-		fmt.Fprintf(os.Stderr, "  %-20s %d cand, %d pass (%d ✨), %d 📜, %d rej, %d err\n",
-			r.SourceName, r.Candidates, len(r.Passed), len(r.Inspired), len(r.Procedural),
-			len(r.Rejected), len(r.Errors))
+		totalProcDef += len(r.Procedural)
+		totalProcPend += len(r.ProceduralPending)
+		totalBroken += len(r.Rejected)
+		totalErr += len(r.Errors)
 	}
-	fmt.Fprintf(os.Stderr, "  %-20s %d cand, %d pass (%d ✨), %d 📜, %d rej\n",
-		"total", totalCandidates, totalPassed, totalInspired, totalProcedural, totalRejected)
+	fmt.Fprintf(os.Stderr, "  %d candidates across %d source(s)\n", totalCand, len(results))
+	if totalStaged > 0 {
+		if totalInspired > 0 {
+			fmt.Fprintf(os.Stderr, "  ✓  %d staged (%d ✨ inspire-forged)\n", totalStaged, totalInspired)
+		} else {
+			fmt.Fprintf(os.Stderr, "  ✓  %d staged\n", totalStaged)
+		}
+	}
+	if totalProcDef > 0 {
+		fmt.Fprintf(os.Stderr, "  📜 %d procedural deferred (browse-only, see staged/<src>/_procedural/)\n", totalProcDef)
+	}
+	if totalProcPend > 0 {
+		hint := "rerun with --inspire to forge them via the coder specialist"
+		if inspireOn {
+			hint = "still pending after --inspire — see logs above"
+		}
+		fmt.Fprintf(os.Stderr, "  ⏸ %d procedural pending — %s\n", totalProcPend, hint)
+	}
+	if totalBroken > 0 {
+		fmt.Fprintf(os.Stderr, "  ✗  %d broken (forge-gate fail / unparseable / etc — see lines above)\n", totalBroken)
+	}
+	if totalErr > 0 {
+		fmt.Fprintf(os.Stderr, "  ⚠  %d source-level error(s) — license / clone / glob mismatches\n", totalErr)
+	}
 
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "\n  --diff: nothing was written.")
 		return
 	}
-	if totalPassed > 0 {
-		fmt.Fprintln(os.Stderr, "\n  Review with:    kinclaw harvest --review")
-		fmt.Fprintln(os.Stderr, "  Accept one:     kinclaw harvest --accept <source>/<skill-name>")
+	fmt.Fprintln(os.Stderr)
+	if totalStaged > 0 {
+		fmt.Fprintln(os.Stderr, "  Review:        kinclaw harvest --review")
+		fmt.Fprintln(os.Stderr, "  Accept one:    kinclaw harvest --accept <source>/<skill-name>")
 	}
-	if totalProcedural > 0 {
-		fmt.Fprintf(os.Stderr, "  📜 %d procedural deferred — see ~/.localkin/harvest/staged/<src>/_procedural/ (cannot be --accept'd, no exec form)\n", totalProcedural)
+	if totalProcPend > 0 && !inspireOn {
+		fmt.Fprintln(os.Stderr, "  Forge them:    kinclaw harvest --inspire   (burns LLM tokens; see CHANGELOG)")
 	}
 }

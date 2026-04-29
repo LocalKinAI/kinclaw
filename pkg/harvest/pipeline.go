@@ -32,11 +32,23 @@ type Result struct {
 	Passed     []string // staged skill names (exec-style + inspire-forged)
 	Inspired   []string // staged via --inspire (subset of Passed; tracked separately for the summary)
 	Procedural []string // staged into _procedural/ as defer_to_procedural (no exec impl)
-	Rejected   []Reject // rejected by forge gate / parse error / license
-	Errors     []string // non-fatal errors that didn't fit a single candidate
+
+	// ProceduralPending lists procedural-style candidates we recognized
+	// at scan time but didn't process because --inspire was off. They're
+	// the most common shape from Anthropic / Hermes / Cursor sources;
+	// printing one error line per file would spam the output. Caller
+	// (RunSource) shows a single bucket count + first-N names + an
+	// action hint instead.
+	ProceduralPending []string // path inside the source repo
+
+	Rejected []Reject // genuinely broken candidates (not just procedural)
+	Errors   []string // source-level errors (clone failed, license, glob)
 }
 
-// Reject describes one candidate that didn't make it to staging.
+// Reject describes one candidate that didn't make it to staging — for
+// reasons OTHER than "procedural skill, --inspire is off." That bucket
+// is tracked separately in ProceduralPending so the noisy spam is
+// removed from the default output.
 type Reject struct {
 	Path   string // path inside the source repo
 	Reason string
@@ -73,7 +85,17 @@ func RunSource(ctx context.Context, src Source, opts Options) Result {
 		}
 		msg := fmt.Sprintf("license %s not in allowlist %v", detected, src.LicenseAllow)
 		r.Errors = append(r.Errors, msg)
-		fmt.Fprintf(out, "   ✗ %s\n", msg)
+		fmt.Fprintf(out, "   ✗ license: %s — not in allowlist %v\n", detected, src.LicenseAllow)
+		switch detected {
+		case "proprietary":
+			fmt.Fprintf(out, "      → repo is proprietary (\"All rights reserved\"). To include anyway, set\n")
+			fmt.Fprintf(out, "        license_allow = [\"*\"] for this source in your manifest.\n")
+		case "(none detected)":
+			fmt.Fprintf(out, "      → no recognizable LICENSE / LICENSE.md / COPYING file found. To include\n")
+			fmt.Fprintf(out, "        anyway (you've inspected the repo manually), set license_allow = [\"*\"].\n")
+		default:
+			fmt.Fprintf(out, "      → to include, add %q to license_allow for this source.\n", detected)
+		}
 		return r
 	}
 	if license != "" {
@@ -88,6 +110,11 @@ func RunSource(ctx context.Context, src Source, opts Options) Result {
 		return r
 	}
 	r.Candidates = len(matches)
+	if len(matches) == 0 {
+		fmt.Fprintf(out, "   matched 0 candidates under skill_paths=%v\n", src.SkillPaths)
+		fmt.Fprintf(out, "      → check the manifest's skill_paths globs against the repo's actual layout.\n")
+		return r
+	}
 	fmt.Fprintf(out, "   matched %d candidate(s)\n", len(matches))
 
 	if !opts.DryRun {
@@ -104,8 +131,69 @@ func RunSource(ctx context.Context, src Source, opts Options) Result {
 			fmt.Fprintf(out, "   ✗ %s — %s\n", rel, err)
 		}
 	}
-	fmt.Fprintf(out, "   %d passed, %d rejected\n", len(r.Passed), len(r.Rejected))
+
+	// Bucketed end-of-source summary. Replaces the v1.5.0 "X passed,
+	// Y rejected" line — too coarse, didn't surface procedural-pending.
+	renderSourceSummary(out, &r, opts.Inspire)
 	return r
+}
+
+// renderSourceSummary prints the per-source end-of-run line(s) in the
+// post-1.5.0 cleaner format:
+//
+//	── 2 staged (1 ✨), 38 procedural (need --inspire), 5 broken
+//
+// Followed by truncated lists for procedural-pending and broken,
+// because each is actionable: procedural-pending tells the user
+// "rerun with --inspire to forge these"; broken tells them the few
+// candidates worth investigating manually.
+func renderSourceSummary(out io.Writer, r *Result, inspireOn bool) {
+	staged := len(r.Passed)
+	inspired := len(r.Inspired)
+	procPending := len(r.ProceduralPending)
+	procDeferred := len(r.Procedural)
+	broken := len(r.Rejected)
+
+	parts := []string{}
+	if staged > 0 {
+		if inspired > 0 {
+			parts = append(parts, fmt.Sprintf("%d staged (%d ✨)", staged, inspired))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d staged", staged))
+		}
+	}
+	if procDeferred > 0 {
+		parts = append(parts, fmt.Sprintf("%d 📜", procDeferred))
+	}
+	if procPending > 0 {
+		hint := "need --inspire"
+		if inspireOn {
+			// Should be 0 with --inspire on (everything goes to
+			// staged or procedural-deferred), but defensive label
+			// in case any are pending for other reasons.
+			hint = "pending"
+		}
+		parts = append(parts, fmt.Sprintf("%d procedural (%s)", procPending, hint))
+	}
+	if broken > 0 {
+		parts = append(parts, fmt.Sprintf("%d broken", broken))
+	}
+	if len(parts) == 0 {
+		parts = []string{"0 candidates"}
+	}
+	fmt.Fprintf(out, "   ── %s\n", strings.Join(parts, ", "))
+
+	if procPending > 0 && !inspireOn {
+		fmt.Fprintf(out, "      Procedural-style candidates (markdown body, no exec command).\n")
+		fmt.Fprintf(out, "      Rerun with --inspire to spawn coder for KinClaw exec re-implementation:\n")
+		for i, p := range r.ProceduralPending {
+			if i >= 5 {
+				fmt.Fprintf(out, "         ... and %d more\n", procPending-5)
+				break
+			}
+			fmt.Fprintf(out, "         %s\n", p)
+		}
+	}
 }
 
 // processCandidate is the per-file pipeline body. Failure at any stage
@@ -137,12 +225,21 @@ func processCandidate(
 		return processExecCandidate(ctx, r, src, opts, skillContent, rel, loaded, out)
 	}
 
-	// Parse failed. Two sub-cases:
-	//   1. Procedural-style (Anthropic / Hermes / Cursor) + --inspire ON →
-	//      route to coder for re-implementation.
-	//   2. Anything else → reject with the parse error.
-	if opts.Inspire && opts.CoderSoulPath != "" && opts.KinclawBin != "" && looksProcedural(content) {
-		return processProceduralCandidate(ctx, r, src, opts, skillContent, rel, out)
+	// Parse failed. Three sub-cases:
+	//   1. Procedural-style (Anthropic / Hermes / Cursor) + --inspire ON
+	//      → route to coder for re-implementation.
+	//   2. Procedural-style + --inspire OFF → bucket as ProceduralPending,
+	//      no per-file error spam. End-of-source summary lists them.
+	//   3. Genuinely broken (not procedural, not exec) → reject with the
+	//      parse error.
+	if looksProcedural(content) {
+		if opts.Inspire && opts.CoderSoulPath != "" && opts.KinclawBin != "" {
+			return processProceduralCandidate(ctx, r, src, opts, skillContent, rel, out)
+		}
+		// --inspire off: silent bucket. The source-level summary surfaces
+		// these with a "rerun with --inspire" hint.
+		r.ProceduralPending = append(r.ProceduralPending, rel)
+		return nil
 	}
 	return fmt.Errorf("parse: %w", parseErr)
 }

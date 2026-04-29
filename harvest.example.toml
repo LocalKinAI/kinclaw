@@ -12,12 +12,21 @@
 #
 # Final acceptance into ./skills/ is always manual (`kinclaw harvest --accept`).
 
-# ── Anthropic's Claude Code skills (public, MIT)
-[[source]]
-name         = "claude-code"
-url          = "https://github.com/anthropics/claude-code"
-skill_paths  = ["plugin-source/skills/**/SKILL.md"]
-license_allow = ["MIT", "Apache-2.0"]
+# ── Anthropic's Claude Code skills (public, but PROPRIETARY license)
+#
+# claude-code's LICENSE.md is "© Anthropic PBC. All rights reserved" —
+# repo is public for reference, NOT MIT/Apache. To harvest from it you
+# must explicitly opt in with license_allow = ["*"] (we treat that as
+# "you've inspected the repo + accepted the terms"). Commented out
+# below so default runs don't surprise-include a non-OSS source.
+#
+# Actual SKILL.md layout (verified 2026-04-29): plugins/*/skills/**/SKILL.md
+#
+# [[source]]
+# name         = "claude-code"
+# url          = "https://github.com/anthropics/claude-code"
+# skill_paths  = ["plugins/**/skills/**/SKILL.md"]
+# license_allow = ["*"]   # opt in to a proprietary repo, with eyes open
 
 # ── Hermes Agent (Nous Research) — server-side cousin, useful skill set
 [[source]]

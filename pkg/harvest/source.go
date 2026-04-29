@@ -107,6 +107,11 @@ func FindLicense(repoDir string) string {
 				return "GPL-3.0"
 			}
 			return "GPL-2.0"
+		case strings.Contains(head, "all rights reserved"):
+			// "© <Company>. All rights reserved" + commercial terms
+			// links — not an OSS license. Tag explicitly so the reject
+			// message says "proprietary" instead of "(none detected)".
+			return "proprietary"
 		}
 	}
 	return ""
