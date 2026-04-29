@@ -249,26 +249,50 @@ LLM: input action=click x=400 y=300 target_pid=12345
 LLM: input action=type text="hello" target_pid=12345
 ```
 
-### Reading the screen — three-tier cascade (v1.7+)
+### Two cascades — reading the screen, and driving an app (v1.7+)
+
+KinClaw doctrine: try the **cheapest, most deterministic** tool
+first; escalate only when it fails. Two independent ladders that
+agents combine in real tasks.
+
+**Reading the screen (what's on it?)**
 
 ```
-Layer 1 (cheapest)   ui claw            ~50ms     $0       deterministic
-Layer 2              screen action=ocr  ~50-200ms $0       probabilistic
-Layer 3 (priciest)   screen + vision    ~3s       ~$0.005  generic
+Layer 1   ui claw           ~50ms      $0       deterministic
+Layer 2   screen action=ocr ~50-200ms  $0       probabilistic
+Layer 3   screen + vision   ~3s        ~$0.005  generic
 ```
 
-- **Layer 1 (AX, default)** — `ui find` / `ui tree` / `ui read`. Works
-  on 94% of macOS apps because they expose Accessibility. Use this
-  ALWAYS unless AX literally returns nothing.
-- **Layer 2 (OCR)** — `screen action=ocr`. Drops to text-extraction
-  via Vision framework when AX is absent (canvas apps, status bars,
-  rendered images). ~99% accurate on digits / version strings; word
-  accuracy varies (see `screen action=ocr` notes below).
-- **Layer 3 (vision LLM)** — `screen action=screenshot` + `file_read`
-  + multimodal brain. The expensive fallback for "understand this
-  screen" tasks where Layer 1 + 2 give text + boxes but no semantics.
+- **Layer 1** — `ui find` / `ui tree` / `ui read`. 94% of macOS apps
+  expose Accessibility; AX is semantic, fast, free. Use first.
+- **Layer 2** — `screen action=ocr` via Apple Vision framework.
+  Drop here when AX is empty (canvas apps, status bars, rendered
+  images). ~99% accurate on digits / version strings; word accuracy
+  varies — see the `screen action=ocr` notes below.
+- **Layer 3** — `screen action=screenshot` + `file_read` + multimodal
+  brain. The expensive fallback for "understand this screen meaning."
 
-The pilot soul has the doctrine baked in: never skip Layer 1 just
+**Driving the app (do something)**
+
+```
+Layer 1   ui + input claw   semantic UI driving           default
+Layer 2   shell (osascript / CLI)  programmatic shortcut  when CLI exists
+Layer 3   forge a new SKILL.md     auto-author wrapper    repeated + parameterizable
+```
+
+- **Layer 1** — `ui click` / `ui click_sequence` / `input type` /
+  `input hotkey`. Real UI driving; observable, demoable, portable
+  across resolutions. Always try first.
+- **Layer 2** — `shell` (`osascript -e ...`, `pmset`, `brightness`,
+  `mdfind`, `defaults`, app-specific CLIs). Shortcut when an app or
+  the OS already exposes a deterministic CLI. Don't make it the
+  default — that's just AppleScript automator with extra steps.
+- **Layer 3** — `forge` skill writes a new `SKILL.md` from a recipe
+  (Layer 1 + 2 components) so future runs skip directly to the
+  forged wrapper. Trigger only on "repeated + parameterizable"
+  tasks; one-shots aren't worth it.
+
+The pilot soul has both cascades baked in: never skip Layer 1 just
 because Layer 3 is more flexible.
 
 ### `screen` — just take a picture (and read text out of it, v1.7+)

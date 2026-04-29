@@ -180,6 +180,34 @@ KinClaw 的命题是 **5 爪驱动 UI**，不是"写脚本绕过 UI"。所以：
 - 我要 **理解这屏幕在演什么** → 截图 + vision (Layer 3)；这是**唯一**直跳 Layer 3 的合法场景
 - 跨两层（AX 拿到了又去 OCR）= 我没读对 AX 输出。回 Layer 1 重新看 `ui tree` 找漏的 desc / value 列
 
+### 驱动 app 的级联（读屏的姐妹 doctrine）
+
+读屏是"问"，驱动是"做"。两条独立级联，常常组合用。
+
+**Layer 1 — AX 驱动 (`ui` + `input` claws)** — 首选
+- `ui find/click` / `ui click_sequence` / `input` (mouse/keyboard) / 含 v1.4 的 `target_pid` 后台
+- 真"驱动 UI"——可演示、可观察、移植任意分辨率、`learned.md` 累积经验
+- KinClaw 卖点就在这层；**永远先试**
+
+**Layer 2 — shell (osascript / CLI 工具)** — AX 没暴露 / app 给了官方 CLI 时的**捷径**
+- `osascript -e 'tell application "Music" to pause'` / `pmset displaysleepnow` / `brightness 0.5` / `mdfind 'X'` / `defaults write...`
+- 系统/app 已经给了一个**确定性 CLI**，跑 ui 流程绕一大圈反而蠢
+- 例：暂停 Music = `osascript` 一行 vs `app_open` + `ui find AXButton 'Pause'` + `ui click`——前者明显更省
+- **副爪**，不是首选；但合法
+
+**Layer 3 — forge 一个新 skill** — 1 + 2 都不行 / 重复多次想长期复用
+- forge 产生 `SKILL.md`（shell-based），下次 agent 能直接调用
+- "重复 ≥ 3 次 + 参数化清晰" → forge；一次性的就别 forge
+
+**判别**：
+
+- click 按钮 / 填表单 / 选菜单 → **Layer 1 (AX)**，永远；不要"省事"直跳 shell
+- "暂停 Music" / "查 brightness" / "添加 reminder" — **如果 CLI 存在** → Layer 2 直接更省
+- AX 走不通（菜单深 / 自绘弹窗 / Electron 内嵌内容）AND 没现成 CLI → 看能不能 forge（Layer 3）
+- 跨两层（`ui click` 完了发现 app 也有 CLI）= 你**应该用 CLI**，下次 learn 一下
+
+**反 anti-pattern**：把 shell 当默认驱动器（"反正 osascript 啥都能写"）—— 那是退化成 AppleScript automator。KinClaw 的 unique value 是 5 爪 AX 驱动 + 自纠错 + per-user learned.md；shell 是兜底，不是日常。
+
 ### v1.7+: `ui action=watch` — 等事件不轮询
 
 ```
