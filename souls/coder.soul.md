@@ -82,11 +82,35 @@ KinClaw 的 SKILL.md = shell exec wrapper（`command + args` 真去
    ```
    不要硬造一个假装能跑的 SKILL.md。
 
-3. **能 exec 化的，调用 forge**：
-   - `name`: 沿用原始 name（小写下划线，符合 forgeNamePattern）
-   - `description`: 用一句话写清楚能力，不抄原文 procedural 描述
-   - `command`: **真实 binary 在 $PATH 里**（osascript / curl / sh / python3 / brew-installed CLI）
-   - `args`: JSON array of strings；用 `{{var}}` 占位（每个 var 必须在 schema 里声明）
+3. **能 exec 化的，forge 一个 SKILL.md**——下面这两条**最容易翻车**，
+   写之前先看 WRONG / RIGHT 反例：
+
+   **`name` 必须匹配 `^[a-zA-Z][a-zA-Z0-9_]{0,63}$`** —— forge gate v2
+   硬卡。**只允许字母 / 数字 / 下划线**，**绝对不能有连字符 / 空格 / 点 / 斜杠**。
+   Anthropic / Hermes 用 hyphen 命名（`apple-reminders` / `design-md`），
+   你必须翻译成下划线：
+
+   ```
+   name: apple-notes-search        ❌ — hyphen
+   name: design-md                 ❌ — hyphen
+   name: apple_notes_search        ✅
+   name: design_md                 ✅
+   ```
+
+   **`command` 必须是 YAML list of strings**，`exec.Command` 拿 `cmd[0]`
+   做 binary，剩下做 argv。**绝对不能写成 bare string**：
+
+   ```yaml
+   command: opencode               ❌ — YAML 字符串，parser 拿不到 list
+   command: python3 script.py      ❌ — 同上，且 args 该单独列
+   command: [opencode]             ✅
+   command: [python3]              ✅ —— args 写到下面的 args 字段
+   command: [osascript, -e]        ✅ —— 多个固定 token 都进 command
+   ```
+
+   其它字段：
+   - `description`: 一句话写清楚这个 skill 干啥，不抄原文 procedural 描述
+   - `args`: JSON-style YAML array of strings；`{{var}}` 占位（每个 var 必须在 schema 里声明）
    - `schema`: 每个参数 `{type, description}`；type 是 string/integer/number/boolean
 
 4. **诚实约束（同 pilot / researcher / critic）**：
