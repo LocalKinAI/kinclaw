@@ -31,7 +31,10 @@ func (s *inputSkill) Description() string {
 	return "Synthesize mouse/keyboard events on macOS via CGEvent. Actions: " +
 		"move (cursor), click (at point or current), type (UTF-8 text), " +
 		"hotkey (modifier+key), scroll (wheel), cursor (read position), " +
-		"screen_size. Requires macOS Accessibility permission."
+		"screen_size. Set `target_pid` to drive an app in the BACKGROUND " +
+		"without stealing focus from the user's foreground window — verified " +
+		"on Lark / VSCode / Chrome and other Electron + WebKit hosts. " +
+		"Requires macOS Accessibility permission."
 }
 
 func (s *inputSkill) ToolDef() json.RawMessage {
@@ -52,6 +55,16 @@ func (s *inputSkill) ToolDef() json.RawMessage {
 				"type":        "integer",
 				"description": "For move: animate over N ms (default 0 = instant)",
 			},
+			"target_pid": {
+				"type": "integer",
+				"description": "Optional. Route input to a SPECIFIC process via CGEventPostToPid " +
+					"instead of the global HID event tap. The targeted app receives the event " +
+					"but its window does NOT come to front — the user's foreground app keeps " +
+					"focus. Get the PID from `ui focused_app` output or the OS. Verified on " +
+					"Lark / VSCode / Chrome / Cursor; some Apple sandboxed apps (newer Mail / " +
+					"Messages) may ignore — fall back to no target_pid if no effect. Omit (or 0) " +
+					"for legacy system-wide behavior.",
+			},
 		}, []string{"action"})
 }
 
@@ -66,6 +79,13 @@ func (s *inputSkill) Execute(params map[string]string) (string, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	// target_pid > 0 routes events directly to the target process via
+	// CGEventPostToPid (no focus steal). Empty/0 keeps legacy system-
+	// wide kCGHIDEventTap behavior. Resolved once per Execute call so
+	// every event in a multi-step action (Click = move+down+up, Hotkey
+	// = mods down + key + mods up) routes consistently.
+	opts, pidLabel := postOpts(params)
 
 	switch action {
 	case "cursor":
@@ -88,15 +108,15 @@ func (s *inputSkill) Execute(params map[string]string) (string, error) {
 			return "", err
 		}
 		if ms := atoiDefault(params["smooth_ms"], 0); ms > 0 {
-			if err := input.MoveSmooth(ctx, x, y, time.Duration(ms)*time.Millisecond); err != nil {
+			if err := input.MoveSmooth(ctx, x, y, time.Duration(ms)*time.Millisecond, opts...); err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("moved cursor to (%.0f, %.0f) over %dms", x, y, ms), nil
+			return fmt.Sprintf("moved cursor to (%.0f, %.0f) over %dms%s", x, y, ms, pidLabel), nil
 		}
-		if err := input.Move(ctx, x, y); err != nil {
+		if err := input.Move(ctx, x, y, opts...); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("moved cursor to (%.0f, %.0f)", x, y), nil
+		return fmt.Sprintf("moved cursor to (%.0f, %.0f)%s", x, y, pidLabel), nil
 
 	case "click":
 		button, err := parseButton(params["button"])
@@ -109,27 +129,27 @@ func (s *inputSkill) Execute(params map[string]string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			if err := input.ClickAtButton(ctx, x, y, button, clicks); err != nil {
+			if err := input.ClickAtButton(ctx, x, y, button, clicks, opts...); err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("%s-click at (%.0f, %.0f) x%d",
-				buttonName(button), x, y, clicks), nil
+			return fmt.Sprintf("%s-click at (%.0f, %.0f) x%d%s",
+				buttonName(button), x, y, clicks, pidLabel), nil
 		}
-		if err := input.Click(ctx, button, clicks); err != nil {
+		if err := input.Click(ctx, button, clicks, opts...); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%s-click at current cursor x%d",
-			buttonName(button), clicks), nil
+		return fmt.Sprintf("%s-click at current cursor x%d%s",
+			buttonName(button), clicks, pidLabel), nil
 
 	case "type":
 		text := params["text"]
 		if text == "" {
 			return "", fmt.Errorf("type: missing `text`")
 		}
-		if err := input.Type(ctx, text); err != nil {
+		if err := input.Type(ctx, text, opts...); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("typed %d chars", len([]rune(text))), nil
+		return fmt.Sprintf("typed %d chars%s", len([]rune(text)), pidLabel), nil
 
 	case "hotkey":
 		modsStr := params["mods"]
@@ -145,25 +165,38 @@ func (s *inputSkill) Execute(params map[string]string) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("hotkey: unknown key %q", keyStr)
 		}
-		if err := input.Hotkey(ctx, mods, k); err != nil {
+		if err := input.Hotkey(ctx, mods, k, opts...); err != nil {
 			return "", err
 		}
 		if modsStr == "" {
-			return fmt.Sprintf("pressed %s", keyStr), nil
+			return fmt.Sprintf("pressed %s%s", keyStr, pidLabel), nil
 		}
-		return fmt.Sprintf("pressed %s+%s", modsStr, keyStr), nil
+		return fmt.Sprintf("pressed %s+%s%s", modsStr, keyStr, pidLabel), nil
 
 	case "scroll":
 		dx := atoiDefault(params["x"], 0)
 		dy := atoiDefault(params["y"], 0)
-		if err := input.Scroll(ctx, dx, dy); err != nil {
+		if err := input.Scroll(ctx, dx, dy, opts...); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("scrolled (%d, %d) px", dx, dy), nil
+		return fmt.Sprintf("scrolled (%d, %d) px%s", dx, dy, pidLabel), nil
 
 	default:
 		return "", fmt.Errorf("unknown action %q", action)
 	}
+}
+
+// postOpts resolves the input.PostOption set from the action params.
+// Returns the option slice (nil when no special routing) plus a
+// human-readable suffix the result message appends so the soul + logs
+// make it obvious whether a call ran in PID-targeted background mode
+// or default system-wide mode.
+func postOpts(params map[string]string) ([]input.PostOption, string) {
+	pid := atoiDefault(params["target_pid"], 0)
+	if pid <= 0 {
+		return nil, ""
+	}
+	return []input.PostOption{input.WithPID(int32(pid))}, fmt.Sprintf(" → pid %d (no focus steal)", pid)
 }
 
 // ─── helpers ─────────────────────────────────────────────────

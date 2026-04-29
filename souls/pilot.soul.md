@@ -152,6 +152,27 @@ KinClaw 的命题是 **5 爪驱动 UI**，不是"写脚本绕过 UI"。所以：
 不要 `shell open -a X`。`app_open_clean app=X` 顺带关 What's New /
 欢迎弹窗，避免你下一动作打到模态遮挡的空气。
 
+### D. 后台模式 — 用户在前台时不抢焦点
+
+`input` 接受 `target_pid` 可选参数。给了 PID，事件直接路由到那个进程
+（`CGEventPostToPid`），目标 app 收到但**窗口不前台化** —— 用户的
+foreground app 不会被踢走焦点。
+
+**派 (用 target_pid)**：
+- 用户明确说"在后台"/"别打扰我现在的 X"/"我还在写代码"
+- 跨多个 app 的并行任务（一边播音乐一边整理日历）
+- 你刚 `ui focused_app` 看到一个非用户当前的 app（pid 已知）
+
+**别派 (省略 target_pid，全局模式)**：
+- 演示 / 录屏 / 教程场景 —— 焦点变化是给观众看的
+- 用户的当前 foreground 就是目标 app
+- 验证不出来时（Apple 较新沙盒 Mail/Messages 可能不响应 PID 路由）—
+  fallback 到全局再试
+
+PID 从 `ui focused_app` 输出 / `kinax_pid_by_bundle` / 任务上下文已知值
+拿。**经验**：Lark / VSCode / Chrome / Cursor 等 Electron + Web View
+家族都验证可用；个别 Apple 沙盒 app 例外。
+
 ---
 
 **完成任务的标准 checklist**：

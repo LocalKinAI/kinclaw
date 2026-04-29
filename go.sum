@@ -1,9 +1,9 @@
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
-github.com/LocalKinAI/input-go v0.1.0 h1:LuKWYGlDs/zRawAqDo9jI2Mn7JRlKPi9bkILlBgGnKE=
-github.com/LocalKinAI/input-go v0.1.0/go.mod h1:gDzAln9kok34Z1J22RZ5nilKmWSHubH6wvqemxLEWZE=
-github.com/LocalKinAI/kinax-go v0.1.0 h1:26BrDkfwdZvL+wEByP3AOGP/yt9IeIeZglEfE/Lfb5A=
-github.com/LocalKinAI/kinax-go v0.1.0/go.mod h1:LEq7T5C7C46Exb3iGCw/0i7Ys/5pX8mNG0LhUvpySgA=
+github.com/LocalKinAI/input-go v0.2.0 h1:m00XiFRF1ytrS/3JQerUGeI4SkDyhRotQtGmdWfgOm0=
+github.com/LocalKinAI/input-go v0.2.0/go.mod h1:gDzAln9kok34Z1J22RZ5nilKmWSHubH6wvqemxLEWZE=
+github.com/LocalKinAI/kinax-go v0.2.0 h1:a8HIKcmA2uNVaY/6SkNDkAAFpwGV/j4MaoK4H8h1p3I=
+github.com/LocalKinAI/kinax-go v0.2.0/go.mod h1:LEq7T5C7C46Exb3iGCw/0i7Ys/5pX8mNG0LhUvpySgA=
 github.com/LocalKinAI/kinrec v0.1.0 h1:mxhDRsUZlpDZIF9J4ya3MtUwm1Ze/P/uj7P0EER4FPA=
 github.com/LocalKinAI/kinrec v0.1.0/go.mod h1:RcCLopvBmWyW+vDetI9kOn5fVRziT3beIhVPtClbKOc=
 github.com/LocalKinAI/sckit-go v0.1.0 h1:xFYpx8EILBfbsPo5RjpFvSRO06QoETeMyvXK7xhQbkc=

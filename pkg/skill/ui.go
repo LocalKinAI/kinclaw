@@ -158,12 +158,33 @@ func (s *uiSkill) tree(params map[string]string) (string, error) {
 	return sb.String(), nil
 }
 
+// treeAttrs lists the AX attributes dumpTree wants per node. Pinned as
+// a constant so kinax-go's GetMany batches all 5 into a single AX IPC
+// instead of running 5 separate AXUIElementCopyAttributeValue calls.
+// On dense trees (Cursor / Slack / Xcode) this is the v1.4.0 4× win.
+var treeAttrs = []string{
+	kinax.AttrRole, kinax.AttrTitle, kinax.AttrIdentifier,
+	kinax.AttrDescription, kinax.AttrValue,
+}
+
 func dumpTree(sb *strings.Builder, e *kinax.Element, indent, maxDepth int) {
-	role, _ := e.Role()
-	title, _ := e.Title()
-	id, _ := e.Identifier()
-	desc, _ := e.Description()
-	value, _ := e.Value()
+	// One IPC for all 5 scalar attributes via
+	// AXUIElementCopyMultipleAttributeValues. Element-valued attrs
+	// (AXChildren) still go through Children() below — GetMany doesn't
+	// return handle-typed values.
+	attrs, err := e.GetMany(treeAttrs...)
+	if err != nil {
+		// Fail soft: an empty map produces an empty tree line, same
+		// as the old per-attr code did when each call individually
+		// errored (kAXErrorCannotComplete on flaky targets).
+		attrs = map[string]any{}
+	}
+	role := strAttr(attrs, kinax.AttrRole)
+	title := strAttr(attrs, kinax.AttrTitle)
+	id := strAttr(attrs, kinax.AttrIdentifier)
+	desc := strAttr(attrs, kinax.AttrDescription)
+	value := strAttr(attrs, kinax.AttrValue)
+
 	pad := strings.Repeat("  ", indent)
 	line := pad + role
 	if title != "" {
@@ -200,6 +221,34 @@ func dumpTree(sb *strings.Builder, e *kinax.Element, indent, maxDepth int) {
 	for _, k := range kids {
 		dumpTree(sb, k, indent+1, maxDepth)
 		k.Close()
+	}
+}
+
+// strAttr extracts a string-valued attribute from the GetMany result.
+// Returns "" for missing or non-string values — matches the old
+// per-attribute path's "treat empty + error the same" semantics.
+func strAttr(m map[string]any, key string) string {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return ""
+	}
+	switch x := v.(type) {
+	case string:
+		return x
+	case bool:
+		if x {
+			return "true"
+		}
+		return "false"
+	case float64:
+		// Whole numbers print without trailing decimals (the AX API
+		// returns counts + indices as numbers occasionally).
+		if x == float64(int64(x)) {
+			return fmt.Sprintf("%d", int64(x))
+		}
+		return fmt.Sprintf("%g", x)
+	default:
+		return fmt.Sprintf("%v", x)
 	}
 }
 
