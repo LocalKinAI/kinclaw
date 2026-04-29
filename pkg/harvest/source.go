@@ -94,6 +94,14 @@ func FindLicense(repoDir string) string {
 		switch {
 		case strings.Contains(head, "mit license"):
 			return "MIT"
+		// MIT body without the literal "MIT License" title — common
+		// when authors paste the MIT body straight after a copyright
+		// line (e.g. kylehughes/apple-platform-build-tools). The
+		// "permission is hereby granted, free of charge" + "without
+		// restriction" pair is the MIT preamble's signature phrase.
+		case strings.Contains(head, "permission is hereby granted, free of charge") &&
+			strings.Contains(head, "without restriction"):
+			return "MIT"
 		case strings.Contains(head, "apache license") && strings.Contains(head, "version 2.0"):
 			return "Apache-2.0"
 		case strings.Contains(head, "bsd 3-clause") || strings.Contains(head, `redistributions in binary form must reproduce`) && strings.Contains(head, "neither the name"):

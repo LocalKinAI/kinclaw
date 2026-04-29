@@ -47,6 +47,67 @@ url          = "https://github.com/nousresearch/hermes-agent"
 skill_paths  = ["skills/**/SKILL.md", "skills/**/*.skill.md"]
 license_allow = ["MIT", "Apache-2.0"]
 
+# ── Apple platform build tools (kylehughes) — macOS exec gold
+#
+# This is *literally* the macOS-native exec layer KinClaw cares about:
+# xcrun / xcodebuild / simctl / devicectl / code-signing / profiling /
+# distribution playbooks. Procedural SKILL.md but the body decomposes
+# cleanly into discrete shell-exec wrappers — coder forges produce
+# real KinClaw-form skills here.
+[[source]]
+name         = "apple-platform-tools"
+url          = "https://github.com/kylehughes/apple-platform-build-tools-claude-code-plugin"
+skill_paths  = ["skills/**/SKILL.md"]
+license_allow = ["MIT"]
+
+# ── Production engineering skills (Addy Osmani / Google) — git, CI, security, perf
+#
+# 26k stars, MIT, very active. Same procedural shape as Hermes but
+# different content domain: git-workflow / code-review / security /
+# perf / migration playbooks. Different, complementary inspiration.
+[[source]]
+name         = "addy-agent-skills"
+url          = "https://github.com/addyosmani/agent-skills"
+skill_paths  = ["skills/**/SKILL.md"]
+license_allow = ["MIT"]
+
+# ── Anthropic's official skills catalog
+#
+# 126k stars. Per-skill `LICENSE.txt` files (mostly Apache-2.0; a few
+# document-format skills are source-available, not OSS). Same opt-in
+# shape as claude-code: `["*"]` means you accept reading the content;
+# coder produces original forged files.
+[[source]]
+name         = "anthropics-skills"
+url          = "https://github.com/anthropics/skills"
+skill_paths  = ["skills/**/SKILL.md"]
+license_allow = ["*"]
+
+# ── OpenAI's curated skills catalog (Codex)
+#
+# 17k stars. Different design philosophy than Anthropic's set —
+# integration-focused: figma / linear / notion / playwright / gh.
+# Same per-file Apache-2.0 license shape; same `["*"]` opt-in.
+[[source]]
+name         = "openai-skills"
+url          = "https://github.com/openai/skills"
+skill_paths  = ["skills/.curated/**/SKILL.md"]
+license_allow = ["*"]
+
+# ── Other interesting sources (commented out by default — uncomment what you want)
+#
+# [[source]]
+# name         = "orchestra-research"
+# url          = "https://github.com/Orchestra-Research/AI-Research-SKILLs"
+# skill_paths  = ["[0-9][0-9]-*/**/SKILL.md"]   # ML/LLM research, ~100 skills, MIT
+# license_allow = ["MIT"]
+#
+# [[source]]
+# name         = "alirezarezvani-skills"
+# url          = "https://github.com/alirezarezvani/claude-skills"
+# skill_paths  = ["{business-growth,c-level-advisor,engineering,marketing-skill,product-team,finance,project-management,ra-qm-team}/**/SKILL.md"]
+# license_allow = ["MIT"]   # 232+ skills, kitchen-sink — filter aggressively
+
 # ── Your private repos — license_allow = ["*"] for self-owned code.
 # Uncomment + edit to match your local layout.
 #
