@@ -33,9 +33,9 @@ func runHarvest(argv []string) {
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), `Usage: kinclaw harvest [flags]
 
-Read external agent skill libraries (Claude Code / Hermes / Anthropic /
-OpenAI / Cursor / your own), let the curator soul triage them against
-KinClaw's actual skill inventory, stage candidates for review.
+Read external agent skill libraries (configured in your harvest.toml
+manifest), let the curator soul triage them against KinClaw's actual
+skill inventory, stage candidates for review.
 
 Three commands:
 
