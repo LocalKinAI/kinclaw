@@ -216,6 +216,21 @@ LLM: input action=type text="hello 世界 👋"
 LLM: input action=hotkey mods="cmd+shift" key="t"
 ```
 
+**Background mode** (v1.4+): pass `target_pid=<N>` and the event
+routes directly to that process via `CGEventPostToPid` — the
+targeted app receives the input but its window does **not** come
+to front. The user's foreground app keeps focus, so the agent can
+drive a background app (Music, Reminders, Slack, ...) while the
+user keeps working in their editor. Verified on Lark / VSCode /
+Chrome / Cursor and other Electron + WebKit hosts; some Apple
+sandboxed apps (newer Mail / Messages) may ignore PID-targeted
+events — fall back to omitting the param.
+
+```
+LLM: input action=click x=400 y=300 target_pid=12345
+LLM: input action=type text="hello" target_pid=12345
+```
+
 ### `screen` — just take a picture
 
 ```

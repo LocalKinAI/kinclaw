@@ -1,5 +1,94 @@
 # Changelog
 
+## [1.4.0] - 2026-04-29
+
+**Behavior-defining minor.** v1.4.0 is the first KinClaw that doesn't
+have to take over your Mac to do its job. Two upstream KinKit features
+that landed yesterday (input-go v0.2.0, kinax-go v0.2.0) get wired up
+to the kernel — and one of them changes the *kind* of agent KinClaw
+is.
+
+### Added — `input target_pid` (background-safe input)
+
+The `input` skill takes an optional `target_pid` integer. When set
+(>0), every synthesized event routes directly to that process via
+[CGEventPostToPid](https://developer.apple.com/documentation/coregraphics/cgeventposttopid):
+
+```
+input action=click x=400 y=300 target_pid=12345
+input action=type text="hello" target_pid=12345
+input action=hotkey mods=cmd key=s target_pid=12345
+```
+
+The targeted app receives the event but **its window does not come to
+front**. The user's foreground app keeps focus — your editor doesn't
+lose its insertion point, your YouTube tutorial doesn't pause, and
+multi-window workflows finally work. KinClaw is no longer "an agent
+that takes over your Mac." It's an agent that helps in the background
+while you keep working.
+
+Verified on the same lineup axcli (Rust) proved: Lark / VSCode /
+Chrome / Cursor and other Electron + WebKit hosts. Some Apple
+sandboxed apps (newer Mail / Messages) may ignore PID-targeted
+events — fall back to omitting `target_pid` if no effect.
+
+Pilot soul gains a new section "**D. 后台模式**" in `## 裂变` with the
+派/别派 decision table:
+
+- **派 target_pid**: user said "in the background" / "don't disturb my
+  current X"; multi-app parallel tasks; PID known from `ui focused_app`
+- **别派**: demo / screen recording (focus change is the show);
+  user's current foreground IS the target; sandboxed app doesn't
+  respond (fall back)
+
+### Changed — `ui tree` is 2-5× faster (Element.GetMany)
+
+The tree dump that powers `ui tree` and `ui find` now batches the 5
+attribute fetches per node (Role / Title / Identifier / Description /
+Value) into a single AX IPC call via
+[AXUIElementCopyMultipleAttributeValues](https://developer.apple.com/documentation/applicationservices/1462091-axuielementcopymultipleattribute).
+Indicative on a populated Cursor window subtree (~400 nodes):
+
+| Op                              | v1.3.1   | v1.4.0   | Speedup |
+|---------------------------------|----------|----------|---------|
+| `ui tree` 7 attrs × ~400 nodes  | ~280 ms  | ~70 ms   | 4.0×    |
+| `ui tree` 4 attrs × ~150 nodes  | ~70 ms   | ~22 ms   | 3.2×    |
+
+Pattern lifted from AXSwift's `getMultipleAttributes` during the
+2026-04-28 cross-language survey. Tree dump is the hottest path in
+any AX-driving agent — the speedup compounds across the multiple
+`ui tree` calls pilot makes per turn (planning + verification +
+post-action re-tree). Indirect win: the agent falls back to vision
+(token cost) less often.
+
+The change is transparent to the soul / forge / agent — same skill
+surface, same output format. `dumpTree` in [pkg/skill/ui.go](pkg/skill/ui.go)
+gained a `treeAttrs` constant and a `strAttr` helper for type-safe
+extraction from the GetMany result map.
+
+### Dependencies
+
+- `github.com/LocalKinAI/input-go` v0.1.0 → **v0.2.0**
+- `github.com/LocalKinAI/kinax-go` v0.1.0 → **v0.2.0**
+
+Both KinKit libs released yesterday alongside this work; see their
+respective CHANGELOGs for the full story.
+
+### Why this matters
+
+This is the **first KinClaw release where the agent's relationship to
+the user is fundamentally different**. v1.0-v1.3 was "an automation
+tool that uses your Mac via your foreground." v1.4 is "an agent that
+operates apps in the background while you keep working." The same
+binary still does both — `target_pid` is opt-in — but the option is
+now there, and pilot's soul knows when to reach for it.
+
+The `Element.GetMany` win is quieter but compounds harder: every `ui
+tree` is now cheap enough that the agent can re-tree after every
+action without thinking about cost. That makes the verification loop
+("did my click actually do what I wanted?") tighter, which is the
+bedrock of self-correction.
+
 ## [1.3.1] - 2026-04-28
 
 **Polish on v1.3.0.** Sub-agent dispatch landed yesterday; today we point
