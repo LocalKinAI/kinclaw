@@ -74,8 +74,8 @@ ship as opt-in sidecars selected via env var:
 | Capability | Sidecar | Env var | Setup |
 |---|---|---|---|
 | Web research | SearXNG | `SEARXNG_ENDPOINT` | self-host (default: `http://localhost:8080`) |
-| Voice synthesis | Kokoro / LocalKin Service Audio | `TTS_ENDPOINT` | run server on `:8001` |
-| Voice recognition | SenseVoice | `STT_ENDPOINT` | run server on `:8000` |
+| Voice synthesis | Kokoro (via [localkin-service-audio](https://github.com/LocalKinAI/localkin-service-audio)) | `TTS_ENDPOINT` | run server on `:8001` |
+| Voice recognition | SenseVoice (via [localkin-service-audio](https://github.com/LocalKinAI/localkin-service-audio)) | `STT_ENDPOINT` | run server on `:8000` |
 | Web automation | Playwright (Python) | none — `web` skill uses `python3 ./web.py` directly | `pip install playwright && playwright install chromium` |
 | Real-time GPS | corelocationcli | none — `location` skill calls binary | `brew install corelocationcli` |
 
@@ -287,10 +287,12 @@ Subsequent launches reuse it.
 ## Audio I/O — talk to your Mac, hear it back
 
 `tts` and `stt` ship as **external SKILL.md plugins** in `skills/tts/`
-and `skills/stt/`. They wrap the [LocalKin Service Audio API](https://github.com/LocalKinAI/) — a local-first
-audio server running Kokoro (TTS) on `:8001` and SenseVoice (STT) on
-`:8000` by default. Override with `TTS_ENDPOINT` / `STT_ENDPOINT` env
-vars.
+and `skills/stt/`. They wrap [localkin-service-audio](https://github.com/LocalKinAI/localkin-service-audio)
+— a local-first audio server running Kokoro (TTS) on `:8001` and
+SenseVoice (STT) on `:8000` by default. See that repo's README for
+install + run instructions; KinClaw discovers the endpoints via the
+`TTS_ENDPOINT` / `STT_ENDPOINT` env vars (override the defaults if
+you put the server elsewhere).
 
 ```
 LLM: tts text="接下来打开计算器"
