@@ -12,21 +12,33 @@
 #
 # Final acceptance into ./skills/ is always manual (`kinclaw harvest --accept`).
 
-# ── Anthropic's Claude Code skills (public, but PROPRIETARY license)
+# ── Anthropic's Claude Code skills
 #
-# claude-code's LICENSE.md is "© Anthropic PBC. All rights reserved" —
-# repo is public for reference, NOT MIT/Apache. To harvest from it you
-# must explicitly opt in with license_allow = ["*"] (we treat that as
-# "you've inspected the repo + accepted the terms"). Commented out
-# below so default runs don't surprise-include a non-OSS source.
+# Repo is public; LICENSE.md is Anthropic's commercial terms (not OSS).
+# Included here ON the assumption you only intend to use it as
+# **inspiration** for `kinclaw harvest --inspire` — the coder
+# specialist reads the procedural SKILL.md, then forges an entirely
+# original KinClaw exec-style skill. The forged output is your own
+# work, not a redistribution of Anthropic's content. Same shape as a
+# human engineer reading docs and writing their own implementation.
+#
+# `license_allow = ["*"]` here means "you've inspected the repo and
+# accept that the harvest cron will read its content." If you ever
+# accept a forged candidate via `--accept`, the file going into
+# ./skills/ was written by coder (your local kinclaw), not copied
+# from Anthropic.
 #
 # Actual SKILL.md layout (verified 2026-04-29): plugins/*/skills/**/SKILL.md
 #
-# [[source]]
-# name         = "claude-code"
-# url          = "https://github.com/anthropics/claude-code"
-# skill_paths  = ["plugins/**/skills/**/SKILL.md"]
-# license_allow = ["*"]   # opt in to a proprietary repo, with eyes open
+# Don't run `kinclaw harvest --source claude-code` (without --inspire)
+# — that path stages the original SKILL.md verbatim, which would be a
+# direct copy. The default behavior parses + rejects them anyway
+# (procedural-style, no `command`), but be aware.
+[[source]]
+name         = "claude-code"
+url          = "https://github.com/anthropics/claude-code"
+skill_paths  = ["plugins/**/skills/**/SKILL.md"]
+license_allow = ["*"]
 
 # ── Hermes Agent (Nous Research) — server-side cousin, useful skill set
 [[source]]
