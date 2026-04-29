@@ -29,6 +29,26 @@ import (
 )
 
 func runHarvest(argv []string) {
+	// Pre-parse positional subcommand shorthand. Users naturally type
+	// `kinclaw harvest review` and `kinclaw harvest accept <id>` (no
+	// double-dash) to mirror the help text's "Three commands" listing.
+	// Without this translation, the bare word falls through as an
+	// ignored positional and harvest silently re-runs the full scan
+	// — wasting ~3 min + LLM tokens on an "I just wanted to look"
+	// command.
+	if len(argv) > 0 && len(argv[0]) > 0 && argv[0][0] != '-' {
+		switch argv[0] {
+		case "review":
+			argv = append([]string{"--review"}, argv[1:]...)
+		case "accept":
+			if len(argv) < 2 {
+				fmt.Fprintln(os.Stderr, "harvest accept: missing skill id (expected: kinclaw harvest accept <source>/<skill-name>)")
+				os.Exit(2)
+			}
+			argv = append([]string{"--accept", argv[1]}, argv[2:]...)
+		}
+	}
+
 	fs := flag.NewFlagSet("harvest", flag.ExitOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), `Usage: kinclaw harvest [flags]
