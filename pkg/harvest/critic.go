@@ -90,6 +90,76 @@ func parseCriticVerdict(body string) CriticDecision {
 	}
 }
 
+// CriticReviewInspired is the inspire-aware variant: instead of just
+// reviewing a single SKILL.md for quality, the critic sees BOTH the
+// original procedural-style content (the inspiration) and the
+// KinClaw exec-style version the coder forged. This lets it judge
+// **concept alignment** ("does the forged skill cover the same
+// capability?") in addition to **implementation quality**.
+//
+// Returns the same CriticVerdict shape as CriticReview — caller
+// handles forged-but-rejected vs forged-and-passing the same way
+// (annotation only, doesn't auto-reject from staging).
+func CriticReviewInspired(ctx context.Context, kinclawBin, criticSoulPath, originalContent, forgedContent, sourceURL, skillRel string) (*CriticVerdict, error) {
+	prompt := buildInspiredCriticPrompt(originalContent, forgedContent, sourceURL, skillRel)
+
+	ctx, cancel := withTimeout(ctx, 180*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, kinclawBin,
+		"-soul", criticSoulPath,
+		"-exec", prompt)
+	cmd.Env = append(cmd.Environ(), "KINCLAW_SPAWN_DEPTH=1")
+
+	out, err := cmd.Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("critic (inspired) timed out after 180s")
+	}
+	if err != nil {
+		stderr := ""
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr = string(exitErr.Stderr)
+		}
+		return nil, fmt.Errorf("critic (inspired) exec failed: %w\n--- stderr ---\n%s", err, truncate(stderr, 500))
+	}
+
+	body := strings.TrimSpace(string(out))
+	verdict := parseCriticVerdict(body)
+	return &CriticVerdict{
+		FullText: body,
+		Decision: verdict,
+	}, nil
+}
+
+func buildInspiredCriticPrompt(originalContent, forgedContent, sourceURL, skillRel string) string {
+	var b strings.Builder
+	b.WriteString("You are reviewing an inspire-forged candidate: the `coder` specialist read an external\n")
+	b.WriteString("procedural-style SKILL.md (which describes a behavior in markdown rather than as a shell\n")
+	b.WriteString("command) and produced a KinClaw exec-style equivalent. Your job is to judge BOTH\n")
+	b.WriteString("implementation quality AND concept alignment — does the forged version actually cover\n")
+	b.WriteString("the same capability the original described?\n\n")
+	b.WriteString("Source: ")
+	b.WriteString(sourceURL)
+	b.WriteString("\nFile in repo: ")
+	b.WriteString(skillRel)
+	b.WriteString("\n\nORIGINAL (procedural style — the inspiration):\n```\n")
+	b.WriteString(originalContent)
+	b.WriteString("\n```\n\nFORGED (KinClaw exec style — what coder produced):\n```\n")
+	b.WriteString(forgedContent)
+	b.WriteString("\n```\n\n")
+	b.WriteString("Apply your standard 3-section structure:\n")
+	b.WriteString("✓ what passes — concrete strengths (implementation + alignment)\n")
+	b.WriteString("⚠ risks ranked — concrete failure modes (broken exec / missing capability / ...)\n")
+	b.WriteString("verdict: <accept|warn|reject>\n\n")
+	b.WriteString("Specifically check:\n")
+	b.WriteString("  - The forged `command[0]` is a real binary likely available on macOS (or noted as a dependency).\n")
+	b.WriteString("  - The forged schema parameters cover the inputs the original implied (or coder honestly punted in caveats).\n")
+	b.WriteString("  - The forged version doesn't pretend to do something the original requires LLM round-trips for.\n")
+	b.WriteString("  - The forged version isn't trivially broken (osascript -e pairing, hardcoded coords, schema/template mismatch).\n\n")
+	b.WriteString("End with a single `verdict:` line.\n")
+	return b.String()
+}
+
 func buildCriticPrompt(skillContent, sourceURL, skillRel string) string {
 	var b strings.Builder
 	b.WriteString("You are reviewing a candidate SKILL.md harvested from a third-party agent repo for inclusion in KinClaw's skill library.\n\n")
