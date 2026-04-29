@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	version = "1.5.0"
+	version = "1.5.1"
 	// maxToolRounds caps the tool-call sequence per user turn. 20 was
 	// fine for kernel-only flows but compound demos (record start + tts
 	// + multi-step ui find/click/verify + tts + record stop) easily
@@ -56,6 +56,27 @@ func main() {
 			runHarvest(os.Args[2:])
 			return
 		}
+	}
+
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), `kinclaw — macOS computer-use agent (5 claws + soul + forge + spawn + harvest)
+
+Usage:
+  kinclaw -soul PATH [-exec MSG]    Run a soul (REPL or one-shot)
+  kinclaw harvest                    Pull external skill libraries; coder forges
+                                     KinClaw versions of good ideas; stage for review
+  kinclaw harvest --review           Show staged candidates
+  kinclaw harvest --accept ID        Copy one staged candidate into ./skills/
+  kinclaw probe APP                  Audit one app's AX surface (1-second verdict)
+  kinclaw -login                     Claude OAuth (free tier)
+  kinclaw -version                   Show version
+
+Top-level flags:
+`)
+		flag.PrintDefaults()
+		fmt.Fprintf(flag.CommandLine.Output(), `
+Subcommand help: kinclaw harvest -h  /  kinclaw probe -h
+`)
 	}
 
 	soulPath := flag.String("soul", "", "Path to .soul.md file")
@@ -106,6 +127,7 @@ func main() {
 	path := findSoulFile(*soulPath)
 	if path == "" {
 		fmt.Fprintln(os.Stderr, "Error: no soul file found. Use -soul flag or place a .soul.md in ./souls/")
+		fmt.Fprintln(os.Stderr, "       Run `kinclaw -h` to see all commands (incl. `kinclaw harvest` for absorbing external skill libraries).")
 		os.Exit(1)
 	}
 

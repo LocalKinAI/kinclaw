@@ -13,11 +13,15 @@
     tail -f ~/.localkin/harvest/cron.log
 
   Notes:
-    - Runs --no-critic by default. Critic is an LLM call that needs an
-      authenticated brain (Ollama signed in, etc.); cron-time auth is
-      brittle. Run kinclaw harvest manually (with critic) when you
-      want full review; cron is just to keep the cache warm + new
-      candidates flowing in.
+    - Runs --no-critic --no-inspire by default. Both are LLM calls that
+      need an authenticated brain (Ollama signed in, etc.) — cron-time
+      auth is brittle, and inspire spawns coder per procedural candidate
+      (×80+ skills × 30s each = expensive in tokens + time). Cron's job
+      is just to keep the source cache warm + see what new procedural
+      candidates appeared.
+    - Run `kinclaw harvest` manually (no flags) when you want the full
+      pipeline: scan + coder-forge procedural candidates + critic review
+      + stage for `kinclaw harvest --review`.
     - Replace the kinclaw path below if you installed somewhere
       other than /usr/local/bin (e.g. ~/go/bin/kinclaw, /opt/homebrew/bin/kinclaw).
 -->
@@ -31,9 +35,8 @@
   <array>
     <string>/usr/local/bin/kinclaw</string>
     <string>harvest</string>
-    <string>--all</string>
-    <string>--stage</string>
     <string>--no-critic</string>
+    <string>--no-inspire</string>
   </array>
 
   <key>StartCalendarInterval</key>

@@ -358,44 +358,51 @@ survivors at `~/.localkin/harvest/staged/` for human approval. Final
 acceptance into `./skills/` is always manual — the pipeline never
 auto-merges.
 
+Three commands, that's it:
+
 ```bash
-kinclaw harvest                          # all sources, run pipeline → stage
-kinclaw harvest --source claude-code     # one source only
-kinclaw harvest --diff                   # dry-run, write nothing
-kinclaw harvest --inspire                # also re-implement procedural-style
-                                          #   external skills via coder (v1.5+)
-kinclaw harvest --review                 # list staged candidates
-kinclaw harvest --accept claude-code/foo # promote staged → ./skills/
+kinclaw harvest                          # scan all sources, forge candidates → stage
+kinclaw harvest --review                 # show what's staged
+kinclaw harvest --accept claude-code/foo # copy one staged candidate into ./skills/
 ```
 
-### `--inspire` — borrow ideas, write our own implementation
+### What "scan + forge" means
 
-Anthropic / Hermes / Cursor SKILL.md files are *procedural prompts*
-for an LLM (markdown body of behavioral instruction); KinClaw SKILL.md
+Anthropic / Hermes / Cursor SKILL.md files are *procedural prompts* for
+an LLM (markdown body of behavioral instruction). KinClaw SKILL.md
 files are *shell exec wrappers* (`command + args`). Same name,
-different things.
+different things — not mechanically translatable.
 
-`--inspire` reframes harvest from "translate" to "**借鉴 + 自造**":
-when a procedural-style candidate fails the regular parse, the
-pipeline spawns the **coder** specialist (DeepSeek V4 Pro, see
-`souls/coder.soul.md`) and asks it to **re-implement** the same
-capability as a KinClaw exec-style SKILL.md.
-
+So `kinclaw harvest` doesn't translate. It **borrows ideas** and asks
+the **coder** specialist (DeepSeek V4 Pro, `souls/coder.soul.md`) to
+**re-implement** the same capability as a KinClaw exec-style SKILL.md.
 Coder either:
 
 - ✨ **forges** a native KinClaw SKILL.md (runs through forge gate
-  v2 + an alignment-aware critic review, then stages alongside
-  regular candidates) — accept-able via `--accept`.
+  v2 + an alignment-aware critic review, then stages) — `--accept`'able.
 - 📜 **defers** with `verdict: defer_to_procedural` when the original
-  capability genuinely needs LLM round-trips / AX / vision (a single
-  shell exec can't capture it). Stages to
-  `staged/<source>/_procedural/<name>/` for human browsing only —
-  not accept-able (no exec form), but the inspiration is preserved.
+  capability genuinely needs LLM round-trips / AX / vision (no single
+  shell exec can capture it). Stages to
+  `staged/<source>/_procedural/<name>/` for human reading only — not
+  `--accept`'able (no exec form), but the inspiration is preserved.
 
-`--inspire` burns LLM tokens (one forge call + one critic call per
-procedural candidate). It's opt-in. The launchd cron does **not**
-default to inspire — run it manually when you're ready to spend the
-budget on growing the library.
+This is the default. `kinclaw harvest` does this every time.
+
+### Cost-saving flags (opt-out)
+
+The forge step burns LLM tokens (one coder spawn + one critic spawn
+per procedural candidate). When you don't want that:
+
+```bash
+kinclaw harvest --no-inspire             # just count procedural candidates, don't forge
+kinclaw harvest --no-critic              # forge but skip the critic review
+kinclaw harvest --diff                   # dry-run: scan + report, write nothing
+```
+
+The launchd cron template (`scripts/com.localkin.kinclaw-harvest.plist`)
+runs with both `--no-inspire --no-critic` so 3 AM jobs only refresh
+the source cache + report counts. Run `kinclaw harvest` (no flags)
+manually when you want the full pipeline.
 
 Manifest at `~/.localkin/harvest.toml`:
 
@@ -472,13 +479,12 @@ Subcommands (own their own flag sets):
   kinclaw probe -batch < ids.txt    CSV scan for many apps (auto-cleanup)
   kinclaw probe -h                  Full probe help
 
-  kinclaw harvest                   Pull candidate skills from other agent
-                                    repos (manifest at ~/.localkin/harvest.toml)
-  kinclaw harvest --diff            Dry-run; show what would happen
-  kinclaw harvest --inspire         Re-forge procedural external skills via
-                                    coder specialist (v1.5+; burns tokens)
-  kinclaw harvest --review          List staged candidates
-  kinclaw harvest --accept <id>     Promote staged → ./skills/
+  kinclaw harvest                   Scan external skill repos, coder forges
+                                    KinClaw versions of good ideas, stage them
+  kinclaw harvest --review          Show staged candidates
+  kinclaw harvest --accept <id>     Copy one staged candidate into ./skills/
+  kinclaw harvest --diff            Dry-run; report counts, write nothing
+  kinclaw harvest --no-inspire      Skip the coder forge step (cheap / cron)
   kinclaw harvest -h                Full harvest help
 
 In-REPL commands:

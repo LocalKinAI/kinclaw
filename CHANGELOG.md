@@ -1,5 +1,106 @@
 # Changelog
 
+## [1.5.1] - 2026-04-29
+
+**UX simplification.** v1.5.0 introduced `kinclaw harvest --inspire`
+as opt-in; first-run feedback was that the design was too modal — too
+many flags, the relationship between exec-style and procedural-style
+flow wasn't clear, and the default `kinclaw harvest` produced 85
+identical "must have name, description, and command" lines for the
+common Hermes / Anthropic / Cursor case (procedural with no `command`).
+
+This release flips it to **one mental model**: `kinclaw harvest`
+scans, forges, stages — then `--review` to see, `--accept` to copy.
+
+### Changed — `--inspire` is now default; opt OUT with `--no-inspire`
+
+The procedural-forge path is the common case for any external skill
+library worth harvesting from. Making it opt-in meant the default
+`kinclaw harvest` did almost nothing useful for ~95% of input. The
+flip: forge by default, opt out for cron / cost-saving runs.
+
+```bash
+# Before (v1.5.0)
+kinclaw harvest --inspire        # opt in to forge procedural skills
+
+# After (v1.5.1)
+kinclaw harvest                  # forge by default
+kinclaw harvest --no-inspire     # opt out (cron / cheap mode)
+```
+
+`--inspire` is silently accepted as a no-op for backward compat (old
+docs / old plists keep working).
+
+### Removed — compat no-op flags
+
+Three v1.3.1-era compat flags (`--all` / `--apply` / `--stage`) were
+no-ops kept around so the launchd plist would tolerate the docs as
+written. Two minor versions later they're just clutter — removed.
+The example plist updated to drop them.
+
+### Changed — top-level `kinclaw -h` now lists subcommands
+
+Previously `kinclaw -h` only printed top-level flags; new users had no
+way to discover `kinclaw harvest` / `kinclaw probe` from the help
+output. New shape:
+
+```
+kinclaw — macOS computer-use agent (5 claws + soul + forge + spawn + harvest)
+
+Usage:
+  kinclaw -soul PATH [-exec MSG]    Run a soul (REPL or one-shot)
+  kinclaw harvest                    Pull external skill libraries; coder forges
+                                     KinClaw versions of good ideas; stage for review
+  kinclaw harvest --review           Show staged candidates
+  kinclaw harvest --accept ID        Copy one staged candidate into ./skills/
+  kinclaw probe APP                  Audit one app's AX surface (1-second verdict)
+  kinclaw -login                     Claude OAuth (free tier)
+  kinclaw -version                   Show version
+
+Top-level flags: ...
+
+Subcommand help: kinclaw harvest -h  /  kinclaw probe -h
+```
+
+The "no soul file found" error path also points at `kinclaw -h` for
+discovery instead of just dying with a one-liner.
+
+### Changed — `kinclaw harvest -h` slimmed
+
+v1.5.0's harvest help was a 30-line modal description. v1.5.1's is
+a 3-line action menu plus the flags. The pipeline-stage list moved
+to CHANGELOG / README; the help text is for "what do I run."
+
+### Changed — launchd cron defaults to both `--no-critic --no-inspire`
+
+The shipped plist (`scripts/com.localkin.kinclaw-harvest.plist`) used
+to run with `--all --stage --no-critic`. With inspire now default-on,
+"run as before" means the cron would burn LLM tokens nightly on every
+new procedural candidate (×80+ × ~30s = expensive). The plist now
+explicitly opts out of both LLM steps:
+
+```xml
+<string>kinclaw</string>
+<string>harvest</string>
+<string>--no-critic</string>
+<string>--no-inspire</string>
+```
+
+Cron's job becomes "keep source caches warm + report what's new";
+interactive `kinclaw harvest` is when you actually spend tokens.
+
+This affects only NEW installs of the plist — already-installed plists
+on user machines keep their existing args and behave per the v1.5.0
+cron pattern.
+
+### Why this matters
+
+`kinclaw harvest` was supposed to be the "skill library grows itself"
+flow. v1.5.0 made it a power-user feature with three flag combinations
+to learn. v1.5.1 makes it one command — same as `git pull` or `brew
+upgrade`. The cron and dry-run modes are still there as opt-outs; they
+just don't define the mental model anymore.
+
 ## [1.5.0] - 2026-04-29
 
 **`kinclaw harvest --inspire`** — the harvest pipeline now treats

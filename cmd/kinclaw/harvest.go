@@ -35,36 +35,17 @@ func runHarvest(argv []string) {
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), `Usage: kinclaw harvest [flags]
 
-Pull candidate skills from third-party agent repos, validate them, and
-stage survivors for human review.
+Read external agent skill libraries (Claude Code / Hermes / Cursor /
+LangChain / your own), let the coder specialist forge KinClaw versions
+of the good ideas, stage candidates for your review.
 
-Pipeline (per source):
-  git clone --depth=1   (cached at ~/.localkin/harvest/sources/<name>/)
-    → glob skill_paths from manifest
-    → translate to SKILL.md form (identity for v1)
-    → critic soul review (annotation, doesn't auto-reject)
-    → forge quality gate v2 (auto-rejects malformed)
-    → stage to ~/.localkin/harvest/staged/<source>/<skill-name>/
+Three commands:
+
+  kinclaw harvest                  scan + forge → stage candidates
+  kinclaw harvest --review         list what's staged
+  kinclaw harvest --accept ID      copy one staged candidate into ./skills/
 
 Manifest: %s
-
-Modes (mutually exclusive — last one wins):
-  (default)        Run pipeline for all sources; stage results
-  --source NAME    Run pipeline for one source only
-  --diff           Run pipeline but DON'T write to staging (dry-run)
-  --review         List currently staged candidates (no pipeline run)
-  --accept ID      Promote staged candidate ID into ./skills/
-                   (ID is "<source>/<skill-name>" as printed by --review)
-
-Pipeline flags:
-  --inspire        Route procedural-style candidates (Anthropic / Hermes /
-                   Cursor — has name + description but no command field)
-                   through the coder specialist soul. coder either
-                   re-implements them as KinClaw exec form (✨ inspire-
-                   forged) or refuses with verdict: defer_to_procedural
-                   (📜 staged for human review only — can't be --accept'd).
-                   Burns LLM tokens — opt in only when growing the library.
-  --no-critic      Skip the critic spawn (cron / CI / offline runs).
 
 Flags:
 `, harvest.DefaultManifestPath())
@@ -72,20 +53,13 @@ Flags:
 	}
 
 	manifestPath := fs.String("manifest", harvest.DefaultManifestPath(), "Path to harvest TOML manifest")
-	sourceName := fs.String("source", "", "Run pipeline for one source only")
-	diff := fs.Bool("diff", false, "Dry-run: show what would happen, write nothing")
+	sourceName := fs.String("source", "", "Run for one source only (manifest [[source]] name)")
+	diff := fs.Bool("diff", false, "Dry-run — scan + report, write nothing to staging")
 	review := fs.Bool("review", false, "List staged candidates and exit")
-	accept := fs.String("accept", "", "Promote a staged candidate (id: <source>/<skill-name>) into ./skills/")
-	noCritic := fs.Bool("no-critic", false, "Skip the critic spawn (cron / CI / offline runs)")
-	inspire := fs.Bool("inspire", false, "Route procedural-style SKILL.md (no `command` — Anthropic / Hermes / Cursor style) through the coder specialist for KinClaw exec-form re-implementation. Burns LLM tokens — opt in only when you want to convert procedural inspirations into executable skills.")
-	skillsDir := fs.String("skills-dir", "skills", "Destination for --accept (default ./skills)")
-
-	// Compatibility flags — match the user's documented spec verbatim
-	// even though they don't change behavior. Lets `kinclaw harvest
-	// --all --stage` (the launchd plist form) work as-given.
-	_ = fs.Bool("all", false, "Explicit 'all sources' (default behavior)")
-	_ = fs.Bool("apply", false, "Explicit 'actually run' (default behavior)")
-	_ = fs.Bool("stage", false, "Explicit 'stage results' (default behavior)")
+	accept := fs.String("accept", "", "Copy a staged candidate (id: <source>/<skill-name>) into ./skills/")
+	noCritic := fs.Bool("no-critic", false, "Skip the critic spawn (cron / CI / offline)")
+	noInspire := fs.Bool("no-inspire", false, "Skip the coder forge step. Just count procedural candidates without spawning LLM (cron / dry-look)")
+	skillsDir := fs.String("skills-dir", "skills", "--accept destination (default ./skills)")
 
 	if err := fs.Parse(argv); err != nil {
 		os.Exit(2)
@@ -129,13 +103,20 @@ Flags:
 	if *noCritic {
 		criticSoul = ""
 	}
+	// Inspire is default-on. --no-inspire opts out (cron / CI / cost-
+	// sensitive runs). Resolve coder soul unless explicitly disabled —
+	// missing soul file is a soft fall-back to "no inspire", not a hard
+	// error, since the v1.5+ default flow shouldn't punish users whose
+	// souls/ directory is incomplete.
+	inspireOn := !*noInspire
 	coderSoul := ""
-	if *inspire {
+	if inspireOn {
 		coderSoul = resolveCoderSoul()
 		if coderSoul == "" {
-			fmt.Fprintln(os.Stderr, "harvest: --inspire requested but souls/coder.soul.md not found "+
-				"(searched ./souls/ and ~/.localkin/souls/). Either add coder.soul.md or drop --inspire.")
-			os.Exit(1)
+			fmt.Fprintln(os.Stderr, "harvest: souls/coder.soul.md not found in ./souls/ or ~/.localkin/souls/.")
+			fmt.Fprintln(os.Stderr, "         procedural-style candidates will be counted but not forged.")
+			fmt.Fprintln(os.Stderr, "         Add coder.soul.md or pass --no-inspire to silence this notice.")
+			inspireOn = false
 		}
 	}
 
@@ -145,7 +126,7 @@ Flags:
 		CriticSoulPath: criticSoul,
 		CoderSoulPath:  coderSoul,
 		SkipCritic:     *noCritic,
-		Inspire:        *inspire,
+		Inspire:        inspireOn,
 		DryRun:         *diff,
 		Out:            os.Stderr,
 	}
@@ -158,7 +139,7 @@ Flags:
 			os.Exit(1)
 		}
 		r := harvest.RunSource(ctx, *src, opts)
-		printSummary([]harvest.Result{r}, *diff, *inspire)
+		printSummary([]harvest.Result{r}, *diff, inspireOn)
 		return
 	}
 
@@ -166,7 +147,7 @@ Flags:
 	for _, s := range manifest.Sources {
 		results = append(results, harvest.RunSource(ctx, s, opts))
 	}
-	printSummary(results, *diff, *inspire)
+	printSummary(results, *diff, inspireOn)
 }
 
 func runHarvestReview(home string) {
