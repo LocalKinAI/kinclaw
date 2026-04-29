@@ -206,7 +206,22 @@ LLM:  ui action=click role=AXButton title=Save
 
 Other `ui` actions: `focused_app`, `tree` (dump the AX tree),
 `find` (list matching elements), `read` (read element value),
-`at_point` (hit-test a coordinate).
+`at_point` (hit-test a coordinate), `watch` (subscribe to AX
+events — see below).
+
+**`ui action=watch`** (v1.7+) blocks for `duration_ms` collecting
+push-based AX notifications via kinax-go's `Observer`. Cheaper than
+polling `ui tree` for "did anything change":
+
+```
+ui action=watch events=AXFocusedWindowChanged duration_ms=5000
+ui action=watch events=AXValueChanged,AXMenuOpened duration_ms=3000 pid=12345
+```
+
+Returns the events that fired during the window. Use it when you
+need to wait for a specific UI event (window focus shifted, dialog
+appeared, value updated post-click) instead of guessing when to
+re-tree.
 
 ### `input` — raw mouse + keyboard
 
@@ -234,15 +249,29 @@ LLM: input action=click x=400 y=300 target_pid=12345
 LLM: input action=type text="hello" target_pid=12345
 ```
 
-### `screen` — just take a picture
+### `screen` — just take a picture (and read text out of it, v1.7+)
 
 ```
 LLM: screen action=screenshot
      → ~/Library/Caches/kinclaw/screens/screen-20260424-001312.000.png
+
+LLM: screen action=ocr
+     → OCR on /Users/.../screen-20260429-143012.png — 7 text region(s):
+       "Save"           at (412,85)  size 48x14   conf=1.00
+       "Cancel"         at (480,85)  size 56x14   conf=1.00
+       "今天天气怎么样"   at (200,300) size 280x40 conf=0.99
+       ...
+
+LLM: screen action=ocr path=/tmp/saved.png   # OCR an existing image
 ```
 
 The LLM can then read the PNG back (if `file_read` is enabled) and
-reason about it visually.
+reason about it visually, OR use `action=ocr` to extract text in
+~50-200ms with no vision-LLM round-trip — local, offline, free
+(via Apple Vision framework / sckit-go v0.2+).
+
+Use `ocr` when you need the **literal text**; use the screenshot
++ vision LLM when you need to **understand** the screen.
 
 ### `record` — non-blocking video capture
 

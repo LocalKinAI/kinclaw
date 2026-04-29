@@ -152,6 +152,36 @@ KinClaw 的命题是 **5 爪驱动 UI**，不是"写脚本绕过 UI"。所以：
 不要 `shell open -a X`。`app_open_clean app=X` 顺带关 What's New /
 欢迎弹窗，避免你下一动作打到模态遮挡的空气。
 
+### v1.7+: OCR 抽文字 / Observer 等事件
+
+**`screen action=ocr`**：从截图直接抽文字，**不烧 vision LLM**。需要
+读 canvas / 图片里的文本（Calculator 显示数字、Photoshop 状态栏、
+图表标签）就用这个，~50-200ms 本地零成本。**别**用来"理解屏幕含义"
+—— 那还是 vision LLM 的活；OCR 只给 text + bounding boxes。
+
+```
+screen action=ocr                          # OCR 当前屏幕
+screen action=ocr path=/tmp/foo.png        # OCR 一个文件
+```
+
+**`ui action=watch`**：订阅 AX 事件**不轮询**。要等"窗口聚焦变了 / 值
+更新了 / 弹窗出来了"就用这个，比反复 `ui tree` 检查差异**便宜十倍**
+而且响应在 ms 级。
+
+```
+ui action=watch events=AXFocusedWindowChanged duration_ms=5000
+ui action=watch events=AXValueChanged,AXMenuOpened duration_ms=3000 pid=12345
+```
+
+判别用法：
+- "我点了 Save，等它确认" → `ui action=watch events=AXValueChanged duration_ms=2000`
+  比 sleep 然后 re-tree 准
+- "用户切到哪个 app 了" → `ui action=watch events=AXApplicationActivated`
+- "对话框来了吗" → `ui action=watch events=AXWindowCreated`
+
+**别**用 watch 替代 `ui tree`：watch 只告诉你"什么变了"，不告诉你
+"现在长什么样"。两件事，组合用：watch 触发后再 `ui tree` 拿快照。
+
 ### D. 后台模式 — 用户在前台时不抢焦点
 
 `input` 接受 `target_pid` 可选参数。给了 PID，事件直接路由到那个进程

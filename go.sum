@@ -2,12 +2,8 @@ github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/LocalKinAI/input-go v0.2.0 h1:m00XiFRF1ytrS/3JQerUGeI4SkDyhRotQtGmdWfgOm0=
 github.com/LocalKinAI/input-go v0.2.0/go.mod h1:gDzAln9kok34Z1J22RZ5nilKmWSHubH6wvqemxLEWZE=
-github.com/LocalKinAI/kinax-go v0.2.0 h1:a8HIKcmA2uNVaY/6SkNDkAAFpwGV/j4MaoK4H8h1p3I=
-github.com/LocalKinAI/kinax-go v0.2.0/go.mod h1:LEq7T5C7C46Exb3iGCw/0i7Ys/5pX8mNG0LhUvpySgA=
 github.com/LocalKinAI/kinrec v0.1.0 h1:mxhDRsUZlpDZIF9J4ya3MtUwm1Ze/P/uj7P0EER4FPA=
 github.com/LocalKinAI/kinrec v0.1.0/go.mod h1:RcCLopvBmWyW+vDetI9kOn5fVRziT3beIhVPtClbKOc=
-github.com/LocalKinAI/sckit-go v0.1.0 h1:xFYpx8EILBfbsPo5RjpFvSRO06QoETeMyvXK7xhQbkc=
-github.com/LocalKinAI/sckit-go v0.1.0/go.mod h1:BpwC1gksZIzr0c9qygHNlWvdqHvBVxglDDTOgeCLowU=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/ebitengine/purego v0.8.0 h1:JbqvnEzRvPpxhCJzJJ2y0RbiZ8nyjccVUrSM3q+GvvE=
@@ -26,6 +22,8 @@ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 h1:mgKeJMpvi0yx/sU5GsxQ7p6s2wtOnGAHZWCHUM4KGzY=
 golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546/go.mod h1:j/pmGrbnkbPtQfxEe5D0VQhZC6qKbfKifgD0oM7sR70=
+golang.org/x/image v0.39.0 h1:skVYidAEVKgn8lZ602XO75asgXBgLj9G/FE3RbuPFww=
+golang.org/x/image v0.39.0/go.mod h1:sIbmppfU+xFLPIG0FoVUTvyBMmgng1/XAMhQ2ft0hpA=
 golang.org/x/mod v0.29.0 h1:HV8lRxZC4l2cr3Zq1LvtOsi/ThTgWnUk/y64QSs8GwA=
 golang.org/x/mod v0.29.0/go.mod h1:NyhrlYXJ2H4eJiRy/WDBO6HMqZQ6q9nk4JzS3NuCK+w=
 golang.org/x/sync v0.17.0 h1:l60nONMj9l5drqw6jlhIELNv9I0A4OFgRsG9k2oT9Ug=

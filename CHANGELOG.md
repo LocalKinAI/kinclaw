@@ -1,5 +1,150 @@
 # Changelog
 
+## [1.7.0] - 2026-04-29
+
+**Two new claw-level capabilities** wired up from upstream KinKit
+releases the same day:
+
+- **`screen action=ocr`** — on-device text extraction via Apple
+  Vision framework (sckit-go v0.2.0). Gets text + bounding boxes
+  out of any screen region without burning vision-LLM tokens.
+- **`ui action=watch`** — push-based AX event subscriptions
+  (kinax-go v0.3.0). Block on specific UI changes (focus / value /
+  window-create / menu-open) instead of polling `ui tree`.
+
+Both belong in the **5-claw + extensions** part of the architecture
+diagram — `screen` and `ui` gain one new action each, no new
+top-level claws. Five claws thesis stays intact ("does KinClaw
+have enough?" answer: still yes; these are sharper edges on the
+existing claws, not new claws).
+
+### Added — `screen action=ocr`
+
+```
+screen action=ocr                       # OCR a fresh screenshot
+screen action=ocr path=/tmp/foo.png     # OCR an existing image
+```
+
+Output:
+
+```
+OCR on /Users/.../screen-20260429-143012.000.png — 7 text region(s):
+  "Save"                  at (412,85)  size 48x14   conf=1.00
+  "Cancel"                at (480,85)  size 56x14   conf=1.00
+  "今天天气怎么样"          at (200,300) size 280x40 conf=0.99
+  ...
+```
+
+Uses [VNRecognizeTextRequest](https://developer.apple.com/documentation/vision/vnrecognizetextrequest)
+inside sckit-go's existing dylib. ~50-200ms per screen-sized image,
+local-only, free, deterministic. Recognition level: Accurate
+(opinionated; no knob in v1.7).
+
+When to use:
+- Read a value out of a Calculator / Photoshop status bar
+- Extract chart labels / canvas-rendered text
+- Verify a rendered text matches expected (post-action verification)
+
+When NOT to use: if the question is "what does this screen MEAN"
+(intent / structure / next action) — that's still a vision-LLM job.
+OCR returns text + boxes, nothing more.
+
+Cost compare:
+
+| Op | vision-LLM | OCR |
+|---|---|---|
+| "What does this textbox say" | ~$0.005 + ~3s | ~50-200ms / $0 |
+
+### Added — `ui action=watch`
+
+```
+ui action=watch events=AXFocusedWindowChanged duration_ms=5000
+ui action=watch events=AXValueChanged,AXMenuOpened duration_ms=3000 pid=12345
+ui action=watch events=AXApplicationActivated bundle_id=com.apple.Cursor duration_ms=10000
+```
+
+Output (synchronous block-until-deadline):
+
+```
+watched pid=12345 for 5000ms (events: [AXFocusedWindowChanged]) — 2 notification(s):
+  +1234ms  AXFocusedWindowChanged  AXWindow "Settings"
+  +3812ms  AXFocusedWindowChanged  AXWindow "Cursor — main.go"
+```
+
+Backed by kinax-go v0.3's `Observer`: dedicated worker thread,
+CFRunLoop, AXObserver subscription, condvar-driven event queue.
+The skill subscribes at the **application root** for the watch
+duration, blocks the caller for `duration_ms`, returns everything
+that fired.
+
+Defaults:
+- `events`: `AXFocusedWindowChanged`
+- `duration_ms`: 3000 (max 30000)
+- target: focused application (or pid / bundle_id)
+
+When to use:
+- Wait-for-confirmation patterns: "I clicked Save; tell me when the
+  value updated" → `events=AXValueChanged duration_ms=2000`
+- Catch a dialog: `events=AXWindowCreated duration_ms=5000`
+- Observe user activity: `events=AXApplicationActivated`
+
+When NOT to use:
+- Replacing `ui tree` — watch tells you WHAT changed, tree tells you
+  WHAT IT LOOKS LIKE NOW. Compose: watch → fire → tree.
+- Long-running monitoring (>30s) — that's a future streaming-mode
+  primitive (`ui watch_stream`) not yet shipped. Loop watch calls
+  if you need it today.
+
+Common notifications:
+`AXFocusedWindowChanged` / `AXFocusedUIElementChanged` /
+`AXValueChanged` / `AXTitleChanged` / `AXWindowCreated` /
+`AXWindowResized` / `AXMenuOpened` / `AXMenuClosed` /
+`AXApplicationActivated`. Full list in
+[Apple's AXNotificationConstants](https://developer.apple.com/documentation/applicationservices/axuielement_h/ax_notification_constants).
+
+### Pilot soul
+
+`souls/pilot.soul.md` gains a new "v1.7+: OCR 抽文字 / Observer 等事件"
+block in the `## 裂变` section, with the 派/别派 decision rules:
+
+  派 OCR: 要"读"屏幕里的文本（不需要理解 → 不烧 vision LLM）
+  派 watch: 要"等"UI 事件（替代 sleep + re-tree 的轮询）
+
+  别派 OCR: 要"理解"屏幕含义 → 还是 vision LLM
+  别派 watch: 想知道"现在屏幕长啥样" → `ui tree` 才行
+
+### Dependencies
+
+- `github.com/LocalKinAI/sckit-go` v0.1.0 → **v0.2.0** (OCR)
+- `github.com/LocalKinAI/kinax-go` v0.2.0 → **v0.3.0** (Observer)
+
+Both libs released today alongside this kinclaw release. Local
+`replace` directives in go.mod since the libs aren't pushed yet
+(per the binding "no push" workflow rule established 2026-04-29).
+Drop the replace directives once libs are tagged + go-cached.
+
+### Build
+
+`go build / vet / test ./...` — all green; no kinclaw test changes
+(integration tests for OCR live in sckit-go; for Observer in
+kinax-go, both with self-contained or unit-style coverage).
+
+### Why this matters
+
+The 5-claw thesis says "few primitives, deep" — `screen` was always
+"just take a picture", `ui` was always "drive AX semantically". With
+this release, `screen` gains a CHEAP local text-extraction path
+(no vision-LLM round-trip) and `ui` gains an EFFICIENT change-
+detection path (no polling). Two big classes of agent task get
+faster + cheaper, but the architecture stays five-claw.
+
+Indicative impact on a typical agent loop:
+
+| Old pattern | New pattern | Savings |
+|---|---|---|
+| `screen` + vision-LLM "read this textbox" | `screen action=ocr` | ~$0.005 + ~3s → ~50-200ms / $0 |
+| Loop `ui tree` waiting for state change | `ui action=watch` | 2-10× fewer AX IPCs, sub-second responsiveness |
+
 ## [1.6.0] - 2026-04-29
 
 **Harvest reframed: triage at scan, forge at accept.** v1.5.x pushed

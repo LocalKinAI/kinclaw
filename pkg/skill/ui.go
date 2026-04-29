@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/LocalKinAI/kinax-go"
 )
@@ -41,7 +42,7 @@ func (s *uiSkill) ToolDef() json.RawMessage {
 		map[string]map[string]string{
 			"action": {
 				"type":        "string",
-				"description": "focused_app | tree | find | click | click_sequence | read | at_point",
+				"description": "focused_app | tree | find | click | click_sequence | read | at_point | watch",
 			},
 			"bundle_id": {
 				"type":        "string",
@@ -84,6 +85,14 @@ func (s *uiSkill) ToolDef() json.RawMessage {
 				"type":        "string",
 				"description": "Bypass click safety guards (true/false). Default false. The ui click action refuses by default to (a) act when the matcher hits 2+ elements, and (b) press destructive targets like AXCloseButton / 'Quit' / '关闭'. Pass force=true only after you've inspected the candidates with a 'find' first and you really mean to click.",
 			},
+			"events": {
+				"type":        "string",
+				"description": "For action=watch: comma-separated AX notifications to subscribe to on the target application root. Common: AXFocusedWindowChanged, AXValueChanged, AXTitleChanged, AXWindowCreated, AXMenuOpened, AXApplicationActivated. Default: AXFocusedWindowChanged.",
+			},
+			"duration_ms": {
+				"type":        "integer",
+				"description": "For action=watch: block this many milliseconds collecting events, then return everything observed. Default: 3000ms. Max: 30000ms.",
+			},
 		}, []string{"action"})
 }
 
@@ -114,9 +123,123 @@ func (s *uiSkill) Execute(params map[string]string) (string, error) {
 		return s.read(params)
 	case "at_point":
 		return s.atPoint(params)
+	case "watch":
+		return s.watch(params)
 	default:
 		return "", fmt.Errorf("unknown action %q", action)
 	}
+}
+
+// watch subscribes to AX notifications on the target application's
+// root element via kinax.Observer (push-based, kinax-go v0.3+),
+// blocks for duration_ms collecting events, returns a summary.
+//
+// Cheaper than polling `ui tree` repeatedly to detect change. The
+// agent calls this when it wants to react to a specific UI event
+// (window focus shifted, dialog appeared, value updated post-click)
+// instead of guessing when to re-tree.
+func (s *uiSkill) watch(params map[string]string) (string, error) {
+	events := params["events"]
+	if events == "" {
+		events = kinax.NotifFocusedWindowChanged
+	}
+	notifications := splitCSV(events)
+	if len(notifications) == 0 {
+		return "", fmt.Errorf("watch: events must be a comma-separated list of AX notifications")
+	}
+
+	durationMs := atoiDefault(params["duration_ms"], 3000)
+	if durationMs <= 0 {
+		durationMs = 3000
+	}
+	if durationMs > 30000 {
+		durationMs = 30000
+	}
+
+	app, err := s.openTarget(params)
+	if err != nil {
+		return "", err
+	}
+	defer app.Close()
+	pid := kinax.FrontmostPID()
+	if p := params["pid"]; p != "" {
+		pid = atoiDefault(p, pid)
+	}
+	if pid <= 0 {
+		return "", fmt.Errorf("watch: could not resolve target pid")
+	}
+
+	obs, err := kinax.NewObserver(pid)
+	if err != nil {
+		return "", fmt.Errorf("watch: NewObserver(pid=%d): %w", pid, err)
+	}
+	defer obs.Close()
+
+	if err := obs.Subscribe(app, notifications...); err != nil {
+		return "", fmt.Errorf("watch: %w", err)
+	}
+
+	deadline := time.Now().Add(time.Duration(durationMs) * time.Millisecond)
+	type seen struct {
+		notif    string
+		role     string
+		title    string
+		atMillis int64
+	}
+	var collected []seen
+	for time.Now().Before(deadline) {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		// Use 200ms chunks so a hot stream still drains promptly even
+		// near the deadline; longer single waits would risk missing the
+		// final tail of the window.
+		poll := remaining
+		if poll > 200*time.Millisecond {
+			poll = 200 * time.Millisecond
+		}
+		ev, err := obs.Next(poll)
+		if err != nil {
+			// Timeout is expected — keep looping until deadline.
+			continue
+		}
+		role, _ := ev.Element.Role()
+		title, _ := ev.Element.Title()
+		ev.Element.Close()
+		collected = append(collected, seen{
+			notif:    ev.Notification,
+			role:     role,
+			title:    title,
+			atMillis: time.Since(deadline.Add(-time.Duration(durationMs) * time.Millisecond)).Milliseconds(),
+		})
+	}
+
+	if len(collected) == 0 {
+		return fmt.Sprintf("watched pid=%d for %dms (events: %v) — no notifications fired",
+			pid, durationMs, notifications), nil
+	}
+	out := fmt.Sprintf("watched pid=%d for %dms (events: %v) — %d notification(s):\n",
+		pid, durationMs, notifications, len(collected))
+	for _, e := range collected {
+		out += fmt.Sprintf("  +%dms  %s  %s %q\n", e.atMillis, e.notif, e.role, e.title)
+	}
+	return out, nil
+}
+
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := parts[:0]
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (s *uiSkill) openTarget(params map[string]string) (*kinax.Element, error) {
