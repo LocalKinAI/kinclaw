@@ -1,5 +1,165 @@
 # Changelog
 
+## [1.5.0] - 2026-04-29
+
+**`kinclaw harvest --inspire`** — the harvest pipeline now treats
+procedural-style external SKILL.md files (Anthropic / Hermes / Cursor —
+`name + description + markdown body`, no `command` field) as
+**inspirations**, not as files to translate.
+
+The old harvest pipeline's premise (pre-1.5) was "SKILL.md is a
+universal schema; copy across ecosystems." That premise was wrong:
+KinClaw SKILL.md is an exec wrapper (`command + args` ran via
+`exec.Command`), the Anthropic family is a procedural prompt for an
+LLM. Same name, different things. v1.4.1 cron showed it bluntly —
+85/85 Hermes skills rejected as "must have name, description, and
+command."
+
+v1.5.0 reframes harvest: **吸取思想，不抄实现.** Read external
+procedural skills as concept prompts, then ask the `coder` specialist
+to **re-implement** the same capability as a KinClaw exec-style
+skill. Not translation — re-creation in our native form.
+
+### Added — `kinclaw harvest --inspire`
+
+```
+kinclaw harvest --inspire                       # all sources, run inspire on procedural candidates
+kinclaw harvest --source claude-code --inspire  # one source
+kinclaw harvest --inspire --diff                # dry-run; show what would happen
+```
+
+When `--inspire` is set and a candidate fails the regular parse
+(missing `command`), the pipeline checks if the file is procedural-
+shaped (`looksProcedural`: has YAML frontmatter with `name +
+description`, no `command`). If yes, it spawns the **coder soul**
+(`souls/coder.soul.md`, DeepSeek V4 Pro) with the original SKILL.md
+content. Coder reads, judges, and outputs one of two shapes:
+
+- `verdict: forged` + a complete KinClaw SKILL.md between
+  `---KINCLAW_SKILL_BEGIN--- … ---KINCLAW_SKILL_END---` markers.
+  Pipeline re-parses + runs forge gate v2 + critic on it (with the
+  original supplied for **alignment review**), and stages it under
+  `staged/<source>/<skill-name>/` with `from_inspire=true` in
+  `meta.txt`. Marked ✨ in `--review` output.
+- `verdict: defer_to_procedural` + `reason:` — coder refused because
+  the original capability genuinely needs LLM round-trips, AX/vision,
+  or pure prompt template (things a single shell exec can't capture).
+  Pipeline stages the original to
+  `staged/<source>/_procedural/<name>/` with the defer reason. Marked
+  📜 in `--review`. **These can NOT be `--accept`'d** — there's no
+  exec form to promote — but they're preserved so a human can browse
+  what concept inspirations the harvest run found.
+
+The `coder` specialist soul (repurposed in v1.4.1 for exactly this
+role) carries the honesty invariant: it refuses to fabricate exec
+mappings for capabilities that genuinely don't have one, instead of
+producing a fake-but-passing SKILL.md.
+
+### Added — alignment-aware critic (`CriticReviewInspired`)
+
+When critic reviews a forged-from-inspiration skill, it now sees
+**both** the original procedural content **and** the coder's forged
+version. Same critic soul, new prompt that adds:
+
+> Specifically check:
+>   - command[0] is a real binary likely available on macOS
+>   - schema parameters cover what the original implied
+>   - the forge doesn't pretend to do what needs LLM round-trips
+>   - no trivially broken patterns (osascript -e pairing, hardcoded
+>     coords, schema/template mismatch)
+
+Verdict shape unchanged (`accept | warn | reject`) — annotation only,
+the staging decision is still on the human. Per-skill critic note
+saved alongside as `critic.md` in the staging dir.
+
+### Added — `_procedural/` staging area + `--review` distinguishes kinds
+
+Staging layout grew one dimension:
+
+```
+~/.localkin/harvest/staged/
+├── claude-code/
+│   ├── reminders_add/             ← regular or inspire-forged
+│   │   ├── SKILL.md
+│   │   ├── meta.txt               (from_inspire=true if applicable)
+│   │   ├── critic.md
+│   │   └── inspire/               (only when from_inspire)
+│   │       ├── original.md
+│   │       └── coder_output.txt
+│   └── _procedural/               ← deferred (no exec form)
+│       └── dogfood/
+│           ├── original.md
+│           ├── defer_reason.txt
+│           ├── coder_output.txt
+│           └── meta.txt
+```
+
+`kinclaw harvest --review` now prints kind labels:
+
+```
+✓  claude-code/reminders_add  [regular]      — exec parsed cleanly
+✨ claude-code/dogfood          [inspire-forged] — coder produced
+📜 claude-code/yuanbao          [procedural (deferred)] — concept only
+```
+
+`AcceptStaged` refuses procedural entries with a clear error
+explaining there's no exec form to promote.
+
+### Added — `harvest.Result.Inspired` and `harvest.Result.Procedural`
+
+The `Result` struct gains two slices alongside `Passed` so callers
+(and the summary line) can distinguish how candidates resolved. The
+summary now reads:
+
+```
+── summary
+  hermes-agent  85 cand, 23 pass (12 ✨), 38 📜, 24 rej, 0 err
+```
+
+(12 inspire-forged candidates entered the regular skill pile via
+coder; 38 deferred to `_procedural/`; 24 still legitimately broken.)
+
+### Tests
+
+`pkg/harvest/inspire_test.go` — coverage for the new pure-Go bits:
+
+- `parseInspireResponse` — forged with full block, deferred with
+  reason, missing verdict line, "forged" without block, Chinese
+  punctuation (`verdict：`)
+- `looksProcedural` — Anthropic-style yes, KinClaw-style no, missing
+  fields no, malformed YAML no
+- `sanitizeProcName` — spaces / hyphens / slashes / CJK / emoji /
+  empty all normalize to safe identifier
+- `extractYAMLName` — quoted / unquoted / missing / non-string
+
+`go test ./...` — all green; coverage on net-new code excludes the
+spawn-coder integration path (needs Ollama signin, can't run in unit
+tests).
+
+### Cron note
+
+The launchd plist (`scripts/com.localkin.kinclaw-harvest.plist`)
+still runs `--no-critic` and **does not** add `--inspire` by default.
+Inspire is opt-in because it burns LLM tokens (one forge call + one
+critic call per procedural candidate; 80+ Hermes skills × 2 = 170+
+round-trips). Run `kinclaw harvest --inspire` manually when you're
+ready to spend the budget.
+
+### Why this matters
+
+This closes the loop on the v1.3 / v1.4 pipeline. The harvest cron
+now serves three populations of external skills cleanly:
+
+1. Already-exec-style → parse, gate, critic, stage (cheap, automatic)
+2. Procedural-style + `--inspire` → coder forges native form (medium-
+   cost, opt-in, manual review)
+3. Procedural-style without `--inspire`, or that coder defers →
+   archived to `_procedural/` for browse-only
+
+The skill library can now grow with the wider agent ecosystem instead
+of rejecting it. **吸取思想，不抄实现** — KinClaw stays its own form
+even as it absorbs what other agents have figured out is worth doing.
+
 ## [1.4.1] - 2026-04-29
 
 Maintenance release. No kernel or claw behavior changes — `souls/`
