@@ -1,5 +1,200 @@
 # Changelog
 
+## [1.6.0] - 2026-04-29
+
+**Harvest reframed: triage at scan, forge at accept.** v1.5.x pushed
+the heavy work (coder spawn per procedural candidate) into the scan
+pass — a single `kinclaw harvest` against Hermes Agent burned ~80 LLM
+calls and 30+ minutes regardless of whether the user wanted to
+actually use any of those skills. Wrong shape.
+
+v1.6.0 splits the two questions:
+
+- **Scan-time** (`kinclaw harvest`) — a strong KinClaw-aware LLM
+  (curator, Kimi K2.6 / 1T params) reads the current `./skills/`
+  inventory + each external candidate, returns one of `yes / maybe /
+  no` with a one-sentence reason. Cheap (~3s per candidate, ~500
+  tokens), parallelizable, gives the user a triage list to look at.
+- **Accept-time** (`kinclaw harvest --accept ID`) — coder forges THIS
+  ONE candidate into a real KinClaw exec-style SKILL.md. Forge
+  succeeds → `./skills/<name>/`. Coder defers (capability genuinely
+  can't be exec'd) → `./skills/library/<source>/<name>/original.md`
+  preserved as inspiration. Forge errors → clear message, nothing
+  written.
+
+The total LLM cost moves from "every candidate scanned" to "every
+candidate the user actually wants to use" — drops by 10-50× on real
+manifests.
+
+### Added — `souls/curator.soul.md`
+
+New specialist soul. Brain: `kimi-k2.6:cloud` (1T, 256k context).
+Permissions: `file_read` only (reads `./skills/` for current state at
+spawn). Job: triage external skill candidates against KinClaw's
+actual inventory + design philosophy. Outputs three lines:
+
+```
+verdict: <yes | maybe | no>
+reason: <one sentence — gap filled / already have / out of scope>
+domain: <short tag — apple / git / web / ml / creative / ...>
+```
+
+Soul body has the full KinClaw architecture digest (5 claws, exec
+philosophy, explicit non-goals) so judgments are grounded, not
+hallucinated. Pipeline injects the actual `./skills/` inventory in
+every per-candidate prompt.
+
+### Added — `pkg/harvest/judge.go` + `pkg/harvest/inventory.go`
+
+`LoadInventory(dir)` walks `./skills/` at run start, parses each
+`SKILL.md`, builds a compact `name — one-line description` digest
+that gets injected into every curator prompt.
+
+`Judge(ctx, kinclawBin, soulPath, inventory, candidate)` spawns
+curator with the inventory + candidate excerpt, parses the
+three-line response. Returns `JudgeResult{Verdict, Reason, Domain,
+FullText}`. ~3s per call, ~500 tokens — vs the v1.5 forge spawn at
+~30s + ~2k tokens per call.
+
+### Changed — `pkg/harvest/pipeline.go` simplified to one path
+
+The v1.5 split between `processExecCandidate` (parse + forge gate +
+critic) and `processProceduralCandidate` (coder forge + critic + 3
+output kinds) collapsed into a single `processCandidate`:
+
+```
+read content
+  → extract name + description + body excerpt (yaml frontmatter or
+    file path fallback for `.cursorrules`-style entries)
+  → spawn curator with current inventory + candidate
+  → if yes/maybe → stage original.md + judge.txt + meta.txt
+  → if no → drop, count in summary
+```
+
+No forge gate at scan time. No critic at scan time. Both happen at
+`--accept` time only.
+
+### Changed — `pkg/harvest/stage.go` simplified shape
+
+Staged dirs now carry just three files:
+
+```
+~/.localkin/harvest/staged/<source>/<name>/
+  ├── original.md       (verbatim external content)
+  ├── judge.txt         (curator's full response)
+  └── meta.txt          (verdict / reason / domain / source url)
+```
+
+`StageInspiredCandidate`, `StageProcedural`, the `_procedural/`
+subarea — all gone. Layout is uniform across yes/maybe.
+
+### Changed — `AcceptStaged` is the new heavyweight path
+
+```go
+func AcceptStaged(ctx, opts AcceptOptions, skillID string) (*AcceptResult, error)
+```
+
+Reads `original.md` from staging, spawns coder via `Inspire()` (the
+kept-from-v1.5 forge primitive), routes the result:
+
+| Coder verdict | Action |
+|---|---|
+| `forged` + valid | write SKILL.md to `<SkillsDir>/<forged_name>/` |
+| `forged` but parse fails / forge gate fails | error, nothing written |
+| `defer_to_procedural` | copy `original.md` to `<LibraryDir>/<source>/<name>/` |
+| `unparseable` | error, nothing written |
+| destination already exists | refuse (`AcceptDuplicate`) |
+
+The forge gate v2 still applies (validates the coder output before
+placement); the critic is no longer in this path (was redundant
+with the gate + the user's own review).
+
+### Removed
+
+- `pkg/harvest/critic.go` — no critic at any stage in harvest now.
+  `souls/critic.soul.md` itself stays as a spawn target for pilot
+  outside of harvest.
+- `looksProcedural()`, `splitFrontmatterStr()`, `extractYAMLName()`,
+  `sanitizeProcName()` from `inspire.go` — only used by v1.5's
+  procedural-vs-exec branching, no longer needed (uniform path).
+- `--inspire` and `--no-inspire` flags from `kinclaw harvest`. v1.5
+  default-on-with-opt-out is gone; the new flag set is `--no-judge`
+  for cron mode.
+- `--no-critic` flag — no critic anywhere in harvest.
+- `CriticReview` / `CriticReviewInspired` / `CriticVerdict` /
+  `CriticDecision` — not used.
+- v1.5.1 era CHANGELOG mentioned `--inspire is now default`; this
+  release retires the concept entirely.
+
+### Changed — `kinclaw harvest -h`
+
+```
+Usage: kinclaw harvest [flags]
+
+Read external agent skill libraries (Claude Code / Hermes / Anthropic /
+OpenAI / Cursor / your own), let the curator soul triage them against
+KinClaw's actual skill inventory, stage candidates for review.
+
+Three commands:
+
+  kinclaw harvest                  scan + triage → stage yes/maybe candidates
+  kinclaw harvest --review         list what's staged
+  kinclaw harvest --accept ID      coder forges this one into ./skills/<name>/
+                                   (or copies to ./skills/library/ if coder defers)
+```
+
+### Changed — cron plist defaults to just `--no-judge`
+
+```xml
+<key>ProgramArguments</key>
+<array>
+  <string>/usr/local/bin/kinclaw</string>
+  <string>harvest</string>
+  <string>--no-judge</string>
+</array>
+```
+
+`--no-critic --no-inspire` (v1.5.1's combo) is gone. Cron's job
+becomes: keep source caches warm + count what's there. Triage is
+explicit interactive `kinclaw harvest`.
+
+### Tests
+
+`pkg/harvest/judge_test.go` — 13 cases:
+
+- `parseJudgeResponse`: yes / maybe / no / Chinese punctuation /
+  no-verdict-line / optional-domain
+- `extractCandidate`: yaml-frontmatter happy path / no-frontmatter
+  fallback (`.cursorrules` shape)
+- `SkillInventory.String()` rendering + empty case
+- `LoadInventory` on nonexistent dir / on real SKILL.md fixture
+- `firstSentence` boundary cases (paragraph / line / `". "` / no
+  terminator / leading whitespace / `wttr.in` non-stripping)
+
+`pkg/harvest/inspire_test.go` trimmed to just the
+`parseInspireResponse` cases (still in use at accept-time).
+
+`go test ./...` — all green; full pkg/harvest exercise + 4 new
+testfunc additions.
+
+### Why this matters
+
+The v1.5.x design pushed the user toward a "decide nothing, run
+everything" mode where harvest tried to forge anything procedural-
+style every time it ran. The result was a flooded staging area and a
+confused mental model. v1.6.0 makes it scannable: harvest is a
+**search**, not a build. Reading the staged list tells you what
+exists in the wider ecosystem that curator thinks fits KinClaw's
+shape — pick what you actually want, pay the forge cost only there.
+
+The cost arithmetic:
+
+| Op | v1.5.x cost | v1.6.0 cost | Note |
+|---|---|---|---|
+| Full scan over Hermes (85) | 85 × ~30s × ~2k tok = **42 min / ~170k tok** | 85 × ~3s × ~500 tok = **4 min / ~42k tok** | curator triage |
+| Per-skill forge (when wanted) | included in scan | 1 × ~30s × ~2k tok = **30s / ~2k tok** | only for accepted ones |
+| Typical user flow (scan + accept 5) | 42 min / 170k tok | 4 min + 5×30s = **~7 min / ~52k tok** | **3-7× cheaper** |
+
 ## [1.5.1] - 2026-04-29
 
 **UX simplification.** v1.5.0 introduced `kinclaw harvest --inspire`

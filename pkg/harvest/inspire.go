@@ -7,25 +7,28 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/LocalKinAI/kinclaw/pkg/soul"
-	"gopkg.in/yaml.v3"
 )
 
-// Inspire spawns the coder specialist on a procedural-style SKILL.md
-// (Anthropic / Hermes / Cursor rules — name + description + markdown
-// body, no shell command) and asks it to **re-implement** that
-// capability as a KinClaw exec-style SKILL.md via forge.
+// Inspire spawns the coder specialist to forge a KinClaw exec-style
+// SKILL.md from an external procedural-style original. v1.6+ this
+// only runs at `--accept` time — one specific candidate at a time,
+// chosen by the user after `--review`. Scan-time judgment uses the
+// curator soul via Judge() instead.
 //
-// This is the "harvest --inspire" path: not a translator (procedural
-// instructions don't have a deterministic shell mapping), but a
-// concept-borrow + native re-creation. Coder either produces a
-// KinClaw-form SKILL.md or refuses with `verdict: defer_to_procedural`
-// when the original capability can't be expressed as a single exec
-// (needs LLM round-trips, AX/vision, or pure prompt template).
+// Returns one of three structured outcomes:
 //
-// Mirrors CriticReview's spawn pattern (cmd.Output + KINCLAW_SPAWN_DEPTH=1
-// env guard so coder can't itself spawn).
+//   InspireForged       — coder produced a SKILL.md between the
+//                         BEGIN/END markers. Caller round-trip
+//                         validates and stages.
+//   InspireDeferred     — coder said the capability can't be expressed
+//                         as a single shell exec. Caller falls back to
+//                         ./skills/library/ (preserve as inspiration).
+//   InspireUnparseable  — coder responded but neither verdict nor
+//                         content could be extracted. Caller surfaces
+//                         the FullText for human review.
+//
+// Mirrors the spawn skill's exec pattern (cmd.Output + KINCLAW_SPAWN_
+// DEPTH=1 env guard so coder can't itself spawn).
 func Inspire(ctx context.Context, kinclawBin, coderSoulPath, candidateContent, sourceURL, skillRel string) (*InspireResult, error) {
 	prompt := buildInspirePrompt(candidateContent, sourceURL, skillRel)
 
@@ -55,44 +58,25 @@ func Inspire(ctx context.Context, kinclawBin, coderSoulPath, candidateContent, s
 
 // InspireResult is the structured outcome of one coder forge attempt.
 type InspireResult struct {
-	FullText      string          // raw coder output (kept for debugging / staging artifact)
-	Verdict       InspireVerdict  // forged | deferred | unparseable
-	ForgedContent string          // SKILL.md content if Verdict == InspireForged
-	DeferReason   string          // human-readable explanation if Verdict == InspireDeferred
+	FullText      string
+	Verdict       InspireVerdict
+	ForgedContent string
+	DeferReason   string
 }
 
 type InspireVerdict string
 
 const (
-	// InspireForged — coder produced a KinClaw exec-style SKILL.md
-	// between the BEGIN/END markers. Caller still needs to round-trip
-	// it through ValidateSkillMeta + critic before staging.
-	InspireForged InspireVerdict = "forged"
-	// InspireDeferred — coder refused: the original capability can't be
-	// expressed as a single shell exec (needs LLM round-trips, AX/vision,
-	// pure prompt template, ...). Stage to _procedural/ for human review.
-	InspireDeferred InspireVerdict = "defer_to_procedural"
-	// InspireUnparseable — coder responded but neither verdict nor
-	// content could be extracted. Treated as deferred for staging
-	// purposes; the FullText is preserved so a human can see what went
-	// wrong.
+	InspireForged      InspireVerdict = "forged"
+	InspireDeferred    InspireVerdict = "defer_to_procedural"
 	InspireUnparseable InspireVerdict = "unparseable"
 )
 
-// inspireVerdictRe matches a verdict line in the coder output. Same
-// permissive shape as the critic's verdictPattern (case-insensitive,
-// EN/中文 friendly).
-var inspireVerdictRe = regexp.MustCompile(`(?im)^verdict\s*[:：]\s*(\S+)`)
-
-// inspireSkillBlockRe extracts the forged SKILL.md content between
-// the explicit markers the coder soul is told to emit. Greedy `.*?`
-// in DOTALL mode so newlines inside the block are captured.
-var inspireSkillBlockRe = regexp.MustCompile(`(?ms)^---KINCLAW_SKILL_BEGIN---\s*\n(.*?)\n---KINCLAW_SKILL_END---`)
-
-// inspireReasonRe pulls a "reason:" annotation out of the coder
-// output for deferred verdicts. Optional — if missing, DeferReason
-// stays empty and we just keep the FullText for the staging artifact.
-var inspireReasonRe = regexp.MustCompile(`(?im)^(?:reason|why_not_exec)\s*[:：]\s*(.+)$`)
+var (
+	inspireVerdictRe    = regexp.MustCompile(`(?im)^verdict\s*[:：]\s*(\S+)`)
+	inspireSkillBlockRe = regexp.MustCompile(`(?ms)^---KINCLAW_SKILL_BEGIN---\s*\n(.*?)\n---KINCLAW_SKILL_END---`)
+	inspireReasonRe     = regexp.MustCompile(`(?im)^(?:reason|why_not_exec)\s*[:：]\s*(.+)$`)
+)
 
 func parseInspireResponse(body string) *InspireResult {
 	r := &InspireResult{FullText: body}
@@ -103,19 +87,15 @@ func parseInspireResponse(body string) *InspireResult {
 		return r
 	}
 
-	// Normalize verdict literal. Coder's soul tells it to use
-	// "forged" or "defer_to_procedural"; accept variants defensively.
 	v := strings.ToLower(strings.TrimSpace(verdictMatch[1]))
 	switch v {
 	case "forged", "forge", "ok", "accept", "pass":
-		// Need the SKILL.md block to actually count as forged.
 		if blk := inspireSkillBlockRe.FindStringSubmatch(body); blk != nil {
 			r.Verdict = InspireForged
 			r.ForgedContent = strings.TrimSpace(blk[1])
 			return r
 		}
-		// Said forged but didn't include the block — treat as
-		// unparseable so the caller surfaces it for human review.
+		// "forged" without the block → unparseable so caller surfaces it.
 		r.Verdict = InspireUnparseable
 		return r
 	case "defer_to_procedural", "defer", "deferred", "skip", "reject":
@@ -141,7 +121,7 @@ func buildInspirePrompt(candidateContent, sourceURL, skillRel string) string {
 	b.WriteString(sourceURL)
 	b.WriteString("\nFile in repo: ")
 	b.WriteString(skillRel)
-	b.WriteString("\n\nOriginal SKILL.md (procedural style — has `name + description + markdown body`, no `command`):\n```\n")
+	b.WriteString("\n\nOriginal SKILL.md:\n```\n")
 	b.WriteString(candidateContent)
 	b.WriteString("\n```\n\n")
 	b.WriteString("Output format — choose ONE shape, no other prose:\n\n")
@@ -190,68 +170,4 @@ func buildInspirePrompt(candidateContent, sourceURL, skillRel string) string {
 	b.WriteString("  RULE 6 — If the original references a binary that may not be installed by default (e.g. remindctl), say so in `caveats:`.\n\n")
 	b.WriteString("  RULE 7 — Be honest. Partial implementation OK; document what was punted in `caveats:`. Don't fake.\n")
 	return b.String()
-}
-
-// looksProcedural returns true if the candidate has YAML frontmatter with
-// `name + description` but no `command` field — the structural shape of
-// Anthropic / Hermes / Cursor procedural skills. The harvest pipeline
-// uses this to decide whether a parse-failed candidate is a
-// candidate-for-inspire or a genuinely malformed file.
-func looksProcedural(content []byte) bool {
-	rawYAML, _, err := soul.SplitFrontmatter(content)
-	if err != nil {
-		return false
-	}
-	var fm map[string]any
-	if err := yaml.Unmarshal(rawYAML, &fm); err != nil {
-		return false
-	}
-	name, _ := fm["name"].(string)
-	desc, _ := fm["description"].(string)
-	_, hasCmd := fm["command"]
-	return name != "" && desc != "" && !hasCmd
-}
-
-// splitFrontmatterStr is the string-shaped wrapper around the byte-slice
-// soul.SplitFrontmatter. Returns (rawYAML, body, err) — same contract.
-// Caller is the pipeline's procedure-name fallback; uses YAML to prefer
-// the original author's intended name over a slug we'd derive from the
-// file path.
-func splitFrontmatterStr(content string) (string, string, error) {
-	yamlBytes, body, err := soul.SplitFrontmatter([]byte(content))
-	return string(yamlBytes), string(body), err
-}
-
-// extractYAMLName pulls the top-level `name` field out of raw YAML
-// frontmatter. Returns "" on any failure (malformed YAML, missing
-// name, or non-string value). Used when a procedural-style candidate
-// needs a stable identifier for the _procedural/ staging dir.
-func extractYAMLName(rawYAML string) string {
-	var fm map[string]any
-	if err := yaml.Unmarshal([]byte(rawYAML), &fm); err != nil {
-		return ""
-	}
-	if n, ok := fm["name"].(string); ok {
-		return n
-	}
-	return ""
-}
-
-// procNamePattern keeps the staging dir name to lowercase letters,
-// digits, hyphens, underscores. Anything else (spaces, CJK, punctuation)
-// is collapsed to a single underscore. Empty result falls back to
-// "unnamed".
-var procNamePattern = regexp.MustCompile(`[^a-z0-9_-]+`)
-
-// sanitizeProcName normalizes an arbitrary string to a filesystem-safe
-// identifier suitable for the _procedural/ staging subdir. Lowercases,
-// replaces non-allowed chars with `_`, trims leading/trailing `_`.
-func sanitizeProcName(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	s = procNamePattern.ReplaceAllString(s, "_")
-	s = strings.Trim(s, "_-")
-	if s == "" {
-		return "unnamed"
-	}
-	return s
 }

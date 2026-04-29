@@ -35,8 +35,7 @@
   <array>
     <string>/usr/local/bin/kinclaw</string>
     <string>harvest</string>
-    <string>--no-critic</string>
-    <string>--no-inspire</string>
+    <string>--no-judge</string>
   </array>
 
   <key>StartCalendarInterval</key>

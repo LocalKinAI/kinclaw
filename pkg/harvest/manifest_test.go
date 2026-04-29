@@ -3,7 +3,6 @@ package harvest
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -84,21 +83,3 @@ skill_paths = ["*"]
 	}
 }
 
-func TestParseCriticVerdict(t *testing.T) {
-	cases := map[string]CriticDecision{
-		"text\nverdict: accept\n":     CriticAccept,
-		"text\nverdict: pass":         CriticAccept,
-		"text\nverdict：通过":            CriticAccept,
-		"text\nverdict: warn":         CriticWarn,
-		"text\nverdict: reject":       CriticReject,
-		"text\nverdict: 不通过":          CriticReject,
-		"text without a verdict line": CriticWarn,
-		"verdict: gibberish":          CriticWarn,
-	}
-	for body, want := range cases {
-		got := parseCriticVerdict(body)
-		if got != want {
-			t.Errorf("parseCriticVerdict(%q) = %q, want %q", strings.ReplaceAll(body, "\n", "⏎"), got, want)
-		}
-	}
-}

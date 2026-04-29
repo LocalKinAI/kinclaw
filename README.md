@@ -358,51 +358,64 @@ survivors at `~/.localkin/harvest/staged/` for human approval. Final
 acceptance into `./skills/` is always manual — the pipeline never
 auto-merges.
 
-Three commands, that's it:
+Three commands:
 
 ```bash
-kinclaw harvest                          # scan all sources, forge candidates → stage
-kinclaw harvest --review                 # show what's staged
-kinclaw harvest --accept claude-code/foo # copy one staged candidate into ./skills/
+kinclaw harvest                          # scan all sources, curator triages → stage yes/maybe
+kinclaw harvest --review                 # show what's staged + verdicts
+kinclaw harvest --accept claude-code/foo # coder forges this one into ./skills/<name>/
 ```
 
-### What "scan + forge" means
+### Scan = triage, not forge
 
-Anthropic / Hermes / Cursor SKILL.md files are *procedural prompts* for
-an LLM (markdown body of behavioral instruction). KinClaw SKILL.md
-files are *shell exec wrappers* (`command + args`). Same name,
-different things — not mechanically translatable.
+`kinclaw harvest` runs the **curator** specialist soul
+(`souls/curator.soul.md`, Kimi K2.6 / 1T params) over each external
+candidate. Curator knows:
 
-So `kinclaw harvest` doesn't translate. It **borrows ideas** and asks
-the **coder** specialist (DeepSeek V4 Pro, `souls/coder.soul.md`) to
-**re-implement** the same capability as a KinClaw exec-style SKILL.md.
-Coder either:
+- KinClaw's architecture (5 claws, soul system, exec philosophy, non-goals)
+- Your **actual** `./skills/` inventory (auto-injected at run start)
+- The candidate's name + description + body excerpt
 
-- ✨ **forges** a native KinClaw SKILL.md (runs through forge gate
-  v2 + an alignment-aware critic review, then stages) — `--accept`'able.
-- 📜 **defers** with `verdict: defer_to_procedural` when the original
-  capability genuinely needs LLM round-trips / AX / vision (no single
-  shell exec can capture it). Stages to
-  `staged/<source>/_procedural/<name>/` for human reading only — not
-  `--accept`'able (no exec form), but the inspiration is preserved.
+Curator returns one of three verdicts per candidate, with a one-line
+reason:
 
-This is the default. `kinclaw harvest` does this every time.
+| Verdict | Action |
+|---|---|
+| **yes** | obvious gap-filler that fits exec form → stage |
+| **maybe** | partial overlap or unclear → stage with the doubt noted |
+| **no** | already have it / pure LLM workflow / out of scope → drop |
 
-### Cost-saving flags (opt-out)
+Cost is small per call (~3s × ~500 tokens on Kimi K2.6). A full scan
+over Hermes Agent's 85 skills runs in ~4 minutes / ~40k tokens —
+much cheaper than forging anything.
 
-The forge step burns LLM tokens (one coder spawn + one critic spawn
-per procedural candidate). When you don't want that:
+### Forge happens at `--accept` time
+
+When you've reviewed and want to actually use one of the staged
+candidates, `kinclaw harvest --accept <source>/<skill-name>` spawns
+the **coder** specialist (`souls/coder.soul.md`, DeepSeek V4 Pro)
+to forge a real KinClaw exec-style `SKILL.md`. Three outcomes:
+
+| Coder result | Lands at |
+|---|---|
+| **forged** + parses + passes forge gate v2 | `./skills/<forged_name>/` (runnable) |
+| **defer_to_procedural** (capability needs LLM/AX/vision) | `./skills/library/<source>/<name>/original.md` (kept as inspiration) |
+| forge errors (unparseable / forge gate fail / duplicate) | clear error, nothing written |
+
+You only pay the forge cost (~30s / ~2k tokens) on candidates you
+actually want — not on every procedural skill in the source repos.
+
+### Cron mode
 
 ```bash
-kinclaw harvest --no-inspire             # just count procedural candidates, don't forge
-kinclaw harvest --no-critic              # forge but skip the critic review
-kinclaw harvest --diff                   # dry-run: scan + report, write nothing
+kinclaw harvest --no-judge               # cron-cheap: clone caches + count, no LLM
+kinclaw harvest --diff                   # dry-run: scan + triage, write nothing
 ```
 
 The launchd cron template (`scripts/com.localkin.kinclaw-harvest.plist`)
-runs with both `--no-inspire --no-critic` so 3 AM jobs only refresh
-the source cache + report counts. Run `kinclaw harvest` (no flags)
-manually when you want the full pipeline.
+runs `--no-judge` — 3 AM jobs only refresh source caches + report counts.
+Run `kinclaw harvest` (no flags) interactively when you want the curator
+triage.
 
 Manifest at `~/.localkin/harvest.toml`:
 
@@ -479,12 +492,12 @@ Subcommands (own their own flag sets):
   kinclaw probe -batch < ids.txt    CSV scan for many apps (auto-cleanup)
   kinclaw probe -h                  Full probe help
 
-  kinclaw harvest                   Scan external skill repos, coder forges
-                                    KinClaw versions of good ideas, stage them
-  kinclaw harvest --review          Show staged candidates
-  kinclaw harvest --accept <id>     Copy one staged candidate into ./skills/
-  kinclaw harvest --diff            Dry-run; report counts, write nothing
-  kinclaw harvest --no-inspire      Skip the coder forge step (cheap / cron)
+  kinclaw harvest                   Scan external repos, curator triages
+                                    candidates, stages yes/maybe ones
+  kinclaw harvest --review          Show staged + verdict + reason
+  kinclaw harvest --accept <id>     Coder forges this one → ./skills/<name>/
+  kinclaw harvest --diff            Dry-run; triage but write nothing
+  kinclaw harvest --no-judge        Cron-cheap: just refresh caches, no LLM
   kinclaw harvest -h                Full harvest help
 
 In-REPL commands:

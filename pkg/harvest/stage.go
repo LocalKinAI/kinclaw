@@ -1,6 +1,7 @@
 package harvest
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,45 +10,44 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/LocalKinAI/kinclaw/pkg/skill"
 )
 
 // StagedRoot is the on-disk root for staged candidates.
-// Layout: ~/.localkin/harvest/staged/<source>/<skill-name>/{SKILL.md, critic.md, meta.txt}
+//
+// Layout (v1.6+):
+//
+//	~/.localkin/harvest/staged/<source>/<candidate>/
+//	  ├── original.md         (raw content of the external SKILL.md)
+//	  ├── judge.txt           (curator's full response — verdict / reason / domain)
+//	  └── meta.txt            (source url / file path / staged_at / verdict)
+//
+// Forge does NOT happen at stage time. The original markdown sits
+// here until the user runs `kinclaw harvest --accept ID`, which
+// spawns coder, attempts to forge a real KinClaw SKILL.md, routes
+// the result to ./skills/ (success) or ./skills/library/ (defer).
 func StagedRoot(home string) string {
 	return filepath.Join(home, ".localkin", "harvest", "staged")
 }
 
-// StagedSkill describes one staged candidate as exposed to `harvest --review`.
+// StagedSkill describes one staged candidate as exposed to
+// `harvest --review`.
 type StagedSkill struct {
 	SourceName   string
 	SkillName    string
-	StagePath    string           // dir on disk
-	Kind         StagedSkillKind  // regular / inspire-forged / procedural
-	CriticVote   CriticDecision   // accept / warn / reject (empty if critic skipped)
-	GateOK       bool             // true if forge gate passed (always true for non-procedural)
-	StagedAt     time.Time
+	StagePath    string
+	Verdict      JudgeVerdict
+	Reason       string
+	Domain       string
 	SourceURL    string
 	SkillRelPath string
-	DeferReason  string // populated only when Kind == StagedKindProcedural
-	FromInspire  bool   // true when meta.txt has from_inspire=true
+	StagedAt     time.Time
 }
 
-// StagedSkillKind classifies a staging entry. Regular = exec-style
-// candidate that parsed cleanly. InspireForged = exec-style candidate
-// produced by the coder specialist from a procedural-style original.
-// Procedural = original procedural-style content the coder refused as
-// non-exec'able; staged for human reading only, can NOT be --accept'd.
-type StagedSkillKind string
-
-const (
-	StagedKindRegular       StagedSkillKind = "regular"
-	StagedKindInspireForged StagedSkillKind = "inspire"
-	StagedKindProcedural    StagedSkillKind = "procedural"
-)
-
-// CleanSourceStage removes any prior staged candidates for `sourceName`,
-// so re-running harvest doesn't leave stale entries from a previous
-// version of the upstream repo.
+// CleanSourceStage removes any prior staged candidates for sourceName.
+// Called at the start of each RunSource so re-runs reflect current
+// state cleanly without stale entries from earlier versions.
 func CleanSourceStage(home, sourceName string) error {
 	dir := filepath.Join(StagedRoot(home), sourceName)
 	if err := os.RemoveAll(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -56,152 +56,52 @@ func CleanSourceStage(home, sourceName string) error {
 	return nil
 }
 
-// StageCandidate writes the SKILL.md, the critic annotation, and a
-// minimal meta.txt to the staging dir for one candidate. Overwrites
-// any existing entry at the same path (CleanSourceStage handles the
-// per-source wipe; this just lays down the new files).
-func StageCandidate(home, sourceName, skillName, skillContent string, critic *CriticVerdict, source Source, skillRel string) (string, error) {
-	dir := filepath.Join(StagedRoot(home), sourceName, skillName)
+// StageJudged writes a candidate the curator gave verdict=yes/maybe
+// to the staging dir. Original markdown is preserved verbatim — the
+// pipeline does NOT modify it. Curator's full response is saved to
+// judge.txt for human review.
+func StageJudged(home string, src Source, cand JudgeCandidate, originalContent string, judge *JudgeResult) (string, error) {
+	dir := filepath.Join(StagedRoot(home), src.Name, cand.Name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir staged dir: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(skillContent), 0o644); err != nil {
-		return "", fmt.Errorf("write SKILL.md: %w", err)
-	}
-
-	if critic != nil {
-		var b strings.Builder
-		b.WriteString("# Critic review (verdict: ")
-		b.WriteString(string(critic.Decision))
-		b.WriteString(")\n\n")
-		b.WriteString(critic.FullText)
-		b.WriteString("\n")
-		if err := os.WriteFile(filepath.Join(dir, "critic.md"), []byte(b.String()), 0o644); err != nil {
-			return "", fmt.Errorf("write critic.md: %w", err)
-		}
-	}
-
-	var meta strings.Builder
-	fmt.Fprintf(&meta, "source_name=%s\n", sourceName)
-	fmt.Fprintf(&meta, "source_url=%s\n", source.URL)
-	fmt.Fprintf(&meta, "skill_rel=%s\n", skillRel)
-	fmt.Fprintf(&meta, "staged_at=%s\n", time.Now().UTC().Format(time.RFC3339))
-	if critic != nil {
-		fmt.Fprintf(&meta, "critic_verdict=%s\n", critic.Decision)
-	} else {
-		fmt.Fprintf(&meta, "critic_verdict=skipped\n")
-	}
-	if err := os.WriteFile(filepath.Join(dir, "meta.txt"), []byte(meta.String()), 0o644); err != nil {
-		return "", fmt.Errorf("write meta.txt: %w", err)
-	}
-	return dir, nil
-}
-
-// StageInspiredCandidate writes a candidate that was produced by the
-// --inspire flow (coder forged a KinClaw exec-style skill from an
-// external procedural-style original). Layout matches StageCandidate
-// (so --accept handles it identically) but meta.txt records the
-// inspiration provenance, and the directory gains an `inspire/`
-// subdir with the original procedural content + the coder's full
-// response — useful for reviewing concept alignment manually.
-func StageInspiredCandidate(home, sourceName, skillName, forgedSkillContent, originalProcedural, coderRawOutput string, critic *CriticVerdict, source Source, skillRel string) (string, error) {
-	dir := filepath.Join(StagedRoot(home), sourceName, skillName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("mkdir staged dir: %w", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(forgedSkillContent), 0o644); err != nil {
-		return "", fmt.Errorf("write forged SKILL.md: %w", err)
-	}
-
-	inspireDir := filepath.Join(dir, "inspire")
-	if err := os.MkdirAll(inspireDir, 0o755); err != nil {
-		return "", fmt.Errorf("mkdir inspire dir: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(inspireDir, "original.md"), []byte(originalProcedural), 0o644); err != nil {
-		return "", fmt.Errorf("write inspire/original.md: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(inspireDir, "coder_output.txt"), []byte(coderRawOutput), 0o644); err != nil {
-		return "", fmt.Errorf("write inspire/coder_output.txt: %w", err)
-	}
-
-	if critic != nil {
-		var b strings.Builder
-		b.WriteString("# Critic review (verdict: ")
-		b.WriteString(string(critic.Decision))
-		b.WriteString(", inspire-forged)\n\n")
-		b.WriteString(critic.FullText)
-		b.WriteString("\n")
-		if err := os.WriteFile(filepath.Join(dir, "critic.md"), []byte(b.String()), 0o644); err != nil {
-			return "", fmt.Errorf("write critic.md: %w", err)
-		}
-	}
-
-	var meta strings.Builder
-	fmt.Fprintf(&meta, "source_name=%s\n", sourceName)
-	fmt.Fprintf(&meta, "source_url=%s\n", source.URL)
-	fmt.Fprintf(&meta, "skill_rel=%s\n", skillRel)
-	fmt.Fprintf(&meta, "staged_at=%s\n", time.Now().UTC().Format(time.RFC3339))
-	fmt.Fprintf(&meta, "from_inspire=true\n")
-	if critic != nil {
-		fmt.Fprintf(&meta, "critic_verdict=%s\n", critic.Decision)
-	} else {
-		fmt.Fprintf(&meta, "critic_verdict=skipped\n")
-	}
-	if err := os.WriteFile(filepath.Join(dir, "meta.txt"), []byte(meta.String()), 0o644); err != nil {
-		return "", fmt.Errorf("write meta.txt: %w", err)
-	}
-	return dir, nil
-}
-
-// StageProcedural writes a candidate the coder soul refused as
-// non-exec'able to a separate _procedural/ subarea under the source.
-// These can NOT be promoted via --accept (no shell command to run);
-// they're staged purely so the human can browse what concept inspirations
-// the harvest run found, even when KinClaw can't natively execute them.
-func StageProcedural(home, sourceName, procName, originalProcedural, deferReason, coderRawOutput string, source Source, skillRel string) (string, error) {
-	dir := filepath.Join(StagedRoot(home), sourceName, "_procedural", procName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("mkdir procedural dir: %w", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(dir, "original.md"), []byte(originalProcedural), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "original.md"), []byte(originalContent), 0o644); err != nil {
 		return "", fmt.Errorf("write original.md: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "defer_reason.txt"), []byte(deferReason+"\n"), 0o644); err != nil {
-		return "", fmt.Errorf("write defer_reason.txt: %w", err)
+
+	var jb strings.Builder
+	fmt.Fprintf(&jb, "verdict: %s\n", judge.Verdict)
+	fmt.Fprintf(&jb, "reason: %s\n", judge.Reason)
+	if judge.Domain != "" {
+		fmt.Fprintf(&jb, "domain: %s\n", judge.Domain)
 	}
-	if coderRawOutput != "" {
-		if err := os.WriteFile(filepath.Join(dir, "coder_output.txt"), []byte(coderRawOutput), 0o644); err != nil {
-			return "", fmt.Errorf("write coder_output.txt: %w", err)
-		}
+	jb.WriteString("\n--- raw curator output ---\n")
+	jb.WriteString(judge.FullText)
+	jb.WriteString("\n")
+	if err := os.WriteFile(filepath.Join(dir, "judge.txt"), []byte(jb.String()), 0o644); err != nil {
+		return "", fmt.Errorf("write judge.txt: %w", err)
 	}
 
 	var meta strings.Builder
-	fmt.Fprintf(&meta, "source_name=%s\n", sourceName)
-	fmt.Fprintf(&meta, "source_url=%s\n", source.URL)
-	fmt.Fprintf(&meta, "skill_rel=%s\n", skillRel)
+	fmt.Fprintf(&meta, "source_name=%s\n", src.Name)
+	fmt.Fprintf(&meta, "source_url=%s\n", src.URL)
+	fmt.Fprintf(&meta, "skill_rel=%s\n", cand.SkillRelPath)
 	fmt.Fprintf(&meta, "staged_at=%s\n", time.Now().UTC().Format(time.RFC3339))
-	fmt.Fprintf(&meta, "verdict=defer_to_procedural\n")
-	fmt.Fprintf(&meta, "defer_reason=%s\n", deferReason)
+	fmt.Fprintf(&meta, "verdict=%s\n", judge.Verdict)
+	fmt.Fprintf(&meta, "reason=%s\n", judge.Reason)
+	if judge.Domain != "" {
+		fmt.Fprintf(&meta, "domain=%s\n", judge.Domain)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "meta.txt"), []byte(meta.String()), 0o644); err != nil {
 		return "", fmt.Errorf("write meta.txt: %w", err)
 	}
 	return dir, nil
 }
 
-// ListStaged enumerates every staged candidate currently on disk,
-// sorted by source then skill name. Used by `kinclaw harvest --review`.
-//
-// Layout it walks:
-//
-//	staged/<source>/<skill-name>/SKILL.md       → regular or inspire-forged
-//	staged/<source>/_procedural/<name>/         → coder said defer_to_procedural
-//
-// Inspire-forged entries live in the same dir shape as regular ones —
-// the difference is recorded in their meta.txt (`from_inspire=true`)
-// and surfaces via StagedSkill.FromInspire / .Kind.
+// ListStaged enumerates every staged candidate currently on disk.
+// Sorted by source then verdict (yes > maybe > others) then name.
+// Used by `kinclaw harvest --review`.
 func ListStaged(home string) ([]StagedSkill, error) {
 	root := StagedRoot(home)
 	entries, err := os.ReadDir(root)
@@ -225,40 +125,12 @@ func ListStaged(home string) ([]StagedSkill, error) {
 			if !sk.IsDir() {
 				continue
 			}
-			// _procedural is a marker dir that holds the deferred
-			// candidates. Recurse one level deeper.
-			if sk.Name() == "_procedural" {
-				procEntries, err := os.ReadDir(filepath.Join(skillsDir, "_procedural"))
-				if err != nil {
-					continue
-				}
-				for _, pe := range procEntries {
-					if !pe.IsDir() {
-						continue
-					}
-					st := StagedSkill{
-						SourceName: sourceDir.Name(),
-						SkillName:  pe.Name(),
-						StagePath:  filepath.Join(skillsDir, "_procedural", pe.Name()),
-						Kind:       StagedKindProcedural,
-						GateOK:     false,
-					}
-					st.fillFromMeta()
-					out = append(out, st)
-				}
-				continue
-			}
 			st := StagedSkill{
 				SourceName: sourceDir.Name(),
 				SkillName:  sk.Name(),
 				StagePath:  filepath.Join(skillsDir, sk.Name()),
-				Kind:       StagedKindRegular,
-				GateOK:     true,
 			}
 			st.fillFromMeta()
-			if st.FromInspire {
-				st.Kind = StagedKindInspireForged
-			}
 			out = append(out, st)
 		}
 	}
@@ -266,22 +138,21 @@ func ListStaged(home string) ([]StagedSkill, error) {
 		if out[i].SourceName != out[j].SourceName {
 			return out[i].SourceName < out[j].SourceName
 		}
-		// Procedural after inspire after regular within the same source.
-		if out[i].Kind != out[j].Kind {
-			return kindOrder(out[i].Kind) < kindOrder(out[j].Kind)
+		if out[i].Verdict != out[j].Verdict {
+			return verdictOrder(out[i].Verdict) < verdictOrder(out[j].Verdict)
 		}
 		return out[i].SkillName < out[j].SkillName
 	})
 	return out, nil
 }
 
-func kindOrder(k StagedSkillKind) int {
-	switch k {
-	case StagedKindRegular:
+func verdictOrder(v JudgeVerdict) int {
+	switch v {
+	case JudgeYes:
 		return 0
-	case StagedKindInspireForged:
+	case JudgeMaybe:
 		return 1
-	case StagedKindProcedural:
+	case JudgeNo:
 		return 2
 	}
 	return 99
@@ -308,100 +179,205 @@ func (s *StagedSkill) fillFromMeta() {
 			if t, err := time.Parse(time.RFC3339, v); err == nil {
 				s.StagedAt = t
 			}
-		case "critic_verdict":
-			s.CriticVote = CriticDecision(v)
-		case "defer_reason":
-			s.DeferReason = v
-		case "from_inspire":
-			s.FromInspire = v == "true"
+		case "verdict":
+			s.Verdict = JudgeVerdict(v)
+		case "reason":
+			s.Reason = v
+		case "domain":
+			s.Domain = v
 		}
 	}
 }
 
-// AcceptStaged copies a staged candidate into the live skills dir.
-// Refuses to clobber an existing skill — caller has to remove it first.
-// `skillID` is "<source>/<skill-name>", matching the format printed by
-// `harvest --review`.
+// AcceptOptions configures one --accept call.
+type AcceptOptions struct {
+	Home           string
+	KinclawBin     string
+	CoderSoulPath  string // resolved souls/coder.soul.md; empty disables forge (library-fallback only)
+	SkillsDir      string // ./skills/ — destination for forged candidates
+	LibraryDir     string // ./skills/library/ — destination for coder-deferred candidates
+	Out            io.Writer
+}
+
+// AcceptResult tells the caller what happened to a --accept invocation.
+type AcceptResult struct {
+	Verdict     AcceptVerdict
+	DestPath    string // where the candidate landed
+	Reason      string // forged reason / coder defer reason / error
+	ForgedName  string // skill name as parsed from the forged SKILL.md (when Forged)
+}
+
+// AcceptVerdict is the four-way outcome of accept:
 //
-// Procedural deferred candidates (under <source>/_procedural/<name>/)
-// are NOT accept-able: they have no SKILL.md to load, just the
-// original procedural content + a defer_reason. AcceptStaged refuses
-// them with an explanatory error instead of silently copying junk.
-func AcceptStaged(home, skillsDir, skillID string) (string, error) {
+//	AcceptForged   = coder produced a real KinClaw SKILL.md, validated, written to ./skills/<name>/
+//	AcceptLibrary  = coder said defer_to_procedural; original.md copied to ./skills/library/<source>/<name>/
+//	AcceptError    = forge attempt failed (parse / validate / unparseable); nothing written
+//	AcceptDuplicate = ./skills/<name>/ already exists; user must clear it first
+type AcceptVerdict string
+
+const (
+	AcceptForged    AcceptVerdict = "forged"
+	AcceptLibrary   AcceptVerdict = "library"
+	AcceptError     AcceptVerdict = "error"
+	AcceptDuplicate AcceptVerdict = "duplicate"
+)
+
+// AcceptStaged is the v1.6 accept path: read the staged candidate's
+// original.md, spawn coder to attempt a forge, route the result.
+//
+// Forge succeeds → SKILL.md placed at <SkillsDir>/<forged_name>/.
+// Forge defers   → original.md copied to <LibraryDir>/<source>/<staged_name>/.
+// Forge errors   → nothing written; AcceptResult.Reason explains.
+//
+// `skillID` matches the format printed by --review: `<source>/<name>`.
+// The staged dir's `original.md` is what gets fed to coder; the
+// staged `<name>` may differ from the forge'd name (curator might
+// have used a hyphenated name from the source dir; coder is expected
+// to produce a snake_case forge_name).
+func AcceptStaged(ctx context.Context, opts AcceptOptions, skillID string) (*AcceptResult, error) {
+	out := opts.Out
+	if out == nil {
+		out = os.Stderr
+	}
 	source, name, ok := strings.Cut(skillID, "/")
 	if !ok {
-		return "", fmt.Errorf("skill id %q must be of form <source>/<skill-name>", skillID)
+		return nil, fmt.Errorf("skill id %q must be of form <source>/<skill-name>", skillID)
 	}
-	if name == "_procedural" || strings.HasPrefix(name, "_procedural/") {
-		return "", fmt.Errorf("skill id %q points at a deferred procedural candidate — these have no exec form and can't be accepted; "+
-			"see staged/<source>/_procedural/<name>/original.md for the inspiration content", skillID)
+	stageDir := filepath.Join(StagedRoot(opts.Home), source, name)
+	originalPath := filepath.Join(stageDir, "original.md")
+	originalBytes, err := os.ReadFile(originalPath)
+	if err != nil {
+		return nil, fmt.Errorf("read staged original %q: %w", skillID, err)
 	}
-	src := filepath.Join(StagedRoot(home), source, name)
-	if _, err := os.Stat(src); err != nil {
-		return "", fmt.Errorf("staged skill %q: %w", skillID, err)
+
+	// Without coder, accept can ONLY fall back to library/. Honest path
+	// for users without Ollama auth or who explicitly disabled coder.
+	if opts.CoderSoulPath == "" || opts.KinclawBin == "" {
+		dest, err := copyToLibrary(opts.LibraryDir, source, name, originalBytes, "no coder soul available")
+		if err != nil {
+			return nil, fmt.Errorf("library fallback: %w", err)
+		}
+		return &AcceptResult{Verdict: AcceptLibrary, DestPath: dest, Reason: "no coder soul; copied to library"}, nil
 	}
-	if _, err := os.Stat(filepath.Join(src, "SKILL.md")); err != nil {
-		return "", fmt.Errorf("staged skill %q has no SKILL.md (expected at %s); cannot accept", skillID, src)
+
+	// Read source URL + rel from meta.txt so the inspire prompt has
+	// proper provenance context.
+	meta := readMetaKV(filepath.Join(stageDir, "meta.txt"))
+	srcURL := meta["source_url"]
+	srcRel := meta["skill_rel"]
+
+	fmt.Fprintf(out, "── coder forging %s …\n", skillID)
+	res, ferr := Inspire(ctx, opts.KinclawBin, opts.CoderSoulPath, string(originalBytes), srcURL, srcRel)
+	if ferr != nil {
+		return &AcceptResult{Verdict: AcceptError, Reason: ferr.Error()}, nil
 	}
-	dst := filepath.Join(skillsDir, name)
-	if _, err := os.Stat(dst); err == nil {
-		return "", fmt.Errorf("destination %s already exists; remove it first or rename the staged candidate", dst)
+
+	switch res.Verdict {
+	case InspireForged:
+		// Round-trip the forged content through LoadExternalSkill
+		// + ValidateSkillMeta — same gate as live registry boot.
+		loaded, perr := loadFromString(res.ForgedContent)
+		if perr != nil {
+			return &AcceptResult{
+				Verdict: AcceptError,
+				Reason:  fmt.Sprintf("forged but unparseable: %v", perr),
+			}, nil
+		}
+		if verr := skill.ValidateSkillMeta(loaded.Meta()); verr != nil {
+			return &AcceptResult{
+				Verdict: AcceptError,
+				Reason:  fmt.Sprintf("forged but failed forge gate v2: %v", verr),
+			}, nil
+		}
+		forgedName := loaded.Name()
+		dest := filepath.Join(opts.SkillsDir, forgedName)
+		if _, err := os.Stat(dest); err == nil {
+			return &AcceptResult{
+				Verdict:    AcceptDuplicate,
+				DestPath:   dest,
+				ForgedName: forgedName,
+				Reason:     "destination already exists; remove it first",
+			}, nil
+		}
+		if err := os.MkdirAll(dest, 0o755); err != nil {
+			return nil, fmt.Errorf("mkdir %s: %w", dest, err)
+		}
+		if err := os.WriteFile(filepath.Join(dest, "SKILL.md"), []byte(res.ForgedContent), 0o644); err != nil {
+			return nil, fmt.Errorf("write SKILL.md: %w", err)
+		}
+		return &AcceptResult{
+			Verdict:    AcceptForged,
+			DestPath:   dest,
+			ForgedName: forgedName,
+			Reason:     "coder forged + parsed + passed forge gate v2",
+		}, nil
+
+	case InspireDeferred:
+		reason := res.DeferReason
+		if reason == "" {
+			reason = "coder deferred without specific reason"
+		}
+		dest, err := copyToLibrary(opts.LibraryDir, source, name, originalBytes, reason)
+		if err != nil {
+			return nil, fmt.Errorf("library fallback: %w", err)
+		}
+		return &AcceptResult{
+			Verdict:  AcceptLibrary,
+			DestPath: dest,
+			Reason:   reason,
+		}, nil
+
+	case InspireUnparseable:
+		return &AcceptResult{
+			Verdict: AcceptError,
+			Reason:  "coder response unparseable; raw output above in stderr",
+		}, nil
 	}
-	if err := copyDir(src, dst); err != nil {
-		return "", fmt.Errorf("copy %s → %s: %w", src, dst, err)
-	}
-	// Drop harvest-pipeline artifacts that don't belong in the live skill:
-	// meta.txt + critic.md + any inspire/ subdir (which holds the original
-	// procedural content + raw coder output, useful only at review time).
-	for _, f := range []string{"meta.txt", "critic.md"} {
-		_ = os.Remove(filepath.Join(dst, f))
-	}
-	_ = os.RemoveAll(filepath.Join(dst, "inspire"))
-	return dst, nil
+	return nil, fmt.Errorf("unknown inspire verdict %q", res.Verdict)
 }
 
-// copyDir is a shallow recursive copy. Sufficient for SKILL.md +
-// optional companion scripts (web.py, etc.) which is all a forged or
-// harvested skill ever has.
-func copyDir(src, dst string) error {
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return err
+func copyToLibrary(libraryDir, source, name string, originalBytes []byte, reason string) (string, error) {
+	dest := filepath.Join(libraryDir, source, name)
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", dest, err)
 	}
-	entries, err := os.ReadDir(src)
+	if err := os.WriteFile(filepath.Join(dest, "original.md"), originalBytes, 0o644); err != nil {
+		return "", fmt.Errorf("write library original.md: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "defer_reason.txt"), []byte(reason+"\n"), 0o644); err != nil {
+		return "", fmt.Errorf("write library defer_reason.txt: %w", err)
+	}
+	return dest, nil
+}
+
+func readMetaKV(path string) map[string]string {
+	out := map[string]string{}
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return out
 	}
-	for _, e := range entries {
-		sp := filepath.Join(src, e.Name())
-		dp := filepath.Join(dst, e.Name())
-		if e.IsDir() {
-			if err := copyDir(sp, dp); err != nil {
-				return err
-			}
+	for _, line := range strings.Split(string(data), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
 			continue
 		}
-		if err := copyFile(sp, dp); err != nil {
-			return err
-		}
+		out[strings.TrimSpace(k)] = strings.TrimSpace(v)
 	}
-	return nil
+	return out
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+// loadFromString writes skillContent to a temp file and runs the
+// registry's standard loader on it. Used by AcceptStaged to validate
+// coder's forged output before placing it in ./skills/.
+func loadFromString(skillContent string) (*skill.ExternalSkill, error) {
+	tmpDir, err := os.MkdirTemp("", "kinclaw-harvest-accept-*")
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("tmpdir: %w", err)
 	}
-	defer in.Close()
-	info, err := in.Stat()
-	if err != nil {
-		return err
+	defer os.RemoveAll(tmpDir)
+	tmpSkill := filepath.Join(tmpDir, "SKILL.md")
+	if err := os.WriteFile(tmpSkill, []byte(skillContent), 0o644); err != nil {
+		return nil, fmt.Errorf("tmp write: %w", err)
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	return skill.LoadExternalSkill(tmpSkill)
 }
