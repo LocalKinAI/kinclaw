@@ -52,6 +52,9 @@ func main() {
 		case "probe":
 			runProbe(os.Args[2:])
 			return
+		case "harvest":
+			runHarvest(os.Args[2:])
+			return
 		}
 	}
 

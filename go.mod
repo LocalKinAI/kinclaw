@@ -9,6 +9,7 @@ require (
 )
 
 require (
+	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/LocalKinAI/input-go v0.1.0 // indirect
 	github.com/LocalKinAI/kinax-go v0.1.0 // indirect
 	github.com/LocalKinAI/kinrec v0.1.0 // indirect

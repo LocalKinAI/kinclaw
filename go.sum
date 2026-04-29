@@ -1,3 +1,5 @@
+github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
+github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/LocalKinAI/input-go v0.1.0 h1:LuKWYGlDs/zRawAqDo9jI2Mn7JRlKPi9bkILlBgGnKE=
 github.com/LocalKinAI/input-go v0.1.0/go.mod h1:gDzAln9kok34Z1J22RZ5nilKmWSHubH6wvqemxLEWZE=
 github.com/LocalKinAI/kinax-go v0.1.0 h1:26BrDkfwdZvL+wEByP3AOGP/yt9IeIeZglEfE/Lfb5A=

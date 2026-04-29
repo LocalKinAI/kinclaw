@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  kinclaw harvest — nightly cron via launchd.
+
+  Install:
+    cp scripts/com.localkin.kinclaw-harvest.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.localkin.kinclaw-harvest.plist
+
+  Verify:
+    launchctl list | grep kinclaw-harvest
+
+  Tail logs:
+    tail -f ~/.localkin/harvest/cron.log
+
+  Notes:
+    - Runs --no-critic by default. Critic is an LLM call that needs an
+      authenticated brain (Ollama signed in, etc.); cron-time auth is
+      brittle. Run kinclaw harvest manually (with critic) when you
+      want full review; cron is just to keep the cache warm + new
+      candidates flowing in.
+    - Replace the kinclaw path below if you installed somewhere
+      other than /usr/local/bin (e.g. ~/go/bin/kinclaw, /opt/homebrew/bin/kinclaw).
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.localkin.kinclaw-harvest</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/kinclaw</string>
+    <string>harvest</string>
+    <string>--all</string>
+    <string>--stage</string>
+    <string>--no-critic</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/USERNAME/.localkin/harvest/cron.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/USERNAME/.localkin/harvest/cron.log</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

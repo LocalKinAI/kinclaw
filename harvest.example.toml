@@ -1,0 +1,43 @@
+# kinclaw harvest manifest — example.
+#
+# Copy this to ~/.localkin/harvest.toml and edit. Each [[source]] is a
+# git repo (or local file:// path) whose SKILL.md files we'll consider.
+#
+# Pipeline per source:
+#   git clone --depth=1 (cached at ~/.localkin/harvest/sources/<name>/)
+#     → glob skill_paths
+#     → critic soul review (annotation)
+#     → forge quality gate v2
+#     → stage at ~/.localkin/harvest/staged/<source>/<skill-name>/
+#
+# Final acceptance into ./skills/ is always manual (`kinclaw harvest --accept`).
+
+# ── Anthropic's Claude Code skills (public, MIT)
+[[source]]
+name         = "claude-code"
+url          = "https://github.com/anthropics/claude-code"
+skill_paths  = ["plugin-source/skills/**/SKILL.md"]
+license_allow = ["MIT", "Apache-2.0"]
+
+# ── Hermes Agent (Nous Research) — server-side cousin, useful skill set
+[[source]]
+name         = "hermes-agent"
+url          = "https://github.com/nousresearch/hermes-agent"
+skill_paths  = ["skills/**/SKILL.md", "skills/**/*.skill.md"]
+license_allow = ["MIT", "Apache-2.0"]
+
+# ── Your private repos — license_allow = ["*"] for self-owned code.
+# Uncomment + edit to match your local layout.
+#
+# [[source]]
+# name         = "openclaw"
+# url          = "file:///Users/you/Code/openclaw"   # local, no clone
+# skill_paths  = ["skills/**/SKILL.md"]
+# license_allow = ["*"]
+
+# ── KinClaw itself (eats own dogfood — useful for cross-machine sync)
+# [[source]]
+# name         = "kinclaw"
+# url          = "https://github.com/LocalKinAI/kinclaw"
+# skill_paths  = ["skills/**/SKILL.md"]
+# license_allow = ["MIT"]

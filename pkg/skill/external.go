@@ -79,6 +79,11 @@ func (s *ExternalSkill) Name() string            { return s.meta.Name }
 func (s *ExternalSkill) Description() string      { return s.meta.Description }
 func (s *ExternalSkill) ToolDef() json.RawMessage { return s.toolDef }
 
+// Meta returns the parsed SKILL.md frontmatter. Exposed so external
+// validators (the harvest pipeline, future linters) can re-check a
+// loaded skill against ValidateSkillMeta without re-parsing the file.
+func (s *ExternalSkill) Meta() SkillMeta { return s.meta }
+
 func (s *ExternalSkill) Execute(params map[string]string) (string, error) {
 	// Substitute templates in BOTH the fixed Command parts and the
 	// appended Args. Earlier versions only handled Args, which silently
