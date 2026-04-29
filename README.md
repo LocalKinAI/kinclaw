@@ -44,18 +44,20 @@ kinclaw -soul souls/pilot.soul.md
 # > "What app is in front? Click the Save button if there is one."
 ```
 
-Want a different brain? Pick another soul:
+Want a specialist instead of the generalist pilot? KinClaw ships four
+focused souls; pilot dispatches to them via `spawn`, but you can also
+launch them directly:
 
 ```bash
-# Claude (OAuth, free tier works for testing)
-kinclaw -login
-kinclaw -soul souls/coder.soul.md         # Claude Sonnet 4.6
-kinclaw -soul souls/researcher.soul.md    # Kimi K2.6 (1T, 256k ctx)
+kinclaw -soul souls/researcher.soul.md    # Kimi K2.6 (1T, 256k ctx) — deep web research
 kinclaw -soul souls/eye.soul.md           # Kimi K2.6 multimodal — visual verification
 kinclaw -soul souls/critic.soul.md        # Minimax M2.7 — adversarial review
-kinclaw -soul souls/openai.soul.md        # set $OPENAI_API_KEY
-kinclaw -soul souls/ollama.soul.md        # 100% local Llama via Ollama
+kinclaw -soul souls/coder.soul.md         # DeepSeek V4 Pro — harvest --inspire forge specialist
 ```
+
+All four use Ollama Cloud routing (`ollama signin` once). Different labs
+on purpose: pilot+researcher+eye on Moonshot, critic on Minimax, coder
+on DeepSeek — different model lineage means different blind spots.
 
 First run triggers two macOS TCC prompts:
 - **Screen Recording** (for `screen` + `record` skills via sckit-go / kinrec)

@@ -61,7 +61,8 @@ func (s *spawnSkill) Description() string {
 		"  - `researcher` — Kimi K2.6 cloud, deep web search + long-context synthesis\n" +
 		"  - `eye`        — Kimi K2.6 cloud, multimodal screenshot understanding\n" +
 		"  - `critic`     — Minimax M2.7, second opinion on plans / produced artifacts\n" +
-		"  - `coder`      — DeepSeek V4 Pro, code generation / review (when added)\n" +
+		"  - `coder`      — DeepSeek V4 Pro, harvest --inspire forge specialist (re-implements\n" +
+		"                  external SKILL.md as KinClaw exec form, refuses non-exec'able ones)\n" +
 		"  - `quick`      — DeepSeek Flash, fast yes/no verifications (when added)\n" +
 		"  - `linguist`   — GLM 5.1, CN↔EN translation + style rewrite (when added)\n\n" +
 		"The child's response comes back as your tool result. Only the final text is " +
