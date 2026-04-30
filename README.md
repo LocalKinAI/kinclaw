@@ -259,18 +259,24 @@ agents combine in real tasks.
 
 ```
 Layer 1   ui claw           ~50ms      $0       deterministic
-Layer 2   screen action=ocr ~50-200ms  $0       probabilistic
-Layer 3   screen + vision   ~3s        ~$0.005  generic
+Layer 2   screen + vision   ~3s        ~$0.005  generic
 ```
 
 - **Layer 1** — `ui find` / `ui tree` / `ui read`. 94% of macOS apps
   expose Accessibility; AX is semantic, fast, free. Use first.
-- **Layer 2** — `screen action=ocr` via Apple Vision framework.
-  Drop here when AX is empty (canvas apps, status bars, rendered
-  images). ~99% accurate on digits / version strings; word accuracy
-  varies — see the `screen action=ocr` notes below.
-- **Layer 3** — `screen action=screenshot` + `file_read` + multimodal
-  brain. The expensive fallback for "understand this screen meaning."
+- **Layer 2** — `screen action=screenshot` + `file_read` + multimodal
+  brain. The catch-all when AX is empty (canvas apps, image-rendered
+  UI) or you need *understanding* not just text — vision LLMs return
+  text plus context in one call.
+
+**Side tool: `screen action=ocr`** — local Vision-framework OCR
+(~50-200ms, free) is also exposed. NOT in the default cascade — most
+tasks should skip straight from Layer 1 to Layer 2. Reach for OCR
+only in specific niches: bulk-extracting many numeric values where
+vision-LLM cost would be prohibitive, pure text + bounding-box jobs
+where you don't need semantics, or offline runs without brain
+auth. Watch out for OCR's character-confusion failure modes
+(`W↔H`, `M↔N`, `l↔I↔1`, `O↔0`, `B↔8`) — even at conf=1.0.
 
 **Driving the app (do something)**
 
@@ -295,29 +301,21 @@ Layer 3   forge a new SKILL.md     auto-author wrapper    repeated + parameteriz
 The pilot soul has both cascades baked in: never skip Layer 1 just
 because Layer 3 is more flexible.
 
-### `screen` — just take a picture (and read text out of it, v1.7+)
+### `screen` — just take a picture
 
 ```
 LLM: screen action=screenshot
      → ~/Library/Caches/kinclaw/screens/screen-20260424-001312.000.png
-
-LLM: screen action=ocr
-     → OCR on /Users/.../screen-20260429-143012.png — 7 text region(s):
-       "Save"           at (412,85)  size 48x14   conf=1.00
-       "Cancel"         at (480,85)  size 56x14   conf=1.00
-       "今天天气怎么样"   at (200,300) size 280x40 conf=0.99
-       ...
-
-LLM: screen action=ocr path=/tmp/saved.png   # OCR an existing image
 ```
 
 The LLM can then read the PNG back (if `file_read` is enabled) and
-reason about it visually, OR use `action=ocr` to extract text in
-~50-200ms with no vision-LLM round-trip — local, offline, free
-(via Apple Vision framework / sckit-go v0.2+).
+reason about it visually — Layer 2 of the read cascade above.
 
-Use `ocr` when you need the **literal text**; use the screenshot
-+ vision LLM when you need to **understand** the screen.
+**Also available** (rare niche): `screen action=ocr` exposes local
+Apple Vision OCR for bulk text-and-coordinate extraction without a
+vision-LLM round-trip. See the cascade section above for when this
+is actually the right tool — most read-screen tasks should skip
+straight from `ui` (AX) to `screen + vision LLM`.
 
 ### `record` — non-blocking video capture
 

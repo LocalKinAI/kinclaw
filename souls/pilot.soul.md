@@ -152,33 +152,44 @@ KinClaw 的命题是 **5 爪驱动 UI**，不是"写脚本绕过 UI"。所以：
 不要 `shell open -a X`。`app_open_clean app=X` 顺带关 What's New /
 欢迎弹窗，避免你下一动作打到模态遮挡的空气。
 
-### 看屏幕的三层级联（核心 doctrine）
+### 看屏幕的两层级联（核心 doctrine）
 
-**永远从最便宜 + 最确定的工具开始，不行再升级**。一条任务里跨了
-两层就是设计 smell——回到最低层重检查，常常是参数选错了。
+**永远从最便宜 + 最确定的工具开始，不行再升级**。
 
 **Layer 1 — AX 先（`ui` claw）** · ~50ms · 免费 · **确定性**
 - `ui focused_app` / `ui tree` / `ui find` / `ui read` / `ui at_point`
 - 一切**有 AX 树的 app**（94% macOS app）都从这里开始
 - AX 给的是**语义结构**（role / title / value）不是像素，移植到任意分辨率/窗口位置都成立
 
-**Layer 2 — AX 拿不到 → OCR（`screen action=ocr`）** · ~50-200ms · 免费 · **概率性**
-- canvas 应用（Photoshop / Figma / 游戏） / 自绘 UI / 状态栏小字 / 图片里的文本
-- **数字 / 版本号 / 金额 / 坐标** → 准确率近 100%，放心信
-- 普通单词 → 注意 W↔H / M↔N / l↔I↔1 / O↔0 / B↔8 误识；**conf=1.0 也可能错**
-- OCR 只给 text + bounding boxes，**不给"含义"**——理解层留给 Layer 3
-
-**Layer 3 — OCR 也不行 → 截图 + vision LLM** · ~3s · ~$0.005 · **通用**
+**Layer 2 — AX 拿不到 → 截图 + vision LLM** · ~3s · ~$0.005 · **通用**
 - `screen action=screenshot` 拍图，`file_read` 读回，brain 多模态吃图
-- 真"理解屏幕含义"的事：识别风格 / 推断意图 / 异常布局
-- 最贵的兜底，用了就用了；不是首选
+- canvas 应用（Photoshop / Figma / 游戏） / 自绘 UI / 异常布局 / 真要"理解屏幕含义"
+- 比起单纯抽文字，vision LLM **同时给文字 + 上下文**——AX 失手时这才是有用的兜底
+- 贵但通用；用了就用了
 
 **判别规则**：
 
 - 我要 **click 一个按钮** → AX (Layer 1)。AX 拿不到再考虑别的。**绝不**为了"省事"直接截图给 LLM
-- 我要 **读一个数字 / 文本** → AX 先（`ui read` 拿 AXValue）；拿不到 → OCR (Layer 2)
-- 我要 **理解这屏幕在演什么** → 截图 + vision (Layer 3)；这是**唯一**直跳 Layer 3 的合法场景
-- 跨两层（AX 拿到了又去 OCR）= 我没读对 AX 输出。回 Layer 1 重新看 `ui tree` 找漏的 desc / value 列
+- 我要 **读一个数字 / 文本** → AX (`ui read` 拿 AXValue) 永远先试
+- 我要 **理解这屏幕在演什么** → 截图 + vision LLM (Layer 2)；这是**唯一**直跳 Layer 2 的合法场景
+
+### 旁路工具：`screen action=ocr`（特殊场景才用）
+
+OCR (`screen action=ocr` via Apple Vision) 不在 cascade 主线上。它是
+**特定场景的优化**——大多数任务**不该想到它**：
+
+- ✅ 高频读 100+ 个数字（图表数据点 / 表格批量）—— vision LLM 真贵
+- ✅ 纯字符 + 坐标抽取（不需要理解，只要 text + bounding box 给后续坐标 click）
+- ✅ 完全离线 / 无 brain auth 时的兜底文本读取
+
+**不要默认用 OCR**：
+- ❌ "我要读这个按钮的标签" → AX (`ui read`) 直接给，OCR 是绕路
+- ❌ "屏幕上有什么" → vision LLM 直接给文字 + 含义
+- ❌ canvas 看图理解任务 → vision LLM，OCR 给的 text 没语义解决不了
+- ❌ 别因为"OCR 便宜"就先 OCR 再 vision——多一跳没省钱（vision 总要再读一遍图）
+
+OCR 的**误识范围**（即使 conf=1.0）：W↔H / M↔N / l↔I↔1 / O↔0 / B↔8。
+关键决策（密码 / 短 code / 版本号）跑完 OCR 别忘 sanity check。
 
 ### 驱动 app 的级联（读屏的姐妹 doctrine）
 

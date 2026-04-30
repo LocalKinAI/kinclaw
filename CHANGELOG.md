@@ -1,5 +1,57 @@
 # Changelog
 
+## [1.7.2] - 2026-04-29
+
+**Doctrine demotion: OCR is no longer in the cascade.** v1.7.0
+introduced OCR as Layer 2 between AX and vision-LLM in the
+"reading the screen" cascade. Real reflection on KinClaw's actual
+workflow showed OCR's middle slot wasn't earning its keep:
+
+- AX already covers ~94% of macOS apps cleanly
+- The remaining 6% is mostly canvas / image-rendered UI where the
+  agent doesn't just want literal text — it wants understanding,
+  which is vision-LLM territory anyway
+- OCR's character-confusion failure modes (`W↔H`, `M↔N`, `l↔I↔1`,
+  `O↔0`, `B↔8`) — even at conf=1.0 — meant agents had to verify
+  OCR results against another source, often vision-LLM, making
+  OCR an extra hop instead of a shortcut
+- Three layers added decision overhead at every "what's on screen"
+  question; two layers (AX → vision LLM) is the honest shape
+
+### Changed — cascade is now two-tier
+
+```
+Layer 1   ui claw           ~50ms      $0       deterministic
+Layer 2   screen + vision   ~3s        ~$0.005  generic
+```
+
+OCR is documented as a **side tool** for narrow niches:
+- Bulk extracting many numeric values where vision-LLM cost would
+  be prohibitive
+- Pure text + bounding-box jobs where you don't need semantics
+- Offline runs without brain auth
+
+Pilot soul body updated with explicit "❌ don't default to OCR" rules:
+- "Read this button's label" → AX (`ui read`), not OCR
+- "What's on screen" → vision LLM directly, not OCR-then-vision
+- canvas understanding → vision LLM, OCR's text-without-semantics
+  doesn't help
+
+### Kept — `screen action=ocr` API
+
+The action stays exposed and the sckit-go v0.2.0 OCR primitive stays
+shipped. This is a **doctrine** change, not an API removal — when
+the niche fits, it's right there. The README's `screen` section
+mentions it as a sibling utility instead of leading with it.
+
+### Why this matters
+
+Letting OCR sit in the default cascade was a v1.7.0 over-engineering
+mistake. We had a hammer (Vision framework) and made it look like a
+nail (the middle layer). Two layers + occasional side-tool reach is
+the honest mental model for KinClaw's real workflow; pretending
+otherwise just trains pilot to take detours.
+
 ## [1.7.1] - 2026-04-29
 
 Polish on v1.7.0. The OCR action's "fresh capture" path was wasteful:
