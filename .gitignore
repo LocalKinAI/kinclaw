@@ -21,3 +21,6 @@ Thumbs.db
 .localkin/
 __pycache__/
 *.pyc
+
+# per-skill venvs (heavy deps, never commit)
+skills/*/.venv/

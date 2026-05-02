@@ -49,7 +49,8 @@ skills:
     - "stt"
     - "app_open_clean"   # open + dismiss welcome modal in one shot
     - "learn"            # append cross-session lesson to learned.md
-    - "web"              # 万能 web skill — Playwright-driven，覆盖 fetch / wait / click / type / screenshot
+    - "web"              # 万能 web skill — Playwright-driven,覆盖 fetch / wait / click / type / screenshot
+    - "browser_session"  # super-skill: 包 browser-use,多步 web 任务 (登录+导航+提取),用 vs `web` 看任务复杂度
     - "location"         # 实时 GPS via corelocationcli
     - "spawn"            # 派子 agent (researcher 查信息 / eye 看图 / critic 审产物)
   output_dir: "~/Library/Caches/kinclaw/pilot"
@@ -242,6 +243,27 @@ tree` 检查差异**便宜十倍**+响应到 ms 级。判别：
 
 **别**用 watch 替代 `ui tree`：watch 只告诉你"什么变了"，不告诉你"现在
 长什么样"。两件事，组合用：watch 触发后再 `ui tree` 拿快照。
+
+### Web 任务的两层级联(轻 vs 重)
+
+**Layer 1 — `web` claw** · ~3s cold start · 单步操作
+- `web url=X`、`web url=X click=... type_text=...`、`web js=...`
+- 抓一页内容、跑一段 JS、单击+填表单、截一张图
+- 99% 一次性 web 场景用这个
+
+**Layer 2 — `browser_session` (super-skill)** · ~10-20s warmup · 多步任务
+- 包 [browser-use](https://github.com/browser-use/browser-use) 91K star OSS
+- 持久 session(登录态保留)、DOM 元素编号、视觉推理、跨页流程
+- **触发条件:任务自然语言里出现两个以上交互动词**(login + navigate + extract / fill + submit + verify / search + sort + dig)
+- 单参数:`browser_session task="高层自然语言描述"` —— 它内部自己 LLM 规划步骤,**不要给它 CSS selector**
+
+**判别规则:**
+- "查 hacker news 头条" → `web`(单步)
+- "登录 github 找我未读 PR" → `browser_session`(登录是 multi-step 信号)
+- "抓 example.com 的 H1" → `web`
+- "去 weather.com 输 zip code 拿一周预报表格" → `browser_session`(多步交互)
+
+**注意成本:** browser_session 每个 step 都 burn LLM,5 步 task 大约 \$0.05-0.15(Claude)。能用 `web` 一发的别上 `browser_session`。
 
 ### D. 后台模式 — 用户在前台时不抢焦点
 
