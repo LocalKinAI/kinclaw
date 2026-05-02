@@ -1,0 +1,1082 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kinclaw · 浮动控制器</title>
+<style>
+  /* ─── reset ──────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    background: #0a0b0d;
+    color: #e6e7ea;
+    font-size: 13.5px;
+    line-height: 1.5;
+    overflow: hidden;
+  }
+  code, pre { font-family: "SF Mono", "JetBrains Mono", "Menlo", monospace; }
+
+  /* ─── grid: topbar / trace / input ───────────────────────
+     Single-column compact form. Designed for ~380×600 windows
+     glued to a corner of the desktop — KinClaw's "Spotlight for
+     agentic computer-use". No right pane, no flipbook, no live
+     feed. Your real desktop is the stage; this is just the
+     remote control.                                              */
+  #app {
+    display: grid;
+    grid-template-rows: 32px minmax(0, 1fr) auto;
+    height: 100vh;
+  }
+
+  /* ─── topbar ──────────────────────────────────────────── */
+  #topbar {
+    grid-row: 1;
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 12px;
+    border-bottom: 1px solid #1a1c20;
+    background: #0d0e10;
+    font-size: 11px;
+    color: #8b8e95;
+    position: relative;
+    z-index: 10;
+  }
+  #topbar .dot { width: 7px; height: 7px; border-radius: 50%; background: #d2473d; }
+  #topbar .brand {
+    font-weight: 600; color: #d8dade;
+    letter-spacing: 0.04em;
+  }
+  #soul-meta {
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    user-select: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 200px;
+  }
+  #soul-meta:hover { background: #181a1f; color: #e6e7ea; }
+  #soul-meta::after { content: ' ▾'; font-size: 9px; color: #5f6168; }
+  #topbar .spacer { flex: 1; }
+  #voice-toggle {
+    background: transparent;
+    border: 1px solid #2a2c32;
+    color: #8b8e95;
+    padding: 2px 7px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  #voice-toggle:hover { border-color: #d2473d; color: #d2473d; }
+  #voice-toggle.on {
+    border-color: #d2473d; color: #d2473d;
+    background: rgba(210,71,61,0.1);
+  }
+  #conn { width: 7px; height: 7px; border-radius: 50%; background: #5f6168; }
+  #conn.live { background: #4caf50; }
+  #conn.dead { background: #d2473d; }
+
+  /* ─── trace ──────────────────────────────────────────── */
+  /* The trace IS the conversation — user messages, assistant
+     text, tool calls + results all flow as one timeline. The
+     element itself is the scroll container (no nested scroller)
+     so the wheel always works regardless of cursor position. */
+  #trace {
+    grid-row: 2;
+    overflow-y: auto;
+    background: #0a0b0d;
+    scrollbar-color: #2a2c32 transparent;
+    scrollbar-width: thin;
+  }
+  #trace::-webkit-scrollbar { width: 6px; }
+  #trace::-webkit-scrollbar-thumb { background: #2a2c32; border-radius: 3px; }
+  .trace-content {
+    padding: 16px 18px 24px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+
+  .welcome {
+    padding: 50px 8px;
+    color: #5f6168;
+    text-align: center;
+  }
+  .welcome .lobster {
+    font-size: 48px;
+    display: block;
+    margin-bottom: 12px;
+  }
+
+  /* ─── trace items ────────────────────────────────────── */
+
+  .you {
+    border-left: 3px solid #d2473d;
+    padding: 8px 12px;
+    color: #f3f4f6;
+    line-height: 1.55;
+    word-wrap: break-word;
+    background: rgba(210, 71, 61, 0.06);
+    border-radius: 0 6px 6px 0;
+    white-space: pre-wrap;
+  }
+  .you::before {
+    content: '你';
+    display: inline-block;
+    color: #d2473d;
+    font-weight: 600;
+    font-size: 10px;
+    margin-right: 7px;
+    letter-spacing: 0.04em;
+    vertical-align: 1px;
+  }
+
+  .assistant {
+    line-height: 1.6;
+    color: #e6e7ea;
+    padding: 2px 4px 2px 0;
+  }
+  .assistant > * { margin: 0; }
+  .assistant > * + * { margin-top: 7px; }
+  .assistant h1, .assistant h2, .assistant h3, .assistant h4 {
+    font-weight: 600; line-height: 1.3;
+  }
+  .assistant h1 { font-size: 1.18em; }
+  .assistant h2 { font-size: 1.09em; }
+  .assistant h3 { font-size: 1.03em; }
+  .assistant code {
+    background: #181a1f; color: #e8c574;
+    padding: 1px 5px; border-radius: 3px;
+    font-size: 0.9em;
+  }
+  .assistant pre {
+    background: #07090c; border: 1px solid #1a1c20;
+    border-radius: 5px; padding: 9px 11px;
+    overflow-x: auto; line-height: 1.45;
+  }
+  .assistant pre code { background: none; color: #c8cacf; padding: 0; }
+  .assistant ul, .assistant ol { padding-left: 20px; line-height: 1.55; }
+  .assistant li + li { margin-top: 2px; }
+  .assistant a {
+    color: #d2473d;
+    text-decoration: underline;
+    text-decoration-color: rgba(210,71,61,0.4);
+  }
+  .assistant strong { color: #f3f4f6; font-weight: 600; }
+  .assistant em { color: #d8dade; }
+  .assistant blockquote {
+    border-left: 3px solid #2a2c32;
+    padding-left: 10px; color: #8b8e95;
+  }
+  .assistant table {
+    border-collapse: collapse;
+    margin: 4px 0;
+    font-size: 0.95em;
+  }
+  .assistant th, .assistant td {
+    border: 1px solid #2a2c32;
+    padding: 4px 8px;
+    text-align: left;
+  }
+  .assistant th { background: #181a1f; }
+  .cursor { animation: blink 1s steps(1) infinite; color: #d2473d; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* tool chip */
+  .tool {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 10px;
+    font: 11.5px "SF Mono", monospace;
+    color: #aaadb3;
+    border-left: 2px solid #d2473d;
+    background: rgba(210, 71, 61, 0.04);
+    border-radius: 0 4px 4px 0;
+    overflow: hidden;
+  }
+  .tool .name { color: #e6e7ea; flex-shrink: 0; }
+  .tool .params {
+    color: #5f6168;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 0;
+  }
+  .tool .status {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #d2473d;
+    flex-shrink: 0;
+  }
+  .tool.done { border-left-color: #4caf50; background: rgba(76,175,80,0.04); }
+  .tool.done .status { background: #4caf50; }
+  .tool.error { border-left-color: #ff8b80; background: rgba(255,139,128,0.06); }
+  .tool.error .status { background: #ff8b80; }
+
+  /* tool result body */
+  .tool-body {
+    margin-left: 12px;
+    border-left: 2px solid #1a1c20;
+    padding: 7px 12px;
+    font: 11.5px "SF Mono", monospace;
+    color: #c8cacf;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .tool-body.hidden { display: none; }
+  .tool-body.collapsed {
+    max-height: 100px; overflow: hidden; position: relative;
+  }
+  .tool-body.collapsed::after {
+    content: ''; position: absolute;
+    left: 0; right: 0; bottom: 0; height: 32px;
+    background: linear-gradient(transparent, #0a0b0d);
+    pointer-events: none;
+  }
+  .expand-btn {
+    margin: 4px 0 0 12px;
+    padding: 3px 9px;
+    background: transparent;
+    border: 1px solid #2a2c32;
+    color: #8b8e95;
+    font: 10.5px "SF Mono", monospace;
+    cursor: pointer; border-radius: 4px;
+  }
+  .expand-btn:hover { border-color: #d2473d; color: #d2473d; }
+
+  /* per-tool variants */
+  .tool-body.shell {
+    color: #b8e0b0; padding-left: 20px; position: relative;
+  }
+  .tool-body.shell::before {
+    content: '$';
+    position: absolute; left: 8px; top: 7px;
+    color: #5f6168;
+  }
+  .tool-body.spawn {
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: #d8dade;
+    white-space: normal;
+    max-height: 480px;
+    border-left-color: #c8a8ff;
+  }
+  .tool-body.spawn h1, .tool-body.spawn h2, .tool-body.spawn h3 {
+    font-weight: 600; margin: 8px 0 4px;
+  }
+  .tool-body.spawn h3 { color: #c8a8ff; }
+  .tool-body.spawn pre {
+    background: #07090c; border: 1px solid #1a1c20;
+    padding: 7px 9px; border-radius: 4px;
+    overflow-x: auto;
+  }
+  .tool-body.spawn code {
+    background: #181a1f; color: #e8c574;
+    padding: 1px 4px; border-radius: 3px;
+    font-size: 0.9em;
+  }
+  .tool-body.spawn pre code { background: none; }
+  .tool-body.spawn table {
+    border-collapse: collapse;
+    margin: 4px 0; font-size: 0.95em; width: 100%;
+  }
+  .tool-body.spawn th, .tool-body.spawn td {
+    border: 1px solid #2a2c32; padding: 4px 7px; text-align: left;
+  }
+  .tool-body.spawn th { background: #181a1f; }
+  .tool-body.spawn a { color: #c8a8ff; }
+  .tool-body.spawn strong { color: #f3f4f6; }
+  .tool-body.spawn ul, .tool-body.spawn ol { padding-left: 20px; margin: 4px 0; }
+  .tool-body.search { padding: 0; max-height: 320px; }
+  .web-result {
+    padding: 7px 11px;
+    border-bottom: 1px solid #1a1c20;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  .web-result:last-child { border-bottom: none; }
+  .web-result .title {
+    color: #d2473d; text-decoration: none;
+    font-size: 12.5px; font-weight: 500;
+    display: block;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .web-result .title:hover { text-decoration: underline; }
+  .web-result .url {
+    color: #5f6168;
+    font: 10px "SF Mono", monospace; margin-top: 1px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .web-result .snippet {
+    color: #aaadb3;
+    font-size: 11.5px; margin-top: 3px; line-height: 1.45;
+    display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* media (small inline preview when a tool returns image/video) */
+  .media-thumb {
+    display: block;
+    max-width: 100%;
+    margin: 5px 0 0 12px;
+    border-radius: 4px;
+    border: 1px solid #1a1c20;
+  }
+  video.media-thumb { background: #000; }
+
+  .error-toast {
+    background: rgba(90, 31, 28, 0.4);
+    border: 1px solid #5a1f1c;
+    color: #ff8b80;
+    padding: 7px 11px;
+    border-radius: 6px;
+    font-size: 11.5px;
+  }
+
+  /* ─── input bar (own grid cell, row 3) ───────────────── */
+  #input-cell {
+    grid-row: 3;
+    padding: 8px 14px 14px;
+    background: linear-gradient(0deg, #0a0b0d 60%, rgba(10, 11, 13, 0));
+    z-index: 5;
+  }
+  #input-bar {
+    background: rgba(20, 22, 26, 0.88);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    backdrop-filter: blur(20px) saturate(140%);
+    border: 1px solid #2a2c32;
+    border-radius: 12px;
+    padding: 6px 6px 6px 12px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+    display: flex; gap: 6px; align-items: stretch;
+  }
+  #input-bar:focus-within {
+    border-color: rgba(210, 71, 61, 0.5);
+    box-shadow:
+      0 6px 20px rgba(0,0,0,0.45),
+      0 0 0 3px rgba(210, 71, 61, 0.12);
+  }
+  #chat-input {
+    flex: 1;
+    padding: 7px 0;
+    background: transparent;
+    border: none;
+    color: #e6e7ea;
+    font: inherit;
+    resize: none;
+    line-height: 1.5;
+    min-height: 24px; max-height: 140px;
+  }
+  #chat-input:focus { outline: none; }
+  #chat-input::placeholder { color: #5f6168; }
+  #chat-input:disabled { opacity: 0.5; cursor: not-allowed; }
+  #cancel-btn, #mic-btn {
+    flex-shrink: 0;
+    width: 32px;
+    background: transparent;
+    border-radius: 7px;
+    cursor: pointer; font: 13px sans-serif;
+    display: flex;
+    align-items: center; justify-content: center;
+    transition: background 0.1s, border-color 0.1s, color 0.1s;
+  }
+  #cancel-btn {
+    border: 1px solid #5a1f1c;
+    color: #ff8b80;
+    display: none;
+  }
+  #cancel-btn:hover { background: #2a1614; }
+  #cancel-btn.show { display: flex; }
+  #mic-btn {
+    border: 1px solid #2a2c32;
+    color: #aaadb3;
+    font-size: 14px;
+  }
+  #mic-btn:hover { border-color: #d2473d; color: #d2473d; }
+  #mic-btn.recording {
+    border-color: #d2473d;
+    background: #d2473d;
+    color: #fff;
+    animation: pulse 1s ease-in-out infinite;
+  }
+  #mic-btn.unsupported { display: none; }
+  .input-status {
+    margin-top: 5px;
+    font-size: 9.5px;
+    color: #5f6168;
+    letter-spacing: 0.02em;
+    padding: 0 4px;
+  }
+  .input-status.running { color: #d2473d; }
+  .running-dot {
+    display: inline-block;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: #d2473d;
+    margin-right: 5px;
+    vertical-align: middle;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: 0.3; } }
+
+  /* ─── soul dropdown ─────────────────────────────────── */
+  #soul-menu {
+    position: absolute;
+    top: 28px; left: 60px;
+    background: #181a1f;
+    border: 1px solid #2a2c32;
+    border-radius: 6px;
+    min-width: 220px;
+    z-index: 50;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+    display: none;
+    overflow: hidden;
+  }
+  #soul-menu.show { display: block; }
+  .soul-item {
+    padding: 7px 11px;
+    cursor: pointer;
+    border-bottom: 1px solid #1a1c20;
+  }
+  .soul-item:last-child { border-bottom: none; }
+  .soul-item:hover { background: #2a2c32; }
+  .soul-item.active { background: rgba(210, 71, 61, 0.12); }
+  .soul-item .name {
+    display: block; color: #e6e7ea;
+    font-size: 12.5px; font-weight: 500;
+  }
+  .soul-item.active .name { color: #d2473d; }
+  .soul-item .brain {
+    display: block; color: #8b8e95;
+    font: 10px "SF Mono", monospace; margin-top: 2px;
+  }
+  .soul-item .check {
+    float: right; color: #d2473d;
+    font-size: 13px; margin-top: 1px;
+  }
+  .soul-item .check::before { content: '●'; }
+  .soul-item:not(.active) .check { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <span class="dot"></span>
+    <span class="brand">kinclaw</span>
+    <span id="soul-meta" title="点击切换 soul">—</span>
+    <span class="spacer"></span>
+    <button id="voice-toggle" type="button" title="语音朗读: 开了 KinClaw 回完会自动用 TTS 念出来">🔊</button>
+    <span id="conn" title="SSE connection"></span>
+    <div id="soul-menu" role="menu"></div>
+  </header>
+
+  <main id="trace">
+    <div class="trace-content" id="trace-content">
+      <div class="welcome">
+        <span class="lobster">🦞</span>
+        <div>说点啥,看 5 爪干活</div>
+      </div>
+    </div>
+  </main>
+
+  <div id="input-cell">
+    <form id="input-bar">
+      <textarea id="chat-input" rows="1"
+                placeholder="输入消息,Enter 发送 · 或按住 🎙 说话"
+                autofocus></textarea>
+      <button type="button" id="mic-btn" title="按住说话 (松开发送)">🎙</button>
+      <button type="button" id="cancel-btn" title="Esc 中断">⨯</button>
+    </form>
+    <div class="input-status" id="input-status">Enter 发送 · Shift+Enter 换行 · Esc 中断</div>
+  </div>
+
+</div>
+
+<script>
+(() => {
+  // ─── DOM refs ───────────────────────────────────────────
+  const traceContent = document.getElementById('trace-content');
+  const trace        = document.getElementById('trace');
+  const input        = document.getElementById('chat-input');
+  const form         = document.getElementById('input-bar');
+  const cancelBtn    = document.getElementById('cancel-btn');
+  const micBtn       = document.getElementById('mic-btn');
+  const status       = document.getElementById('input-status');
+  const conn         = document.getElementById('conn');
+  const soulMeta     = document.getElementById('soul-meta');
+  const soulMenu     = document.getElementById('soul-menu');
+  const voiceToggle  = document.getElementById('voice-toggle');
+
+  // ─── state ──────────────────────────────────────────────
+  let currentAssistant = null;
+  const pendingTools = new Map();
+  let running = false;
+  let renderPending = false;
+  // voice
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let micStream = null;
+  let currentTtsAudio = null;
+  let voiceMode = localStorage.getItem('kinclaw.voice') === '1';
+  voiceToggle.classList.toggle('on', voiceMode);
+
+  // ─── helpers ────────────────────────────────────────────
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function escHTML(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function paramStr(p) {
+    if (!p) return '';
+    return Object.entries(p).map(([k,v]) => `${k}=${v}`).join(' ');
+  }
+  function scrollToEnd() {
+    const slack = trace.scrollHeight - trace.scrollTop - trace.clientHeight;
+    if (slack < 240) trace.scrollTop = trace.scrollHeight;
+  }
+  function removeWelcome() {
+    const w = traceContent.querySelector('.welcome');
+    if (w) w.remove();
+  }
+
+  // ─── markdown ───────────────────────────────────────────
+  function renderInline(s) {
+    let out = escHTML(s);
+    out = out.replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`);
+    out = out.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    out = out.replace(/(^|\W)\*([^*\n]+)\*(?=\W|$)/g, '$1<em>$2</em>');
+    out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    return out;
+  }
+  function renderMarkdown(src) {
+    if (!src) return '';
+    const lines = src.split('\n');
+    let out = '';
+    let inFence = false, fenceLang = '', fenceBuf = [];
+    let inList = false, listType = '';
+    let inTable = false, tableHeaderApplied = false;
+    let paraBuf = [];
+
+    const flushPara = () => {
+      if (paraBuf.length) {
+        out += '<p>' + paraBuf.map(renderInline).join('<br>') + '</p>';
+        paraBuf = [];
+      }
+    };
+    const flushList = () => { if (inList) { out += `</${listType}>`; inList = false; listType = ''; } };
+    const flushTable = () => { if (inTable) { out += '</table>'; inTable = false; tableHeaderApplied = false; } };
+
+    for (const raw of lines) {
+      const fenceOpen = raw.match(/^```(\w*)\s*$/);
+      if (fenceOpen && !inFence) {
+        flushPara(); flushList(); flushTable();
+        inFence = true; fenceLang = fenceOpen[1] || '';
+        continue;
+      }
+      if (inFence) {
+        if (/^```\s*$/.test(raw)) {
+          out += `<pre><code${fenceLang ? ` data-lang="${escHTML(fenceLang)}"` : ''}>${escHTML(fenceBuf.join('\n'))}</code></pre>`;
+          fenceBuf = []; fenceLang = ''; inFence = false;
+        } else {
+          fenceBuf.push(raw);
+        }
+        continue;
+      }
+      const line = raw.trimEnd();
+      if (/^\|.+\|$/.test(line)) {
+        flushPara(); flushList();
+        const cells = line.slice(1, -1).split('|').map(c => c.trim());
+        if (cells.every(c => /^:?-+:?$/.test(c)) && inTable && !tableHeaderApplied) {
+          out = out.replace(/<tr>([\s\S]*?)<\/tr>$/,
+            (_, inner) => '<tr>' + inner.replace(/<td>/g, '<th>').replace(/<\/td>/g, '</th>') + '</tr>');
+          tableHeaderApplied = true;
+          continue;
+        }
+        if (!inTable) { out += '<table>'; inTable = true; }
+        out += '<tr>' + cells.map(c => `<td>${renderInline(c)}</td>`).join('') + '</tr>';
+        continue;
+      } else if (inTable) { flushTable(); }
+      const h = line.match(/^(#{1,6})\s+(.+)$/);
+      if (h) {
+        flushPara(); flushList(); flushTable();
+        out += `<h${h[1].length}>${renderInline(h[2])}</h${h[1].length}>`;
+        continue;
+      }
+      if (/^---+\s*$/.test(line) || /^\*\*\*+\s*$/.test(line)) {
+        flushPara(); flushList(); flushTable();
+        out += '<hr>'; continue;
+      }
+      const bq = line.match(/^>\s?(.*)$/);
+      if (bq) {
+        flushPara(); flushList(); flushTable();
+        out += `<blockquote>${renderInline(bq[1])}</blockquote>`;
+        continue;
+      }
+      const ul = line.match(/^[-*]\s+(.+)$/);
+      const ol = line.match(/^\d+\.\s+(.+)$/);
+      if (ul || ol) {
+        flushPara(); flushTable();
+        const type = ul ? 'ul' : 'ol';
+        if (!inList || listType !== type) {
+          flushList();
+          out += `<${type}>`; inList = true; listType = type;
+        }
+        out += `<li>${renderInline(ul ? ul[1] : ol[1])}</li>`;
+        continue;
+      }
+      if (line === '') { flushPara(); flushList(); flushTable(); continue; }
+      flushList(); flushTable();
+      paraBuf.push(line);
+    }
+    flushPara(); flushList(); flushTable();
+    if (inFence) out += `<pre><code>${escHTML(fenceBuf.join('\n'))}</code></pre>`;
+    return out;
+  }
+
+  // ─── trace events ───────────────────────────────────────
+  function addUserMessage(text) {
+    removeWelcome();
+    finalizeAssistant();
+    const wrap = el('div', '');
+    wrap.appendChild(el('div', 'you', text));
+    traceContent.appendChild(wrap);
+    scrollToEnd();
+  }
+  function appendAssistantText(delta) {
+    removeWelcome();
+    if (!currentAssistant) {
+      currentAssistant = el('div', 'assistant');
+      currentAssistant._raw = '';
+      traceContent.appendChild(currentAssistant);
+    }
+    currentAssistant._raw += delta;
+    if (!renderPending) {
+      renderPending = true;
+      requestAnimationFrame(() => {
+        renderPending = false;
+        if (currentAssistant) {
+          currentAssistant.innerHTML = renderMarkdown(currentAssistant._raw)
+            + '<span class="cursor">▎</span>';
+          scrollToEnd();
+        }
+      });
+    }
+  }
+  function finalizeAssistant() {
+    if (currentAssistant && currentAssistant._raw != null) {
+      currentAssistant.innerHTML = renderMarkdown(currentAssistant._raw);
+    }
+    currentAssistant = null;
+  }
+  function addToolChip(id, name, params) {
+    finalizeAssistant();
+    removeWelcome();
+    const wrap = el('div', '');
+    const chip = el('div', 'tool');
+    chip.appendChild(el('span', 'name', '🐾 ' + name));
+    const ps = paramStr(params);
+    chip.appendChild(el('span', 'params', ps));
+    chip.appendChild(el('span', 'status'));
+    if (ps) chip.title = `${name} ${ps}`;
+    wrap.appendChild(chip);
+    const body = el('div', 'tool-body hidden');
+    wrap.appendChild(body);
+    traceContent.appendChild(wrap);
+    pendingTools.set(id, { chip, body, wrap, name });
+    scrollToEnd();
+  }
+  function fillTool(id, output, urls) {
+    const t = pendingTools.get(id);
+    if (!t) return;
+    pendingTools.delete(id);
+    t.chip.classList.add('done');
+
+    const trimmed = (output || '').trim();
+    const hasUrls = urls && urls.length > 0;
+    if (!trimmed && !hasUrls) { scrollToEnd(); return; }
+
+    t.body.classList.remove('hidden');
+
+    if (t.name === 'spawn') {
+      t.body.classList.add('spawn');
+      t.body.innerHTML = renderMarkdown(output);
+    } else if (t.name === 'shell') {
+      t.body.classList.add('shell');
+      t.body.textContent = output;
+    } else if (t.name === 'web_search') {
+      const results = parseSearchResults(output);
+      if (results.length > 0) {
+        t.body.classList.add('search');
+        t.body.innerHTML = '';
+        for (const r of results) {
+          const item = el('div', 'web-result');
+          const a = document.createElement('a');
+          a.className = 'title'; a.href = r.url; a.target = '_blank'; a.rel = 'noopener';
+          a.textContent = r.title || r.url;
+          item.appendChild(a);
+          item.appendChild(el('div', 'url', r.url));
+          if (r.snippet) item.appendChild(el('div', 'snippet', r.snippet));
+          t.body.appendChild(item);
+        }
+      } else {
+        t.body.textContent = output;
+        maybeAddExpand(t);
+      }
+    } else {
+      t.body.textContent = output;
+      maybeAddExpand(t);
+    }
+
+    if (hasUrls) {
+      for (const u of urls) {
+        if (/\.(png|jpe?g|gif|webp)$/i.test(u)) {
+          const img = el('img');
+          img.className = 'media-thumb';
+          img.src = u; img.loading = 'lazy';
+          t.wrap.appendChild(img);
+        } else if (/\.(mp4|mov|m4v)$/i.test(u)) {
+          const v = document.createElement('video');
+          v.className = 'media-thumb';
+          v.controls = true; v.preload = 'metadata'; v.src = u;
+          t.wrap.appendChild(v);
+        }
+      }
+    }
+    scrollToEnd();
+  }
+  function failTool(id, msg) {
+    const t = pendingTools.get(id);
+    if (!t) return;
+    pendingTools.delete(id);
+    t.chip.classList.add('error');
+    t.body.classList.remove('hidden');
+    t.body.textContent = msg;
+    scrollToEnd();
+  }
+  function maybeAddExpand(t) {
+    const out = t.body.textContent;
+    if (out.length > 2000) {
+      t.body.classList.add('collapsed');
+      const expand = el('button', 'expand-btn');
+      const sizeStr = out.length.toLocaleString();
+      expand.textContent = `▾ 展开 (${sizeStr} 字符)`;
+      let expanded = false;
+      expand.addEventListener('click', () => {
+        expanded = !expanded;
+        if (expanded) {
+          t.body.classList.remove('collapsed');
+          t.body.style.maxHeight = '480px';
+          expand.textContent = `▴ 收起 (${sizeStr} 字符)`;
+        } else {
+          t.body.classList.add('collapsed');
+          t.body.style.maxHeight = '';
+          expand.textContent = `▾ 展开 (${sizeStr} 字符)`;
+        }
+      });
+      t.wrap.appendChild(expand);
+    }
+  }
+  function addError(msg) {
+    finalizeAssistant();
+    const wrap = el('div', '');
+    wrap.appendChild(el('div', 'error-toast', '⚠ ' + msg));
+    traceContent.appendChild(wrap);
+    scrollToEnd();
+  }
+
+  function parseSearchResults(output) {
+    if (!output) return [];
+    const lines = output.split('\n');
+    const results = [];
+    let cur = null;
+    for (const raw of lines) {
+      if (/^---(BEGIN|END)/.test(raw)) continue;
+      if (/^Search results for/.test(raw.trim())) continue;
+      const numbered = raw.match(/^(\d+)\.\s+(.+)$/);
+      if (numbered) {
+        if (cur && cur.url) results.push(cur);
+        cur = { title: numbered[2].trim(), url: '', snippet: [] };
+        continue;
+      }
+      if (!cur) continue;
+      const urlLine = raw.match(/^\s+(https?:\/\/\S+)\s*$/);
+      if (urlLine && !cur.url) { cur.url = urlLine[1]; continue; }
+      const sn = raw.match(/^\s+(.+\S)\s*$/);
+      if (sn && cur.url) cur.snippet.push(sn[1]);
+    }
+    if (cur && cur.url) results.push(cur);
+    return results.map(r => ({ title: r.title, url: r.url, snippet: r.snippet.join(' ').trim() }));
+  }
+
+  // ─── running state ──────────────────────────────────────
+  function setRunning(on, toolName) {
+    running = on;
+    input.disabled = on;
+    cancelBtn.classList.toggle('show', on);
+    status.classList.toggle('running', on);
+    if (on) {
+      const stage = toolName ? `🐾 ${toolName}` : 'kinclaw 思考中';
+      status.innerHTML = `<span class="running-dot"></span>${stage} · Esc 中断`;
+    } else {
+      status.innerHTML = 'Enter 发送 · Shift+Enter 换行 · Esc 中断';
+      input.focus();
+    }
+  }
+
+  // ─── voice: STT (push-to-talk) + TTS (auto-speak) ───────
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    micBtn.classList.add('unsupported');
+  }
+  async function startRecording() {
+    if (running) return;
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      addError('麦克风: ' + err.message);
+      return;
+    }
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(micStream);
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) recordedChunks.push(e.data);
+    };
+    mediaRecorder.onstop = handleRecordingStop;
+    mediaRecorder.start();
+    micBtn.classList.add('recording');
+    micBtn.textContent = '⏹';
+  }
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+    }
+    micBtn.classList.remove('recording');
+    micBtn.textContent = '🎙';
+  }
+  async function handleRecordingStop() {
+    if (micStream) {
+      micStream.getTracks().forEach(t => t.stop());
+      micStream = null;
+    }
+    if (recordedChunks.length === 0) return;
+    const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+    if (blob.size < 2000) return;
+    const fd = new FormData();
+    fd.append('file', blob, 'voice.webm');
+    try {
+      const r = await fetch('/api/voice/transcribe', { method: 'POST', body: fd });
+      if (!r.ok) {
+        addError(`STT ${r.status}: ${(await r.text()).slice(0, 200)}`);
+        return;
+      }
+      const j = await r.json();
+      const text = ((j && j.text) || '').trim();
+      if (!text) {
+        addError('没听清,再说一次');
+        return;
+      }
+      input.value = text;
+      form.dispatchEvent(new Event('submit', { cancelable: true }));
+    } catch (err) {
+      addError('STT 网络: ' + err.message);
+    }
+  }
+  micBtn.addEventListener('mousedown', (e) => { e.preventDefault(); startRecording(); });
+  micBtn.addEventListener('mouseup',    () => stopRecording());
+  micBtn.addEventListener('mouseleave', () => { if (mediaRecorder?.state === 'recording') stopRecording(); });
+  micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
+  micBtn.addEventListener('touchend',   () => stopRecording());
+
+  function pickSpeaker(text) {
+    return /[　-鿿]/.test(text) ? 'zf_xiaoxiao' : undefined;
+  }
+  async function speakAssistant(text) {
+    if (!voiceMode || !text.trim()) return;
+    if (currentTtsAudio) { currentTtsAudio.pause(); currentTtsAudio = null; }
+    const body = { text };
+    const sp = pickSpeaker(text);
+    if (sp) body.speaker = sp;
+    try {
+      const r = await fetch('/api/voice/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) return;
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      currentTtsAudio = new Audio(url);
+      currentTtsAudio.play().catch(() => {});
+      currentTtsAudio.onended = () => URL.revokeObjectURL(url);
+    } catch {}
+  }
+  voiceToggle.addEventListener('click', () => {
+    voiceMode = !voiceMode;
+    voiceToggle.classList.toggle('on', voiceMode);
+    localStorage.setItem('kinclaw.voice', voiceMode ? '1' : '0');
+    if (!voiceMode && currentTtsAudio) {
+      currentTtsAudio.pause(); currentTtsAudio = null;
+    }
+  });
+
+  // ─── soul dropdown ──────────────────────────────────────
+  async function openSoulMenu() {
+    try {
+      const r = await fetch('/api/souls');
+      if (!r.ok) {
+        soulMenu.innerHTML = `<div class="soul-item" style="color:#ff8b80">${r.status}</div>`;
+      } else {
+        const list = await r.json() || [];
+        if (list.length === 0) {
+          soulMenu.innerHTML = '<div class="soul-item" style="color:#5f6168">无 soul</div>';
+        } else {
+          soulMenu.innerHTML = list.map(s => `
+            <div class="soul-item ${s.active ? 'active' : ''}" data-path="${escHTML(s.path)}">
+              <span class="check"></span>
+              <span class="name">${escHTML(s.name || '(unnamed)')}</span>
+              <span class="brain">${escHTML(s.brain || '')}</span>
+            </div>
+          `).join('');
+          soulMenu.querySelectorAll('.soul-item[data-path]').forEach(item => {
+            item.addEventListener('click', () => switchSoul(item.dataset.path));
+          });
+        }
+      }
+    } catch (err) {
+      soulMenu.innerHTML = `<div class="soul-item" style="color:#ff8b80">网络错误</div>`;
+    }
+    soulMenu.classList.add('show');
+  }
+  function closeSoulMenu() { soulMenu.classList.remove('show'); }
+  async function switchSoul(path) {
+    closeSoulMenu();
+    if (running) { addError('当前 turn 还在跑,Esc 中断后再切'); return; }
+    try {
+      const r = await fetch('/api/soul', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      if (!r.ok && r.status !== 202) {
+        const t = await r.text();
+        addError(`切 soul 失败: ${r.status} ${t}`);
+      }
+    } catch (err) { addError('网络: ' + err.message); }
+  }
+  soulMeta.addEventListener('click', (e) => {
+    e.stopPropagation();
+    soulMenu.classList.contains('show') ? closeSoulMenu() : openSoulMenu();
+  });
+  document.addEventListener('click', (e) => {
+    if (!soulMenu.contains(e.target) && e.target !== soulMeta) closeSoulMenu();
+  });
+
+  // ─── event dispatch ─────────────────────────────────────
+  function dispatch(ev) {
+    switch (ev.type) {
+      case 'hello':
+      case 'soul_switched':
+        soulMeta.textContent = `${ev.name || ''} · ${ev.params?.brain || ''}`.replace(/^ · /, '');
+        if (ev.type === 'soul_switched') {
+          traceContent.innerHTML = '';
+          const note = el('div', '');
+          note.innerHTML = `<div class="error-toast" style="background:rgba(210,71,61,0.08);border-color:rgba(210,71,61,0.3);color:#d2473d">已切到 <strong>${escHTML(ev.name)}</strong>,新对话</div>`;
+          traceContent.appendChild(note);
+        }
+        break;
+      case 'user_message':
+        addUserMessage(ev.text);
+        break;
+      case 'text_delta':
+        if (!ev.thinking) appendAssistantText(ev.text);
+        break;
+      case 'tool_call':
+        addToolChip(ev.id, ev.name, ev.params);
+        if (running) setRunning(true, ev.name);
+        break;
+      case 'tool_result':
+        fillTool(ev.id, ev.output, ev.urls);
+        break;
+      case 'tool_error':
+        failTool(ev.id, ev.message || 'error');
+        break;
+      case 'turn_done': {
+        const lastText = (currentAssistant && currentAssistant._raw) || '';
+        finalizeAssistant();
+        setRunning(false);
+        if (lastText) speakAssistant(lastText);
+        break;
+      }
+      case 'error':
+        addError(ev.message || 'unknown error');
+        break;
+    }
+  }
+
+  // ─── SSE ────────────────────────────────────────────────
+  function connect() {
+    const es = new EventSource('/api/events');
+    es.onopen    = () => { conn.classList.remove('dead'); conn.classList.add('live'); };
+    es.onerror   = () => { conn.classList.remove('live'); conn.classList.add('dead'); };
+    es.onmessage = (e) => {
+      try { dispatch(JSON.parse(e.data)); }
+      catch (err) { console.warn('bad event', e.data, err); }
+    };
+  }
+  connect();
+
+  // ─── input ──────────────────────────────────────────────
+  input.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      form.dispatchEvent(new Event('submit', { cancelable: true }));
+    }
+  });
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && running) {
+      e.preventDefault();
+      cancelTurn();
+    }
+  });
+  cancelBtn.addEventListener('click', cancelTurn);
+  async function cancelTurn() {
+    if (!running) return;
+    try { await fetch('/api/chat', { method: 'DELETE' }); }
+    catch (err) { addError('中断失败: ' + err.message); }
+  }
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (running) return;
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    input.style.height = 'auto';
+    if (currentTtsAudio) { currentTtsAudio.pause(); currentTtsAudio = null; }
+    setRunning(true);
+    try {
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      });
+      if (!r.ok && r.status !== 202) {
+        const t = await r.text();
+        addError(`POST ${r.status}: ${t}`);
+        setRunning(false);
+      }
+    } catch (err) { addError('网络: ' + err.message); setRunning(false); }
+  });
+})();
+</script>
+</body>
+</html>

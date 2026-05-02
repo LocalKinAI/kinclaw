@@ -66,6 +66,53 @@ First run triggers two macOS TCC prompts:
 
 Grant both; rerun. `record mic=true` adds a Microphone prompt; `location` skill adds a Location Services prompt; first browser launch downloads Chromium (~500MB).
 
+### `kinclaw serve` — floating chat UI (v1.8+)
+
+CLI not your thing? Run it as a chat in the browser:
+
+```bash
+kinclaw serve -soul souls/pilot.soul.md
+# Open: http://127.0.0.1:8020/
+# Float: http://127.0.0.1:8020/?compact   (chat-only, ~380×600 friendly)
+```
+
+Single floating window — chat goes in, KinClaw operates your real
+desktop, you watch your actual macOS screen change. No split-pane,
+no virtual sandbox, no recreated "agent's eyes" view. The window is
+the remote control; your desktop is the work.
+
+Open as a standalone-looking window (no browser chrome) via Chrome's
+`--app=` mode:
+
+```bash
+open -na "Google Chrome" --args --app="http://127.0.0.1:8020/?compact"
+```
+
+Drag to a corner, ~380×600. For real always-on-top use Rectangle
+Pro / Hammerspoon / BetterTouchTool to pin the window. (A native
+Swift WKWebView shell with built-in always-on-top is v0.2 work.)
+
+Features in the chat window:
+
+- **🎙 push-to-talk** — hold the mic button to speak; release to
+  send. STT via local SenseVoice on `:8000` (LocalKin Service Audio).
+  CJK + English both work.
+- **🔊 voice replies** — toggle on, KinClaw speaks its replies via
+  Kokoro on `:8001`. Auto-picks `zf_xiaoxiao` for Chinese.
+- **Markdown rendering** — tables / code fences / lists / links
+  stream into the chat as the LLM types.
+- **Soul switcher** — click the soul name top-left, dropdown lists
+  all souls in `./souls/` and `~/.localkin/souls/`.
+- **Session replay** — every run writes JSONL to
+  `~/.localkin/serve-sessions/<ts>.jsonl`. Replay later:
+  `kinclaw serve --replay <file>`.
+- **Esc** — cancel a running turn.
+
+Voice mode requires the LocalKin Audio Service running locally
+(`:8000` STT, `:8001` TTS); both are open-source sidecars. Not
+strictly required — the chat works fine without them, mic/speak
+toggles just no-op.
+
 ### Optional sidecars (peripheral capabilities)
 
 KinClaw stays a small Go binary; capabilities that need heavy deps
@@ -560,6 +607,13 @@ kinclaw -login                      Claude OAuth PKCE (Max subscription)
 kinclaw -soul PATH -debug           Print tool calls & raw API traffic
 
 Subcommands (own their own flag sets):
+  kinclaw serve                     Floating chat UI in the browser
+  kinclaw serve -port 8020          (default: 127.0.0.1:8020)
+  kinclaw serve -soul X -port N
+  kinclaw serve --replay <jsonl>    Replay a recorded session
+  kinclaw serve --no-record         Skip session recording for this run
+  kinclaw serve -h                  Full serve help
+
   kinclaw probe Notes               Audit one app's AX tree, get a verdict
   kinclaw probe -json com.apple.Notes
   kinclaw probe -batch < ids.txt    CSV scan for many apps (auto-cleanup)

@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	version = "1.7.2"
+	version = "1.8.0"
 	// maxToolRounds caps the tool-call sequence per user turn. 20 was
 	// fine for kernel-only flows but compound demos (record start + tts
 	// + multi-step ui find/click/verify + tts + record stop) easily
@@ -55,6 +55,9 @@ func main() {
 		case "harvest":
 			runHarvest(os.Args[2:])
 			return
+		case "serve":
+			runServe(os.Args[2:])
+			return
 		}
 	}
 
@@ -63,6 +66,7 @@ func main() {
 
 Usage:
   kinclaw -soul PATH [-exec MSG]    Run a soul (REPL or one-shot)
+  kinclaw serve [-soul PATH]         Chat UI · 看着 5 爪干活 (split-pane in browser)
   kinclaw harvest                    Pull external skill libraries; coder forges
                                      KinClaw versions of good ideas; stage for review
   kinclaw harvest --review           Show staged candidates
@@ -75,7 +79,7 @@ Top-level flags:
 `)
 		flag.PrintDefaults()
 		fmt.Fprintf(flag.CommandLine.Output(), `
-Subcommand help: kinclaw harvest -h  /  kinclaw probe -h
+Subcommand help: kinclaw serve -h  /  kinclaw harvest -h  /  kinclaw probe -h
 `)
 	}
 

@@ -1,5 +1,116 @@
 # Changelog
 
+## [1.8.0] - 2026-05-01
+
+**Browser-based floating chat UI: `kinclaw serve`.** KinClaw was a
+CLI all the way through v1.7.x — REPL or `-exec` one-shot. v1.8.0
+adds a chat UI as a sibling subcommand. The form is **a single
+compact floating window** designed to sit in a corner of your
+desktop while the agent operates your real Mac alongside it. Not a
+remote-desktop view of a virtual sandbox; not a split-pane "watch
+the agent's screen" — just a chat box you talk to, while you watch
+your actual macOS screen change because of what you said.
+
+This is "Spotlight for agentic computer-use" as the form factor.
+It's also the first cross-platform-ready piece of the project: the
+shell (chat / SSE / markdown / voice) is platform-agnostic; only
+the 5 claws underneath are macOS-specific. Linux / Windows / Android
+ports become "write the claws" rather than "rebuild the UI."
+
+### Added — `kinclaw serve` subcommand
+
+```
+kinclaw serve [-soul PATH] [-port N | -addr HOST:PORT]
+              [-no-record] [-replay JSONL_PATH] [-debug]
+```
+
+Default port **8020** (avoid macOS AirPlay Receiver on 5000/7000;
+collision now caught with a clear hint at startup). Open the printed
+URL in any browser:
+
+- **Single-column compact layout** — topbar + trace timeline + floating
+  glass-blur input bar. Designed for ~380×600 floating windows.
+- **Chrome `--app=URL` mode** for app-like floating window today;
+  v0.2 will ship a native Swift WKWebView shell with real
+  always-on-top.
+- **Streaming markdown** in the trace (tables / code fences / lists /
+  links / blockquote / hr) with `requestAnimationFrame`-coalesced
+  re-render so a long streamed reply doesn't jank.
+- **Per-tool result styling**:
+  - `shell` — terminal vibes, prepended `$` prompt
+  - `spawn` — sub-agent's report rendered as full markdown (violet
+    accent)
+  - `web_search` — parsed into clickable link list with title / URL /
+    snippet
+  - generic — monospace + collapse-when-long with explicit expand
+    button (no forever-scroll mini-pane)
+- **Voice** — `🎙` push-to-talk mic button + `🔊` TTS toggle. STT
+  proxies to `${STT_ENDPOINT:-:8000}/transcribe` (LocalKin Service
+  Audio / SenseVoice); TTS to `${TTS_ENDPOINT:-:8001}/synthesize`
+  (Kokoro). CJK auto-picks `zf_xiaoxiao`; non-CJK lets server
+  default.
+- **Soul switcher** — click soul name in topbar → dropdown lists all
+  souls under `./souls/` + `~/.localkin/souls/` with active soul
+  highlighted. Hot-swap mid-session.
+- **Session JSONL recording** — every event captured to
+  `~/.localkin/serve-sessions/<ts>.jsonl` by default. `--replay`
+  plays back a recorded session at original timing (delta-capped at
+  2s for snappy review). `--no-record` opts out.
+- **Esc-to-cancel** — DELETE `/api/chat` cancels the in-flight turn
+  via context cancellation. Browser shows a `⨯` button while running.
+
+### Server endpoints (`pkg/server`)
+
+- `GET /` — single-file HTML UI (embedded via `//go:embed`)
+- `GET /api/events` — Server-Sent Events stream (text_delta /
+  tool_call / tool_result / soul_switched / turn_done / error)
+- `POST /api/chat {message}` — start a turn (echoes via SSE)
+- `DELETE /api/chat` — cancel current turn
+- `GET /api/souls` — list discoverable souls
+- `POST /api/soul {path}` — hot-swap soul (refuses mid-turn)
+- `POST /api/voice/transcribe` (multipart) — STT proxy
+- `POST /api/voice/tts {text, speaker?}` — TTS proxy → audio/wav
+- `GET /file/<allowlisted-path>` — serve images/videos referenced in
+  tool results (allow-list: `~/Library/Caches/kinclaw`,
+  `~/.localkin`, `./output`, soul.OutputDir)
+
+### Fixed — pilot soul behavior
+
+- **`ui tree` defaults to `depth=2`** — previous default `depth=6`
+  was dumping 11K+ chars of irrelevant menu trees (entire Apple
+  menu / Recent Items / Window arrangement submenus) for simple
+  apps like Calculator. Doctrine added: use minimum sufficient
+  depth, drill down only when needed.
+- **Read-vs-compute distinction** — pilot was caught doing mental
+  math and reporting it as a screen-read result (`ui read` returned
+  `value=""` but agent still answered "459+443=902" with
+  confidence). New doctrine: if you can't trace the answer to a
+  specific tool output, don't report it; either screenshot it for
+  the user, try a different read path, or explicitly mark the
+  answer as inferred not observed.
+
+### Fixed — web skill
+
+- New `press_enter=true` parameter — for React/Vue/Svelte forms
+  whose submit button is gated on framework-internal state and
+  won't enable from `page.fill()` alone. After the fill, sends a
+  real keyboard `Enter` keypress (not synthetic) so the form's
+  keydown handler actually fires + 500ms settle.
+
+### Notes
+
+- macOS-only as before; the new UI shell is platform-portable but
+  the 5 claws still only have darwin implementations. Linux / Windows
+  / Android ports = write the claws + reuse the shell.
+- Chrome's `--app=URL` mode gives 80% of the floating-window UX
+  today. A native Swift WKWebView shell with real always-on-top is
+  v0.2 work, not in this release.
+- OpenClaw (`openclaw/openclaw`) shares the lobster theme and
+  "personal AI assistant" framing but operates a different domain
+  (multi-channel messaging hub: WhatsApp / Discord / Slack / etc).
+  KinClaw operates the OS itself. Different products, different
+  niches; brand collision noted but not a problem.
+
 ## [1.7.2] - 2026-04-29
 
 **Doctrine demotion: OCR is no longer in the cascade.** v1.7.0
