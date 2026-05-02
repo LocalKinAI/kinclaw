@@ -135,12 +135,30 @@ async def run_task(task: str) -> int:
 
     print(final)
 
-    # Non-zero exit if the agent reported errors so the kernel marks
-    # the tool call as errored.
-    if hasattr(history, "has_errors") and history.has_errors():
+    # browser-use's `has_errors()` is too sensitive — it flags ANY
+    # transient mid-stream issue (LLM call timeouts, slow page loads
+    # that the agent retried and recovered from). The user's task
+    # may have completed perfectly but we'd still exit 1 and the
+    # kinclaw kernel would report "tool error" — confusing.
+    #
+    # Use `is_successful()` instead: True iff the agent reached a
+    # `done` action with success=True. That's the actual outcome
+    # signal we care about. Fall back to "we got a result" if the
+    # method isn't on this version of AgentHistoryList.
+    try:
+        if hasattr(history, "is_successful") and callable(history.is_successful):
+            success = bool(history.is_successful())
+        elif hasattr(history, "is_done") and callable(history.is_done):
+            success = bool(history.is_done())
+        else:
+            success = bool(final and final != "(browser_session completed but extracted no explicit result)")
+    except Exception:
+        success = bool(final)
+
+    if not success:
         print(
-            "(browser_session: agent reported errors during the run; "
-            "see stderr if any)",
+            "(browser_session: agent did not reach a successful 'done' state; "
+            "see stderr above for details)",
             file=sys.stderr,
         )
         return 1
