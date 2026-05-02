@@ -30,6 +30,9 @@ def main():
     ap.add_argument("--selector", default="body", help="CSS selector for inner text extraction")
     ap.add_argument("--click", default="", help="CSS selector to click after load (before extract)")
     ap.add_argument("--type-text", default="", help="Text to fill into --click target (must use with --click)")
+    ap.add_argument("--press-enter", action="store_true",
+                    help="After fill, press Enter on the input — works for React/Vue forms whose submit "
+                         "button is gated on internal state. Real keyboard event, not synthetic.")
     ap.add_argument("--screenshot", default="", help="Output path for PNG screenshot of viewport")
     ap.add_argument("--js", default="", help="JavaScript expression to evaluate; result returned JSON-stringified")
     ap.add_argument("--timeout-ms", type=int, default=15000)
@@ -66,9 +69,26 @@ def main():
 
         if args.type_text and args.click:
             try:
+                # page.fill() dispatches React-compatible input + change
+                # events under the hood — for most React/Vue/Svelte
+                # apps this is enough to update the framework's
+                # internal state and re-enable a submit button.
                 page.fill(args.click, args.type_text, timeout=5000)
             except Exception as e:
                 sys.exit(f"type into {args.click!r} failed: {e}")
+            # press_enter for forms that don't react to fill alone —
+            # some sites listen for keydown specifically (e.g. chat
+            # apps that submit on Enter not on click). Real keyboard
+            # event = real focus + real key code, not synthetic.
+            if args.press_enter:
+                try:
+                    page.press(args.click, "Enter")
+                    # Give the form's submit handler a beat to fire +
+                    # any subsequent re-render to settle before we
+                    # extract / screenshot.
+                    page.wait_for_timeout(500)
+                except Exception as e:
+                    sys.exit(f"press Enter on {args.click!r} failed: {e}")
 
         if args.js:
             try:

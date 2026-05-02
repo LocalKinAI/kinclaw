@@ -19,6 +19,7 @@ description: |
     extract specific element:      url=X selector=".product-list"
     click and read result:         url=X click=".search-button"
     fill form, then read:          url=X click="input[name=q]" type_text="kinclaw"
+    fill + Enter (React forms):    url=X click="input" type_text="hi" press_enter=true wait_for=".reply"
     screenshot the page:           url=X screenshot=true (returns image:// marker)
     run JS and get result:         url=X js="document.title"
 
@@ -37,17 +38,19 @@ command:
     SCREENSHOT="$6"
     JS_CODE="$7"
     TIMEOUT="$8"
+    PRESS_ENTER="$9"
 
     [ -z "$URL" ] && { echo "url required" >&2; exit 1; }
 
     # Build args array — only include flags that have values.
     set -- "$URL"
-    [ -n "$WAIT_FOR" ]   && set -- "$@" --wait-for "$WAIT_FOR"
-    [ -n "$SELECTOR" ]   && set -- "$@" --selector "$SELECTOR"
-    [ -n "$CLICK" ]      && set -- "$@" --click "$CLICK"
-    [ -n "$TYPE_TEXT" ]  && set -- "$@" --type-text "$TYPE_TEXT"
-    [ -n "$JS_CODE" ]    && set -- "$@" --js "$JS_CODE"
-    [ -n "$TIMEOUT" ]    && set -- "$@" --timeout-ms "$TIMEOUT"
+    [ -n "$WAIT_FOR" ]    && set -- "$@" --wait-for "$WAIT_FOR"
+    [ -n "$SELECTOR" ]    && set -- "$@" --selector "$SELECTOR"
+    [ -n "$CLICK" ]       && set -- "$@" --click "$CLICK"
+    [ -n "$TYPE_TEXT" ]   && set -- "$@" --type-text "$TYPE_TEXT"
+    [ -n "$JS_CODE" ]     && set -- "$@" --js "$JS_CODE"
+    [ -n "$TIMEOUT" ]     && set -- "$@" --timeout-ms "$TIMEOUT"
+    [ "$PRESS_ENTER" = "true" ] && set -- "$@" --press-enter
 
     # Screenshot mode: generate output path under cache dir, pass it in.
     if [ "$SCREENSHOT" = "true" ]; then
@@ -78,6 +81,7 @@ args:
   - "{{screenshot}}"
   - "{{js}}"
   - "{{timeout_ms}}"
+  - "{{press_enter}}"
 schema:
   url:
     type: string
@@ -104,6 +108,14 @@ schema:
   timeout_ms:
     type: integer
     description: Max ms for goto and wait operations. Default 15000.
+  press_enter:
+    type: string
+    description: |
+      Set to "true" after fill to send a real Enter keypress on the
+      input — works for React/Vue/Svelte chat forms whose submit
+      button is gated on internal state and won't enable from a fill
+      alone. Real keyboard event (page.press), not synthetic. Use
+      with click=<input selector> + type_text=<message>.
 timeout: 60
 ---
 
