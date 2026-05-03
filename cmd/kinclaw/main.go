@@ -217,9 +217,28 @@ func newSession(soulPath string, debug bool) (*session, error) {
 
 	reg := buildRegistry(s, store)
 
-	sessionID := fmt.Sprintf("%s-%d", s.Meta.Name, os.Getpid())
+	// session_id used to be "<soul-name>-<pid>" — every kinclaw process
+	// got its own bucket, so restarting kinclaw = empty history. That
+	// kept concurrent kinclaw runs isolated but threw away cross-
+	// process continuity (the actual feature users want: "remember
+	// what I said yesterday").
+	//
+	// Switch to soul-name only. Two consequences:
+	//   1. Restarting kinclaw resumes the same conversation thread
+	//   2. Concurrent kinclaw runs of the same soul share history —
+	//      messages interleave by id (auto-increment). Unusual to run
+	//      two pilots at once; if you do, they share a chat log.
+	//
+	// Old PID-suffixed sessions stay in the DB (still recallable via
+	// memory action=recall query="..."). Forward-only: from now on
+	// every new message lands in the clean key.
+	sessionID := s.Meta.Name
 	var history []brain.Message
 	if store != nil {
+		// 50 messages is the same volume as before — just spans
+		// multiple kinclaw runs now instead of one. Each row's
+		// content is capped client-side via LoadHistory's truncation
+		// to keep oversized tool outputs from blowing the prompt.
 		history = store.LoadHistory(sessionID, 50)
 	}
 
@@ -513,6 +532,7 @@ func handleCommand(ctx context.Context, sess *session, input string) bool {
 			break
 		}
 		sess.soul = s
+		sess.id = s.Meta.Name // keep in sync — soul rename would otherwise misroute saves
 		sess.registry = buildRegistry(s, sess.store)
 		sess.toolDefs = sess.registry.FilteredToolDefs(s.Meta.Skills.Enable)
 		fmt.Printf("\033[2mReloaded %s (%d skills)\033[0m\n", s.Meta.Name, len(sess.toolDefs))
@@ -533,10 +553,19 @@ func handleCommand(ctx context.Context, sess *session, input string) bool {
 			}
 			sess.soul = s
 			sess.soulPath = path
+			sess.id = s.Meta.Name // route saves under the new soul's bucket
 			sess.registry = buildRegistry(s, sess.store)
 			sess.toolDefs = sess.registry.FilteredToolDefs(s.Meta.Skills.Enable)
-			sess.history = nil
-			fmt.Printf("\033[2mSwitched to %s (%s)\033[0m\n", s.Meta.Name, path)
+			// Load the new soul's prior history — switching is opting
+			// into that soul's accumulated memory, not starting fresh.
+			// /reset is the path for "wipe and start over."
+			if sess.store != nil {
+				sess.history = sess.store.LoadHistory(sess.id, 50)
+			} else {
+				sess.history = nil
+			}
+			fmt.Printf("\033[2mSwitched to %s (%s, %d msgs of history)\033[0m\n",
+				s.Meta.Name, path, len(sess.history))
 		}
 
 	default:

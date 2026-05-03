@@ -65,6 +65,22 @@ func (s *SQLiteStore) SaveMessage(sessionID string, msg brain.Message) error {
 	return err
 }
 
+// maxMsgContentBytes caps individual loaded messages so a single
+// 50KB tool output (e.g. yahoo finance dump, AX tree of a giant app)
+// from a past session can't blow the entire context window. Picks
+// 4KB per message — enough to preserve narrative meaning, lossy on
+// fine-grained tool output but those are stale by next session
+// anyway. Live current-session messages aren't affected; they go
+// straight into history without round-tripping through this cap.
+const maxMsgContentBytes = 4096
+
+func truncateForRecall(s string) string {
+	if len(s) <= maxMsgContentBytes {
+		return s
+	}
+	return s[:maxMsgContentBytes] + "\n…[truncated; this is a historical message — full content was in the original session]"
+}
+
 func (s *SQLiteStore) LoadHistory(sessionID string, limit int) []brain.Message {
 	if limit <= 0 {
 		limit = 50
@@ -85,6 +101,9 @@ func (s *SQLiteStore) LoadHistory(sessionID string, limit int) []brain.Message {
 		if err := rows.Scan(&msg.Role, &msg.Content, &toolCallsJSON, &toolCallID); err != nil {
 			continue
 		}
+		// Cap content size — a single oversized historical message
+		// shouldn't be allowed to consume the whole context budget.
+		msg.Content = truncateForRecall(msg.Content)
 		if toolCallsJSON.Valid {
 			json.Unmarshal([]byte(toolCallsJSON.String), &msg.ToolCalls)
 		}
