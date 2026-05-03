@@ -104,7 +104,7 @@ Features in the chat window:
 - **Soul switcher** — click the soul name top-left, dropdown lists
   all souls in `./souls/` and `~/.localkin/souls/`.
 - **Session replay** — every run writes JSONL to
-  `~/.localkin/serve-sessions/<ts>.jsonl`. Replay later:
+  `~/.kinclaw/serve-sessions/<ts>.jsonl`. Replay later:
   `kinclaw serve --replay <file>`.
 - **Esc** — cancel a running turn.
 
@@ -135,7 +135,7 @@ ship as opt-in sidecars selected via env var:
 | `{{platform}}` | `runtime.GOOS` mapped to `macOS`/`Linux`/`Windows` |
 | `{{arch}}` | `runtime.GOARCH` (`arm64` / `amd64`) |
 | `{{location}}` `{{lat}}` `{{lon}}` `{{city}}` `{{country}}` | `$KINCLAW_LOCATION="lat,lon[,city[,country]]"` env var |
-| `## 已学到的` section | `~/.localkin/learned.md` (8KB tail) — **technical doctrine** across sessions |
+| `## 已学到的` section | `~/.kinclaw/learned.md` (8KB tail) — **technical doctrine** across sessions |
 | `## 用户长期记忆` section | `memories` k-v table in `~/.localkin/memory.db` — **user-facts** across sessions (v1.9+) |
 | Last 50 messages of `<soul-name>` session | `messages` table in `~/.localkin/memory.db` — **conversation continuity** across kinclaw restarts (v1.9+) |
 
@@ -159,36 +159,59 @@ memory action=recall query=X scope=all                  # both, two sections
 behaves" (app schema, error codes, shortcut tricks). **memory** for
 "who the user is" (name, location, friends, projects, preferences).
 
-### Data location — `~/.localkin/` (shared with the family)
+### Data location — two homes (since v1.10)
 
-KinClaw stores its persistent state in `~/.localkin/`, **the same
-directory used by the LocalKin runtime and other sibling products in
-the family** (kin-code, etc). This is intentional:
+KinClaw splits persistent state across **two homes** by concern.
+`~/.localkin/` is **family-shared runtime** (memory, souls, skills
+that any LocalKin product reads). `~/.kinclaw/` is **kinclaw
+product state** (harvest, serve recordings, learned doctrine).
 
-| File | Purpose | Shared with family |
-|---|---|---|
-| `~/.localkin/memory.db` | conversation history + durable user-facts (SQLite) | ✓ yes |
-| `~/.localkin/learned.md` | technical doctrine learned across sessions (8KB tail injected at boot) | ✓ yes |
-| `~/.localkin/serve-sessions/<ts>.jsonl` | `kinclaw serve` event recordings (replayable) | KinClaw-only |
-| `~/Library/Caches/kinclaw/` | screenshots + recordings + per-soul output | KinClaw-only |
+**`~/.localkin/` — shared family runtime** (LocalKin / KinClaw /
+KinClaw Mac / kinclaw-ios all read these):
 
-**Why shared**: telling LocalKin's pilot "I live in SF" should mean
-KinClaw's pilot also knows. The lobster family is meant to feel like
-one brain regardless of which binary is the entry point. Soul names
-are namespaced (`KinClaw <X>` vs `<X>`) to prevent accidental
-cross-product session merges.
+| File | Purpose |
+|---|---|
+| `~/.localkin/memory.db` | conversation history + durable user-facts (SQLite) |
+| `~/.localkin/souls/` | user-level souls usable by any product |
+| `~/.localkin/skills/` | cross-product skills (kin_audio / image_gen / etc.) |
+| `~/.localkin/auth.json` | LocalKin auth |
+| `~/.localkin/cron.yaml` + `cron_state/` | LocalKin cron daemon |
 
-**Override for isolation**: set `$KINCLAW_DATA_DIR` to point KinClaw
-at its own directory:
+**`~/.kinclaw/` — kinclaw product state** (this binary's outputs;
+nothing else writes here):
+
+| File | Purpose |
+|---|---|
+| `~/.kinclaw/learned.md` | technical doctrine across sessions (8KB tail injected at boot) |
+| `~/.kinclaw/serve-sessions/<ts>.jsonl` | `kinclaw serve` event recordings (replayable) |
+| `~/.kinclaw/harvest/` | external skill candidates pulled by `kinclaw harvest` |
+| `~/.kinclaw/harvest.toml` | harvest source manifest |
+
+KinClaw Mac (the macOS dock app) writes its UI state here too —
+`~/.kinclaw/sessions/<agentSlug>/<UUID>.json` for multi-session
+chat history. Two products share `~/.kinclaw/` cleanly because
+each owns a different sub-tree.
+
+`~/Library/Caches/kinclaw/` — screenshots + per-soul output
+(big-blob OS cache, distinct from config-style state above).
+
+**Why shared `memory.db`**: telling LocalKin's pilot "I live in
+SF" should mean KinClaw's pilot also knows. The lobster family is
+meant to feel like one brain regardless of which binary is the
+entry point. Soul names are namespaced (`KinClaw <X>` vs `<X>`)
+to prevent accidental cross-product session merges.
+
+**Override for isolation**: set `$KINCLAW_DATA_DIR` to point
+KinClaw's memory at its own directory:
 
 ```bash
-KINCLAW_DATA_DIR=~/.kinclaw kinclaw -soul souls/pilot.soul.md
-KINCLAW_DATA_DIR=/tmp/kinclaw-fresh kinclaw -soul ...    # ephemeral test
+KINCLAW_DATA_DIR=~/.kinclaw-isolated kinclaw -soul souls/pilot.soul.md
+KINCLAW_DATA_DIR=/tmp/kinclaw-fresh kinclaw -soul ...   # ephemeral test
 ```
 
 The override currently affects `memory.db` only; `learned.md` and
-`serve-sessions/` still resolve under `~/.localkin/`. Migration to a
-single override hook is a follow-up.
+`serve-sessions/` always resolve under `~/.kinclaw/`. Per-path
+overrides are a future step.
 
 ## Architecture
 
@@ -197,7 +220,7 @@ single override hook is a follow-up.
 │                  Soul (.soul.md)                            │
 │  YAML frontmatter + Markdown system prompt                  │
 │  template subs: {{platform}} {{tz}} {{location}} ...        │
-│  + auto-loaded ~/.localkin/learned.md (cross-session)       │
+│  + auto-loaded ~/.kinclaw/learned.md (cross-session)        │
 ├─────────────────────────────────────────────────────────────┤
 │                       Brain (LLM)                           │
 │  Claude · OpenAI · Ollama · Kimi · GLM · Qwen · any         │
@@ -579,7 +602,7 @@ skill.
 `kinclaw harvest` pulls candidate `SKILL.md` files from other agent
 repos (Claude Code, Hermes Agent, your own private repos), runs them
 through the forge quality gate v2 + critic soul review, and stages
-survivors at `~/.localkin/harvest/staged/` for human approval. Final
+survivors at `~/.kinclaw/harvest/staged/` for human approval. Final
 acceptance into `./skills/` is always manual — the pipeline never
 auto-merges.
 
@@ -642,7 +665,7 @@ runs `--no-judge` — 3 AM jobs only refresh source caches + report counts.
 Run `kinclaw harvest` (no flags) interactively when you want the curator
 triage.
 
-Manifest at `~/.localkin/harvest.toml`:
+Manifest at `~/.kinclaw/harvest.toml`:
 
 ```toml
 [[source]]
@@ -772,7 +795,7 @@ cross-session memory.
 **Near-term v1.6+ candidates** (fluid):
 
 - **`kinclaw memory`** — list / search / forget against the
-  cross-session `~/.localkin/learned.md` (currently write-mostly).
+  cross-session `~/.kinclaw/learned.md` (currently write-mostly).
 - **`kinclaw doctor`** — sidecar health check (TTS / STT / SearXNG /
   Playwright / kinrec). New-user pain point #1.
 - **Observer subscriptions** in `kinax-go` — push-based AX event

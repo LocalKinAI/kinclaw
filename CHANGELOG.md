@@ -1,5 +1,130 @@
 # Changelog
 
+## [1.10.0] - 2026-05-03
+
+**Storage layout cleanup + URL-first doctrine.** Two bigger
+items + one set of polish work, all behind the same theme:
+**stop conflating shared-runtime data with kinclaw-product data,
+and stop letting Pilot click through GUI dialogs when a one-step
+URL would do the job.**
+
+### Changed — kinclaw-specific paths moved to `~/.kinclaw/`
+
+`~/.localkin/` is now strictly **shared LocalKin family runtime**:
+`memory.db`, `souls/`, `skills/`, `rag/`, `cron.yaml`, `auth.json`,
+`license.sig`, etc. — the data the kinclaw kernel writes that any
+LocalKin product (KinClaw, LocalKin, KinClaw Mac, kinclaw-ios) is
+expected to read.
+
+Anything **kinclaw-product-specific** moves to `~/.kinclaw/`:
+
+| was | now |
+|---|---|
+| `~/.localkin/harvest/` (197 MB cache) | `~/.kinclaw/harvest/` |
+| `~/.localkin/harvest.toml` (+ .bak) | `~/.kinclaw/harvest.toml` |
+| `~/.localkin/serve-sessions/<ts>.jsonl` | `~/.kinclaw/serve-sessions/<ts>.jsonl` |
+| `~/.localkin/learned.md` | `~/.kinclaw/learned.md` |
+
+Code touches:
+
+- `cmd/kinclaw/serve.go` — `openSessionRecorder` writes new path;
+  `/file` allowlist now includes BOTH `~/.kinclaw` and `~/.localkin`
+  so file URLs from either home resolve.
+- `pkg/harvest/manifest.go` / `source.go` / `stage.go` — all three
+  filesystem roots flipped to `~/.kinclaw/`.
+- `pkg/soul/soul.go` — `readLearnedNotebook()` reads
+  `~/.kinclaw/learned.md`; the system-prompt header text matches.
+- `pkg/memory/memory.go` — doc-comment block updated to reflect
+  the new split. `KINCLAW_DATA_DIR` env still controls memory.db
+  only.
+- `pkg/soul/soul_test.go` — test paths follow.
+- `scripts/com.localkin.kinclaw-harvest.plist` — launchd plist
+  log path → `~/.kinclaw/harvest/cron.log`.
+
+Migration: existing files were physically moved (`mv` → ~200 MB)
+to the new home, no fallback-read logic needed. Fresh installs go
+straight to `~/.kinclaw/`. **If you were running v1.9.0 or earlier,
+manually move your `~/.localkin/{harvest,serve-sessions,learned.md,
+harvest.toml}` to `~/.kinclaw/` once.** A future minor will add
+auto-migration on first launch.
+
+Why split now: KinClaw Mac (`~/Documents/Workspace/kinclaw-mac`)
+landed this week with its own product-state home at
+`~/.kinclaw/sessions/` for multi-session chat history. Three
+storage homes (shared runtime / kinclaw kernel / KinClaw Mac UI)
+now follow one rule: each home is single-purpose, backed up
+independently, scoped by exactly the right concern.
+
+### Added — `souls/pilot.soul.md` URL-first doctrine
+
+New section: `## App deep-link / URL 参数优先（不要硬点 GUI）`.
+Pilot now learns to **prefer one-step URL invocations** over
+multi-step GUI clicking for any task that involves dates,
+quantities, endpoints, or filters.
+
+Macro doctrine, with concrete tables:
+
+  - **macOS apps** — URL schemes (maps:// / mailto: / tel: /
+    music:// / ical:// / etc.). Discovery procedure for
+    unfamiliar apps via `CFBundleURLSchemes` from Info.plist.
+  - **Web apps** — URL params for the 14 most common task
+    surfaces (Google Flights / Kayak / Skyscanner / Maps /
+    Booking / Airbnb / Zillow / Amazon / GitHub / ArXiv / 12306,
+    etc.).
+
+Decision flow:
+
+  1. Task involves date / quantity / endpoints / price filter?
+     → URL params, NEVER GUI.
+  2. URL reaches the result page directly? → `shell open` or
+     `web fetch` in one step.
+  3. Neither? → fall back to GUI BUT pre-estimate clicks; abort
+     anything > 5 steps; tasks involving date pagination → give
+     up that path entirely.
+
+### Added — `docs/research/` (moved into the repo)
+
+The `~/.localkin/research/` directory of empirical validation,
+competitor analysis, and real-world task traces is now
+`docs/research/` — versioned alongside the code rather than
+sitting in family-shared runtime data.
+
+```
+docs/research/
+├── 50-app-validation.md / .csv / -classified.txt
+│   AX-tree probe over 50 macOS apps. 94% controllable today,
+│   88% pure-AX. Concrete proof of the 5-claw thesis.
+├── 10-task-validation/REPORT.md + 10 .log files
+│   end-to-end task runs.
+├── genesis-validation/REPORT.md + warm/cold logs
+│   Genesis Protocol empirical validation.
+├── osworld-benchmark-2026-05.md
+│   OSWorld attack roadmap (Q3 2026 → Q4 2027 SOTA).
+├── turix-cua-2026-05.md
+│   TuriX-CUA competitor analysis.
+├── perplexity-personal-computer-2026-05.md
+│   Perplexity Personal Computer competitor (April 2026).
+├── tj-navigation-trace-2026-05.md
+│   Real-world task: TJ navigation (success after 18 steps).
+└── flight-search-trace-2026-05.md
+    Real-world task: SFO→PEK flight prices (failed,
+    motivated the URL-first doctrine).
+```
+
+The flight-search trace + TJ navigation trace together are the
+direct evidence behind the URL-first doctrine — both real Pilot
+sessions, one succeeded the long way, one failed the long way.
+
+### Notes
+
+- macOS-only as before; the storage split touches `homeDir()`
+  call sites which are POSIX-clean for any future Linux/Windows
+  port.
+- `KINCLAW_DATA_DIR` env override still scopes ONLY to memory.db.
+  Separate envs for harvest / serve-sessions / learned.md aren't
+  introduced yet — open question whether they should follow the
+  same env or get product-specific overrides.
+
 ## [1.9.0] - 2026-05-02
 
 **Two big features: `browser_session` super-skill (wrapping
