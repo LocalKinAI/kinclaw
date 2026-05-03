@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -48,7 +49,83 @@ func OpenMemory(path string) (*SQLiteStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("creating schema: %w", err)
 	}
-	return &SQLiteStore{db: db}, nil
+	store := &SQLiteStore{db: db}
+
+	// One-time migration: pre-v1.8 session_ids included the kinclaw
+	// process PID ("KinClaw Pilot-23799"). v1.8.x changed the format
+	// to plain soul name ("KinClaw Pilot") so cross-process history
+	// works. This rolls every old PID-suffixed session into the
+	// matching soul-name bucket so old conversations stay reachable.
+	//
+	// Idempotent — once migrated, the regex matches nothing and the
+	// query is a no-op. Called once per process at OpenMemory time.
+	if migrated, err := store.migratePIDSessions(); err != nil {
+		// Log but don't fail — DB still usable, just with fragmented
+		// session_ids. Worst case the user sees less history, never
+		// data loss.
+		fmt.Fprintf(os.Stderr, "Warning: session_id migration error: %v\n", err)
+	} else if migrated > 0 {
+		fmt.Fprintf(os.Stderr, "\033[2m  memory: migrated %d PID-suffixed session_ids → soul-name buckets\033[0m\n", migrated)
+	}
+
+	return store, nil
+}
+
+// migratePIDSessions strips trailing "-<digits>" from session_id
+// values. Pre-v1.8 each kinclaw process got its own bucket
+// "<soul-name>-<pid>"; this collapses them all to "<soul-name>" so
+// LoadHistory(<soul-name>) finds them.
+//
+// Returns the number of distinct old session_ids that were merged.
+// Soul names with internal hyphens (like "kin-code-12345") are
+// handled correctly because the regex anchors on the LAST "-<digits>"
+// at end of string.
+func (s *SQLiteStore) migratePIDSessions() (int, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT session_id FROM messages`)
+	if err != nil {
+		return 0, fmt.Errorf("scan session_ids: %w", err)
+	}
+	type pair struct{ from, to string }
+	var renames []pair
+	pidSuffix := regexp.MustCompile(`^(.+)-\d+$`)
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			continue
+		}
+		m := pidSuffix.FindStringSubmatch(sid)
+		if len(m) != 2 {
+			continue // already a clean soul name, or unexpected shape
+		}
+		renames = append(renames, pair{from: sid, to: m[1]})
+	}
+	rows.Close() // explicit — we hold an UPDATE next
+	if len(renames) == 0 {
+		return 0, nil
+	}
+
+	// Use a transaction so partial migration doesn't leave a
+	// half-merged DB if the kernel crashes mid-loop.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	stmt, err := tx.Prepare(`UPDATE messages SET session_id = ? WHERE session_id = ?`)
+	if err != nil {
+		tx.Rollback()
+		return 0, fmt.Errorf("prepare update: %w", err)
+	}
+	defer stmt.Close()
+	for _, r := range renames {
+		if _, err := stmt.Exec(r.to, r.from); err != nil {
+			tx.Rollback()
+			return 0, fmt.Errorf("rename %q→%q: %w", r.from, r.to, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit tx: %w", err)
+	}
+	return len(renames), nil
 }
 
 func (s *SQLiteStore) SaveMessage(sessionID string, msg brain.Message) error {
