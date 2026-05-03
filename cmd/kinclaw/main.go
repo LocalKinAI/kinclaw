@@ -190,6 +190,31 @@ func newSession(soulPath string, debug bool) (*session, error) {
 		fmt.Fprintf(os.Stderr, "Warning: memory unavailable: %v\n", err)
 	}
 
+	// Auto-inject durable user facts (memories k-v table) into the
+	// soul's system prompt. Without this, pilot has to remember to
+	// call `memory action=recall` — and often won't, because there's
+	// no signal in the user's question that says "go check memory".
+	// Same idea as learned.md: the kernel reads it once at boot and
+	// makes it part of the agent's working knowledge.
+	if store != nil {
+		if mems, err := store.AllMemories(); err == nil && len(mems) > 0 {
+			var b strings.Builder
+			b.WriteString("\n\n## 用户长期记忆 (across sessions, from memory.db k-v)\n\n")
+			b.WriteString("**这些是你跟用户已建立的长期事实,直接据此回答 — 别再 memory.recall 重复查同一件事**\n\n")
+			for _, m := range mems {
+				b.WriteString("- ")
+				b.WriteString(m.Key)
+				b.WriteString(": ")
+				b.WriteString(m.Value)
+				b.WriteString("\n")
+			}
+			s.SystemPrompt += b.String()
+			if debug {
+				fmt.Fprintf(os.Stderr, "\033[2m[memory injected %d facts into prompt]\033[0m\n", len(mems))
+			}
+		}
+	}
+
 	reg := buildRegistry(s, store)
 
 	sessionID := fmt.Sprintf("%s-%d", s.Meta.Name, os.Getpid())

@@ -99,6 +99,33 @@ func (s *SQLiteStore) LoadHistory(sessionID string, limit int) []brain.Message {
 	return messages
 }
 
+// AllMemories returns every key/value in the memories table, most-
+// recently-updated first. Used at session start to dump the user's
+// durable facts into the soul's system prompt — so pilot doesn't
+// have to remember to call recall just to find out who you are.
+//
+// Caps at 50 entries to keep the prompt budget reasonable; if the
+// table grows beyond that, the oldest entries get filtered out at
+// inject time (kernel-side).
+func (s *SQLiteStore) AllMemories() ([]struct{ Key, Value string }, error) {
+	rows, err := s.db.Query(
+		`SELECT key, value FROM memories ORDER BY updated_at DESC LIMIT 50`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []struct{ Key, Value string }
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			continue
+		}
+		out = append(out, struct{ Key, Value string }{k, v})
+	}
+	return out, nil
+}
+
 func (s *SQLiteStore) Save(key, value string) (string, error) {
 	_, err := s.db.Exec(
 		`INSERT INTO memories (key, value, updated_at) VALUES (?, ?, ?)
