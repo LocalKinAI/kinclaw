@@ -1582,7 +1582,9 @@ contract, so the 50-app probe shell wrappers still work via
 ### Validation: 50-app probe + 10-task end-to-end
 
 While polishing v1.2.0, two empirical validation runs landed in
-`~/.localkin/research/`:
+`docs/research/` (originally `~/.localkin/research/` — moved into
+the repo on 2026-05-03 since this is kinclaw-specific evidence,
+not LocalKin family runtime data):
 
 - `50-app-validation.md` — AX-tree probe over 50 curated apps from
   6 categories (Apple Native / Apple System / Utilities / Apple Pro

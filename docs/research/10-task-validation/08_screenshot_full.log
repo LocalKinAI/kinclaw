@@ -1,0 +1,8 @@
+  [warning: skipping skills/maps_search_location/SKILL.md: parsing SKILL.md YAML: yaml: line 3: did not find expected ',' or ']']
+  [warning: skipping skills/reminders_add/SKILL.md: parsing SKILL.md YAML: yaml: line 4: found unexpected end of stream]
+[2m  LocalKin 1.2.0
+  Soul:     KinClaw Pilot (/Users/jackysun/Documents/Workspace/kinclaw/souls/pilot.soul.md)
+  Brain:    ollama / kimi-k2.5:cloud
+  Skills:   17 loaded[0m
+
+开始录屏，然后执行截图操作。稍等再查一下桌面是否有新生成的截图：看起来没有新生成的截图文件，可能在延迟保存。让我直接停止录屏：

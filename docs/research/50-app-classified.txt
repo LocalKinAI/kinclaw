@@ -1,0 +1,50 @@
+blank|Heavyweight / specialty|com.docker.docker|1|0|0|0|0|1|
+blank|Third-party Electron / cross-platform|us.zoom.xos|1|0|0|0|0|0|
+blank|Utilities folder|com.apple.screenshot.launcher|1|0|0|0|0|0|
+rich|Apple Native Everyday|com.apple.Home|256|4|0|210|8|188|
+rich|Apple Native Everyday|com.apple.Maps|294|6|1|230|8|204|
+rich|Apple Native Everyday|com.apple.MobileSMS|339|8|2|265|8|253|
+rich|Apple Native Everyday|com.apple.Music|427|16|0|289|7|272|
+rich|Apple Native Everyday|com.apple.Notes|3831|23|13|190|8|563|probe_timeout(5000ms)
+rich|Apple Native Everyday|com.apple.Photos|393|5|0|332|8|293|
+rich|Apple Native Everyday|com.apple.TV|372|10|0|245|8|241|
+rich|Apple Native Everyday|com.apple.findmy|279|12|0|221|7|209|
+rich|Apple Native Everyday|com.apple.iBooksX|309|6|0|254|7|229|
+rich|Apple Native Everyday|com.apple.iCal|383|8|0|239|7|312|
+rich|Apple Native Everyday|com.apple.mail|623|16|2|495|8|446|
+rich|Apple Native Everyday|com.apple.reminders|351|9|2|270|8|249|
+rich|Apple Native Everyday|com.apple.stocks|296|3|0|259|6|214|
+rich|Apple Native Everyday|com.apple.weather|218|4|1|169|8|155|
+rich|Apple Pro / iWork|com.apple.dt.Xcode|795|5|0|704|8|605|
+rich|Apple Pro / iWork|com.apple.iMovieApp|402|7|1|330|8|296|
+rich|Apple Pro / iWork|com.apple.iWork.Keynote|786|1|0|704|8|593|
+rich|Apple Pro / iWork|com.apple.iWork.Numbers|1318|56|41|714|8|656|
+rich|Apple Pro / iWork|com.apple.iWork.Pages|796|0|0|721|8|602|
+rich|Apple System / Utility|com.apple.AppStore|256|14|1|187|7|193|
+rich|Apple System / Utility|com.apple.FaceTime|222|7|0|178|8|158|
+rich|Apple System / Utility|com.apple.Preview|894|55|41|325|8|337|
+rich|Apple System / Utility|com.apple.QuickTimePlayerX|292|0|0|261|6|226|
+rich|Apple System / Utility|com.apple.Safari|1186|51|2|1013|8|948|
+rich|Apple System / Utility|com.apple.Stickies|298|3|2|256|6|232|
+rich|Apple System / Utility|com.apple.TextEdit|352|0|0|311|8|273|
+rich|Apple System / Utility|com.apple.VoiceMemos|261|6|1|210|6|194|
+rich|Apple System / Utility|com.apple.calculator|250|27|0|194|7|196|
+rich|Apple System / Utility|com.apple.clock|253|3|0|201|8|188|
+rich|Apple System / Utility|com.apple.freeform|459|0|0|410|8|342|
+rich|Apple System / Utility|com.apple.shortcuts|339|13|3|219|8|211|
+rich|Heavyweight / specialty|com.baidu.BaiduNetdisk-mac|150|3|0|122|6|110|
+rich|Heavyweight / specialty|com.tencent.xinWeChat|253|3|0|218|6|195|
+rich|Heavyweight / specialty|io.tailscale.ipn.macos|156|1|0|134|8|116|
+rich|Third-party Electron / cross-platform|com.anthropic.claudefordesktop|220|0|0|195|6|169|
+rich|Third-party Electron / cross-platform|com.google.Chrome|340|3|0|289|8|256|
+rich|Third-party Electron / cross-platform|com.microsoft.VSCode|494|0|0|449|8|380|
+rich|Third-party Electron / cross-platform|com.todesktop.230313mzl4w4u92|494|3|0|437|8|374|
+rich|Utilities folder|com.apple.ColorSyncUtility|234|15|1|188|6|175|
+rich|Utilities folder|com.apple.Console|348|8|1|255|7|238|
+rich|Utilities folder|com.apple.DiskUtility|355|14|1|239|7|223|
+rich|Utilities folder|com.apple.ScriptEditor2|3864|8|366|0|8|14|probe_timeout(5000ms)
+rich|Utilities folder|com.apple.SystemProfiler|333|7|51|183|7|164|
+rich|Utilities folder|com.apple.Terminal|420|21|4|338|6|295|
+shallow|Apple Native Everyday|com.apple.AddressBook|1964|0|4|0|8|34|probe_timeout(5000ms)
+shallow|Third-party Electron / cross-platform|com.hnc.Discord|34|0|0|22|5|20|
+shallow|Utilities folder|com.apple.ActivityMonitor|4172|0|0|0|7|2|probe_timeout(5000ms)

@@ -1,0 +1,8 @@
+  [warning: skipping skills/maps_search_location/SKILL.md: parsing SKILL.md YAML: yaml: line 3: did not find expected ',' or ']']
+  [warning: skipping skills/reminders_add/SKILL.md: parsing SKILL.md YAML: yaml: line 4: found unexpected end of stream]
+[2m  LocalKin 1.2.0
+  Soul:     KinClaw Pilot (/Users/jackysun/Documents/Workspace/kinclaw/souls/pilot.soul.md)
+  Brain:    ollama / kimi-k2.5:cloud
+  Skills:   17 loaded[0m
+
+开始录屏，然后打开 Activity Monitor 查看 CPU 占用。Activity Monitor 当前显示的是 Memory 标签。点击 CPU 标签查看 CPU 占用。
