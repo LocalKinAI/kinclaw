@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	version = "1.8.0"
+	version = "1.9.0"
 	// maxToolRounds caps the tool-call sequence per user turn. 20 was
 	// fine for kernel-only flows but compound demos (record start + tts
 	// + multi-step ui find/click/verify + tts + record stop) easily

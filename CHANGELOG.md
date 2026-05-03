@@ -1,5 +1,187 @@
 # Changelog
 
+## [1.9.0] - 2026-05-02
+
+**Two big features: `browser_session` super-skill (wrapping
+[browser-use](https://github.com/browser-use/browser-use), 91K stars)
++ complete memory system overhaul.** Real-world validation drove
+both — a friend asked KinClaw to find apartments matching specific
+criteria across 5 sites, and KinClaw + browser_session actually
+delivered. That run also surfaced "KinClaw doesn't remember
+anything across restarts" — fixed in this release.
+
+### Added — `browser_session` super-skill
+
+`skills/browser_session/` — first member of LocalKin's "super-skill"
+pattern: a thin SKILL.md adapter wrapping a battle-tested third-party
+OSS framework (browser-use's autonomous browser automation, 91K
+stars on GitHub) so it's callable from any soul that lists
+`browser_session` in `permissions.skills.enable`.
+
+```
+skills/browser_session/
+├── SKILL.md      — kinclaw skill manifest, 9 schema params
+├── runner.py     — wraps browser_use.Agent, env-driven LLM picker
+└── setup.sh      — first-time installer (per-skill venv, ~3-5 min)
+```
+
+When `web` (cheap one-shot) isn't enough — login + navigate + extract,
+multi-page wizards, persistent session — browser_session takes over.
+The framework runs its own LLM-driven agent loop with DOM-numbered
+elements + screenshot reasoning, returns a single result string to
+the kinclaw kernel.
+
+LLM selection is env-driven, in order: `ANTHROPIC_API_KEY` → Claude,
+`OPENAI_API_KEY` → GPT-4o, `OLLAMA_BASE_URL` → local Ollama via
+OpenAI-compat (default model `kimi-k2.6:cloud`). Override the model
+with `BROWSER_USE_MODEL=...`.
+
+Pilot soul gets a "Web 任务的两层级联" doctrine matching the existing
+read/drive cascades: trigger `browser_session` when the task has ≥2
+interaction verbs (login + navigate, fill + submit + verify), default
+to `web` for one-shot ops.
+
+The "super-skill" pattern is for any heavy framework worth hosting
+rather than reinventing — future candidates: `video_edit` (ffmpeg
++ scene detection), `rag_search` (grep / vector DB), `audio_clone`
+(F5-TTS), `pdf_extract` (marker / unstructured.io).
+
+#### Fixes
+
+- `runner.py` exits 0 on transient mid-stream LLM timeouts that the
+  browser-use agent recovers from. Was using `has_errors()`
+  (over-eager); now uses `is_successful()` — the real outcome signal.
+  Real example: a 5-step Wikipedia task hit one 75s LLM timeout, the
+  agent retried the step and succeeded, but the runner exited 1 and
+  pilot reported "tool error" despite a perfect final result.
+
+### Changed — memory system: from "exists in schema" to "actually works"
+
+Pre-1.9 the memory subsystem was three layers of "almost works":
+
+- ✓ `pkg/memory/SQLiteStore` had `Save(k,v)` + `Recall(q)`
+- ✓ `pkg/skill/native.go` had `memorySkill` wrapping it
+- ✓ `memory.db` schema had the `memories` k-v table
+- ✗ but `buildRegistry` never called `NewMemorySkill(store)`
+- ✗ pilot.soul.md didn't list "memory" in `skills.enable`
+- ✗ session_id was `<soul-name>-<pid>` so every kinclaw restart =
+  empty conversation history
+- ✗ even when memories WERE saved, pilot only saw them if it
+  explicitly called `recall` mid-conversation
+
+Five commits later all of that works, and a sixth migrates pre-1.9
+data forward.
+
+#### Memory now actually persists user-facts across sessions
+
+```
+Session 1 (PID A):  "记一下:Sarah 在 SF 找海景 1bed ≤$2500"
+                    → memory.save key=friends.Sarah.housing_search ✓
+[exit kinclaw]
+Session 2 (PID B):  (auto-dumped at boot via system prompt prefix)
+                    "Sarah 找什么样的房?"
+                    → answers from prompt, no recall call needed ✓
+```
+
+The full pattern:
+- pilot soul lists `memory` in `permissions.skills.enable`
+- `buildRegistry` registers `NewMemorySkill(store)` (caps at the
+  store's lifetime — survives /soul switches via sess.store
+  threading)
+- pilot soul gets a `learn` vs `memory` doctrine: `learn` for
+  technical app/system facts, `memory` for user/friend/project facts
+- On every session boot, all rows in the `memories` k-v table get
+  injected into the soul's system prompt under "## 用户长期记忆" —
+  pilot doesn't need to remember to call recall, the facts are just
+  there
+
+#### Cross-process conversation continuity
+
+session_id changed from `<soul-name>-<pid>` to just `<soul-name>`.
+Restarting kinclaw now resumes the same thread — last 50 messages
+get loaded back into the brain regardless of which process saved
+them. Demo (real run, both directions verified):
+
+```
+Session 1: "我刚买了一只龙虾叫 Mr. Pinch"
+[exit kinclaw, fresh process]
+Session 2: "我刚才说我的龙虾叫啥?"  →  "Mr. Pinch 🦞"  (read from history)
+```
+
+Two adjacent fixes:
+- `/soul` and `/reload` REPL handlers now update `sess.id` along
+  with `sess.soul`. Previously sess.id stayed bound to the original
+  soul, so post-switch messages saved to the wrong bucket — silent
+  bug that made cross-soul memory weird.
+- LoadHistory truncates each message's content at 4KB before
+  returning. A 50KB historical tool output (yahoo finance dump,
+  giant AX tree) won't blow the prompt budget; a "[truncated]"
+  suffix tells pilot the original was longer.
+
+#### Episodic search — `memory action=recall scope=history`
+
+The k-v `memories` table is small + curated (50-ish rows of facts
+pilot decided to durable-save). The raw `messages` table has
+everything ever said — KinClaw Pilot's bucket alone is 3,058 rows
+post-migration. Until 1.9 there was no way for any soul to search
+that.
+
+```
+memory action=recall query=X                     → k-v facts (default)
+memory action=recall query=X scope=history       → LIKE search messages
+memory action=recall query=X scope=all           → both, two sections
+memory action=recall query=X scope=history limit=20  → cap excerpts
+```
+
+Each excerpt comes back tagged `[session_id · YYYY-MM-DD HH:MM ·
+role]` and truncated to 240 chars. Pilot soul gets a doctrine
+explaining when to use each scope: auto-dump covers facts at boot,
+scope=history is for "上次咱聊到 X 那次", scope=all when unsure.
+
+LIKE-based, not embedding-based. The grep-is-all-you-need paper
+(LocalKin family) makes the case that LIKE/grep over moderate
+corpus sizes (10K-1M messages) often beats embeddings on relevance
++ speed. Future upgrade path stays open if false-positive rate gets
+ugly on common keywords.
+
+#### One-shot migration of old PID-suffixed session_ids
+
+OpenMemory now scans for legacy session_ids matching `^(.+)-\d+$`,
+strips the `-<pid>` suffix in a single transaction. Idempotent —
+runs once, subsequent OpenMemory calls find nothing to migrate.
+
+```
+Before: 918 distinct session_ids (across all souls)
+After:  461 distinct session_ids
+Migrated: 467 PID-suffixed sessions consolidated
+
+KinClaw Pilot bucket: 0 → 3,058 messages
+```
+
+The regex anchors on the LAST `-<digits>` so soul names with internal
+hyphens (`kin-code-12345` → `kin-code`) roll up correctly. False-
+positive risk only on souls named like `X-2026` — not a real-world
+pattern.
+
+### Documented — ~/.localkin/ shared with the LocalKin family
+
+This was always intentional — KinClaw + LocalKin runtime + sibling
+products (kin-code, etc) share `~/.localkin/memory.db` and
+`~/.localkin/learned.md` so the lobster family acts as one brain.
+Soul naming convention prevents collision (KinClaw souls prefix
+"KinClaw " vs LocalKin's bare names).
+
+Now codified:
+- Long doc comment above `DefaultDBPath()` explaining why shared
+- New "Data location" section in README.md with file table
+- `KINCLAW_DATA_DIR` env override for isolation:
+  ```
+  KINCLAW_DATA_DIR=~/.kinclaw kinclaw -soul ...
+  ```
+  Tilde expansion handled. Affects memory.db only for now;
+  learned.md + serve-sessions/ stay shared until a unified data-dir
+  hook lands.
+
 ## [1.8.0] - 2026-05-01
 
 **Browser-based floating chat UI: `kinclaw serve`.** KinClaw was a

@@ -135,11 +135,29 @@ ship as opt-in sidecars selected via env var:
 | `{{platform}}` | `runtime.GOOS` mapped to `macOS`/`Linux`/`Windows` |
 | `{{arch}}` | `runtime.GOARCH` (`arm64` / `amd64`) |
 | `{{location}}` `{{lat}}` `{{lon}}` `{{city}}` `{{country}}` | `$KINCLAW_LOCATION="lat,lon[,city[,country]]"` env var |
-| `## 已学到的` section | `~/.localkin/learned.md` (8KB tail) |
+| `## 已学到的` section | `~/.localkin/learned.md` (8KB tail) — **technical doctrine** across sessions |
+| `## 用户长期记忆` section | `memories` k-v table in `~/.localkin/memory.db` — **user-facts** across sessions (v1.9+) |
+| Last 50 messages of `<soul-name>` session | `messages` table in `~/.localkin/memory.db` — **conversation continuity** across kinclaw restarts (v1.9+) |
 
 After a few weeks of use, the agent boots with rich context: knows
-its OS, knows the user's general location + timezone, and remembers
-what worked + what didn't on every app it has driven.
+its OS + general location, remembers what worked on which app, and
+— crucially since v1.9 — **picks up where the conversation left
+off**. Restart kinclaw → same `<soul-name>` thread continues, same
+durable user-facts in working memory.
+
+**Two memory layers, two recall scopes:**
+
+```
+memory action=save  key=<dotted.path>  value=<fact>     # store user-fact
+memory action=recall query=X                            # search k-v facts (default)
+memory action=recall query=X scope=history              # LIKE-search the raw chat log
+memory action=recall query=X scope=all                  # both, two sections
+```
+
+`learn topic=<bundle_id> note=<...>` is the technical-doctrine sibling
+(writes to learned.md). Rule of thumb: **learn** for "how X system
+behaves" (app schema, error codes, shortcut tricks). **memory** for
+"who the user is" (name, location, friends, projects, preferences).
 
 ### Data location — `~/.localkin/` (shared with the family)
 
@@ -434,6 +452,62 @@ LLM: web action=type selector="input[name=acct]" text="..."
 
 First launch downloads Chromium (~500 MB) into Playwright's cache.
 Subsequent launches reuse it.
+
+### `browser_session` — multi-step browser automation (super-skill, v1.9+)
+
+When `web` (one-shot Playwright) isn't enough — login flows that
+span 5 pages, forms gated behind authenticated state, JS-heavy SPAs
+where DOM-numbered element targeting beats CSS selectors — KinClaw
+hands off to [browser-use](https://github.com/browser-use/browser-use)
+(91K stars, MIT). The framework runs its own LLM-driven planning
+loop with persistent session, screenshot-based visual reasoning, and
+DOM enumeration; KinClaw treats it as one tool call: in goes a
+high-level task description, out comes the result.
+
+```
+LLM: browser_session task="Open Hacker News, find the top story, return title + URL"
+     → "Top story: Dav2d (https://videolan.org), 215 points, 3h ago"
+
+LLM: browser_session task="Search Zillow for 1bed apartments in SF
+     under $2500 with ocean view, return the top 5 with addresses"
+     → ...full ranked list with links...
+```
+
+Cost: ~10-20s cold start (browser warmup + LLM init), ~2-5s per
+interaction step. Don't use for one-shot fetches (`web` is faster).
+Pilot soul has a doctrine that auto-routes: ≥2 interaction verbs
+in the task description = `browser_session`, otherwise `web`.
+
+First-time setup (one machine, ~5 min):
+
+```bash
+cd skills/browser_session
+./setup.sh        # creates ./.venv/, installs browser-use + Chromium
+```
+
+LLM provider is env-driven, in order: `ANTHROPIC_API_KEY` (Claude),
+`OPENAI_API_KEY` (GPT-4o), `OLLAMA_BASE_URL` (local Ollama via
+OpenAI-compat). Override the model with `BROWSER_USE_MODEL=...`.
+
+#### The "super-skill" pattern
+
+`browser_session` is the first instance of a deliberate pattern:
+**wrap a battle-tested third-party OSS framework as a thin SKILL.md,
+make it callable from any soul that opts in via
+`permissions.skills.enable`**. The kinclaw kernel doesn't know or
+care that there's an entire LLM-driven planning agent inside; it
+just sees one tool, one input, one output.
+
+Future super-skill candidates (each ~half day to wrap):
+
+- `video_edit` — ffmpeg + AI scene detection + auto-subtitle
+- `rag_search` — grep-is-all-you-need or any vector DB
+- `audio_clone` — F5-TTS / OpenVoice for voice cloning
+- `pdf_extract` — marker / unstructured.io
+- `yt_upload` — Google API + auto metadata
+
+The pattern is "thin soul, fat skill" pushed to its useful extreme:
+LocalKin family hosts; we don't reinvent.
 
 ## Audio I/O — talk to your Mac, hear it back
 
