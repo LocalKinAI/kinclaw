@@ -16,7 +16,55 @@ import (
 
 type SQLiteStore struct{ db *sql.DB }
 
+// DefaultDBPath returns the path KinClaw uses to persist conversation
+// history + durable memories.
+//
+// === Shared with the LocalKin family (intentional design) ===
+//
+// The default path is "~/.localkin/memory.db" — INTENTIONALLY shared
+// with the LocalKin runtime, kin-code, and any other sibling product
+// from the same family. They all read/write this single SQLite file.
+// Each soul's messages live in its own session_id bucket; soul naming
+// convention prevents collision (KinClaw souls prefix with "KinClaw ").
+//
+// Why shared:
+//   - Cross-product user-facts: telling LocalKin's coder "I'm in SF"
+//     means KinClaw's pilot also knows. The lobster family acts as one
+//     brain regardless of which binary is the entry point.
+//   - learned.md doctrine carries across (~/.localkin/learned.md is
+//     shared too).
+//   - Single source of truth — one file to back up, debug, migrate.
+//
+// Why this is OK:
+//   - Same machine, same user — there's no logical reason kinclaw's
+//     pilot should forget what LocalKin's pilot was just told.
+//   - Soul names are namespaced (KinClaw <X> vs <X>) so message
+//     buckets don't accidentally merge across products.
+//   - Schema changes are coordinated (one developer maintains both).
+//
+// === Override for isolation ===
+//
+// Set KINCLAW_DATA_DIR to point at a different directory if you want
+// KinClaw's storage isolated from LocalKin (e.g., shipping KinClaw
+// alone to users who don't have LocalKin installed, or separating
+// "work" and "personal" agent contexts):
+//
+//   KINCLAW_DATA_DIR=~/.kinclaw kinclaw -soul ...
+//   KINCLAW_DATA_DIR=/tmp/kinclaw-test kinclaw ...
+//
+// Env override only affects the memory.db path; learned.md and
+// serve-sessions/ still resolve under ~/.localkin/ until those are
+// migrated to use the same env var.
 func DefaultDBPath() string {
+	if dir := os.Getenv("KINCLAW_DATA_DIR"); dir != "" {
+		// expand leading ~ since shell doesn't always do it for env
+		if strings.HasPrefix(dir, "~/") {
+			if home, err := os.UserHomeDir(); err == nil {
+				dir = filepath.Join(home, dir[2:])
+			}
+		}
+		return filepath.Join(dir, "memory.db")
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".localkin", "memory.db")
 }

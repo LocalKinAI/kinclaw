@@ -141,6 +141,37 @@ After a few weeks of use, the agent boots with rich context: knows
 its OS, knows the user's general location + timezone, and remembers
 what worked + what didn't on every app it has driven.
 
+### Data location — `~/.localkin/` (shared with the family)
+
+KinClaw stores its persistent state in `~/.localkin/`, **the same
+directory used by the LocalKin runtime and other sibling products in
+the family** (kin-code, etc). This is intentional:
+
+| File | Purpose | Shared with family |
+|---|---|---|
+| `~/.localkin/memory.db` | conversation history + durable user-facts (SQLite) | ✓ yes |
+| `~/.localkin/learned.md` | technical doctrine learned across sessions (8KB tail injected at boot) | ✓ yes |
+| `~/.localkin/serve-sessions/<ts>.jsonl` | `kinclaw serve` event recordings (replayable) | KinClaw-only |
+| `~/Library/Caches/kinclaw/` | screenshots + recordings + per-soul output | KinClaw-only |
+
+**Why shared**: telling LocalKin's pilot "I live in SF" should mean
+KinClaw's pilot also knows. The lobster family is meant to feel like
+one brain regardless of which binary is the entry point. Soul names
+are namespaced (`KinClaw <X>` vs `<X>`) to prevent accidental
+cross-product session merges.
+
+**Override for isolation**: set `$KINCLAW_DATA_DIR` to point KinClaw
+at its own directory:
+
+```bash
+KINCLAW_DATA_DIR=~/.kinclaw kinclaw -soul souls/pilot.soul.md
+KINCLAW_DATA_DIR=/tmp/kinclaw-fresh kinclaw -soul ...    # ephemeral test
+```
+
+The override currently affects `memory.db` only; `learned.md` and
+`serve-sessions/` still resolve under `~/.localkin/`. Migration to a
+single override hook is a follow-up.
+
 ## Architecture
 
 ```
