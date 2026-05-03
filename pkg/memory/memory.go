@@ -31,8 +31,10 @@ type SQLiteStore struct{ db *sql.DB }
 //   - Cross-product user-facts: telling LocalKin's coder "I'm in SF"
 //     means KinClaw's pilot also knows. The lobster family acts as one
 //     brain regardless of which binary is the entry point.
-//   - learned.md doctrine carries across (~/.localkin/learned.md is
-//     shared too).
+//   - learned.md doctrine carries across (per-product, lives at
+//     ~/.kinclaw/learned.md as of 2026-05-03 — used to be shared
+//     under ~/.localkin/ but moved to product-specific home along
+//     with serve-sessions and harvest artifacts).
 //   - Single source of truth — one file to back up, debug, migrate.
 //
 // Why this is OK:
@@ -53,8 +55,8 @@ type SQLiteStore struct{ db *sql.DB }
 //   KINCLAW_DATA_DIR=/tmp/kinclaw-test kinclaw ...
 //
 // Env override only affects the memory.db path; learned.md and
-// serve-sessions/ still resolve under ~/.localkin/ until those are
-// migrated to use the same env var.
+// serve-sessions/ resolve under ~/.kinclaw/ regardless. (To
+// override those too, separate envs are a future step.)
 func DefaultDBPath() string {
 	if dir := os.Getenv("KINCLAW_DATA_DIR"); dir != "" {
 		// expand leading ~ since shell doesn't always do it for env

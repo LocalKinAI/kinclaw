@@ -18,7 +18,7 @@ import (
 //
 // Layout (v1.6+):
 //
-//	~/.localkin/harvest/staged/<source>/<candidate>/
+//	~/.kinclaw/harvest/staged/<source>/<candidate>/
 //	  ├── original.md         (raw content of the external SKILL.md)
 //	  ├── judge.txt           (curator's full response — verdict / reason / domain)
 //	  └── meta.txt            (source url / file path / staged_at / verdict)
@@ -28,7 +28,7 @@ import (
 // spawns coder, attempts to forge a real KinClaw SKILL.md, routes
 // the result to ./skills/ (success) or ./skills/library/ (defer).
 func StagedRoot(home string) string {
-	return filepath.Join(home, ".localkin", "harvest", "staged")
+	return filepath.Join(home, ".kinclaw", "harvest", "staged")
 }
 
 // StagedSkill describes one staged candidate as exposed to

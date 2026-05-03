@@ -222,13 +222,13 @@ func ParseSoul(data []byte) (*Soul, error) {
 	// sessions. Genesis Protocol's memory layer — "every user's KinClaw
 	// is unique after a month" — is grounded here.
 	if learned := readLearnedNotebook(); learned != "" {
-		prompt += "\n\n## 已学到的（across sessions, from ~/.localkin/learned.md）\n\n" + learned
+		prompt += "\n\n## 已学到的（across sessions, from ~/.kinclaw/learned.md）\n\n" + learned
 	}
 	prompt += securitySuffix
 	return &Soul{Meta: meta, SystemPrompt: prompt}, nil
 }
 
-// readLearnedNotebook reads ~/.localkin/learned.md if it exists and
+// readLearnedNotebook reads ~/.kinclaw/learned.md if it exists and
 // returns the trimmed content. Caps at 8KB so a runaway notebook can't
 // blow the agent's context. Empty string on any failure / missing file
 // — boot proceeds normally.
@@ -237,7 +237,7 @@ func readLearnedNotebook() string {
 	if err != nil || home == "" {
 		return ""
 	}
-	path := home + "/.localkin/learned.md"
+	path := home + "/.kinclaw/learned.md"
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""

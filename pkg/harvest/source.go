@@ -15,7 +15,7 @@ import (
 // One cache per source name (not per URL) — renaming a source forces a
 // fresh clone, which is fine.
 func SourceCacheDir(home, sourceName string) string {
-	return filepath.Join(home, ".localkin", "harvest", "sources", sourceName)
+	return filepath.Join(home, ".kinclaw", "harvest", "sources", sourceName)
 }
 
 // PullSource ensures the source's git repo exists locally and is up to

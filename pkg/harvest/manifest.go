@@ -10,7 +10,7 @@
 //	  → translate to SKILL.md form (identity for v1; cross-format later)
 //	  → critic soul review (annotation, doesn't auto-reject)
 //	  → forge quality gate v2 (auto-rejects malformed)
-//	  → stage to ~/.localkin/harvest/staged/<source>/<skill-name>/
+//	  → stage to ~/.kinclaw/harvest/staged/<source>/<skill-name>/
 //
 // Final acceptance into ./skills/ is always a manual step. The pipeline
 // never auto-merges. This is the explicit design choice (Jacky 2026-04-28):
@@ -25,7 +25,9 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Manifest is the on-disk shape of ~/.localkin/harvest.toml.
+// Manifest is the on-disk shape of ~/.kinclaw/harvest.toml.
+// (Pre-2026-05-03 this lived at ~/.localkin/harvest.toml. Moved
+// to ~/.kinclaw/ since harvest is kinclaw-specific config.)
 type Manifest struct {
 	Sources []Source `toml:"source"`
 }
@@ -94,12 +96,12 @@ func (m *Manifest) FindSource(name string) *Source {
 	return nil
 }
 
-// DefaultManifestPath is ~/.localkin/harvest.toml (canonical location).
+// DefaultManifestPath is ~/.kinclaw/harvest.toml (canonical location).
 // Falls back to ./harvest.toml if HOME is unset (CI / sandbox edge cases).
 func DefaultManifestPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "harvest.toml"
 	}
-	return filepath.Join(home, ".localkin", "harvest.toml")
+	return filepath.Join(home, ".kinclaw", "harvest.toml")
 }

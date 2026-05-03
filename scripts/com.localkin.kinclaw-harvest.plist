@@ -10,7 +10,7 @@
     launchctl list | grep kinclaw-harvest
 
   Tail logs:
-    tail -f ~/.localkin/harvest/cron.log
+    tail -f ~/.kinclaw/harvest/cron.log
 
   Notes:
     - Runs --no-critic --no-inspire by default. Both are LLM calls that
@@ -47,9 +47,9 @@
   </dict>
 
   <key>StandardOutPath</key>
-  <string>/Users/USERNAME/.localkin/harvest/cron.log</string>
+  <string>/Users/USERNAME/.kinclaw/harvest/cron.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/USERNAME/.localkin/harvest/cron.log</string>
+  <string>/Users/USERNAME/.kinclaw/harvest/cron.log</string>
 
   <key>RunAtLoad</key>
   <false/>

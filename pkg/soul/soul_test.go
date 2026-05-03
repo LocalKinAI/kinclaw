@@ -373,18 +373,18 @@ func TestTimezoneSubstitution(t *testing.T) {
 }
 
 // TestLoadSoul_LearnedNotebookInjection covers the kernel-level
-// injection of ~/.localkin/learned.md into every soul's system
+// injection of ~/.kinclaw/learned.md into every soul's system
 // prompt. This is the persistence layer for Genesis Protocol — the
 // agent's notebook of learnings travels with it across sessions.
 func TestLoadSoul_LearnedNotebookInjection(t *testing.T) {
 	// Redirect $HOME so we don't touch the user's real notebook.
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
-	if err := os.MkdirAll(tempHome+"/.localkin", 0755); err != nil {
+	if err := os.MkdirAll(tempHome+"/.kinclaw", 0755); err != nil {
 		t.Fatal(err)
 	}
 	notebook := "## com.apple.testapp\n- foo\n- bar\n"
-	if err := os.WriteFile(tempHome+"/.localkin/learned.md", []byte(notebook), 0644); err != nil {
+	if err := os.WriteFile(tempHome+"/.kinclaw/learned.md", []byte(notebook), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -429,7 +429,7 @@ func TestLoadSoul_NoLearnedNotebook(t *testing.T) {
 func TestLoadSoul_LearnedNotebookCappedAtSize(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
-	os.MkdirAll(tempHome+"/.localkin", 0755)
+	os.MkdirAll(tempHome+"/.kinclaw", 0755)
 
 	// Generate ~12KB notebook with marker lines at the start and end.
 	var buf strings.Builder
@@ -438,7 +438,7 @@ func TestLoadSoul_LearnedNotebookCappedAtSize(t *testing.T) {
 		buf.WriteString("padding line that should be truncated\n")
 	}
 	buf.WriteString("MARKER_END_RECENT\n")
-	os.WriteFile(tempHome+"/.localkin/learned.md", []byte(buf.String()), 0644)
+	os.WriteFile(tempHome+"/.kinclaw/learned.md", []byte(buf.String()), 0644)
 
 	dir := t.TempDir()
 	soulPath := dir + "/test.soul.md"

@@ -116,11 +116,15 @@ Flags:
 
 	// /file allow-list. Anywhere a skill might write a screenshot or
 	// recording. ~/Library/Caches/kinclaw is the default OutputDir for
-	// screen + record; ~/.localkin holds harvest artifacts and audio
-	// caches; ./output is where marketing demos and similar land.
+	// screen + record; ~/.kinclaw holds product-specific state (serve
+	// recordings, harvest artifacts, learned.md); ~/.localkin holds
+	// holds shared family runtime (memory.db, souls, audio caches —
+	// some of those skills emit /file URLs from there); ./output is
+	// where marketing demos and similar land.
 	home := homeDir()
 	allowed := []string{
 		filepath.Join(home, "Library", "Caches", "kinclaw"),
+		filepath.Join(home, ".kinclaw"),
 		filepath.Join(home, ".localkin"),
 		"./output",
 	}
@@ -256,7 +260,7 @@ Flags:
 	// stays registered (returns 501) in case a future tool wants to
 	// proxy a screenshot through the same path.
 
-	// Per-server-run JSONL recording. ~/.localkin/serve-sessions/
+	// Per-server-run JSONL recording. ~/.kinclaw/serve-sessions/
 	// <YYYYMMDD-HHMMSS>.jsonl, one line per Event. `kinclaw serve
 	// --replay <file>` plays it back. Disabled with -no-record.
 	var recordPath string
@@ -563,11 +567,15 @@ func (r *sessionRecorder) close() {
 	r.mu.Unlock()
 }
 
-// openSessionRecorder creates ~/.localkin/serve-sessions/<ts>.jsonl
+// openSessionRecorder creates ~/.kinclaw/serve-sessions/<ts>.jsonl
 // and returns the recorder + its path. Caller installs r.log as the
 // EventLogger and defers r.close() before exit.
+//
+// Pre-2026-05-03 this was ~/.localkin/serve-sessions/ — moved to
+// ~/.kinclaw/ since serve recordings are kinclaw-specific output,
+// not LocalKin family runtime data.
 func openSessionRecorder() (*sessionRecorder, string, error) {
-	dir := filepath.Join(homeDir(), ".localkin", "serve-sessions")
+	dir := filepath.Join(homeDir(), ".kinclaw", "serve-sessions")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, "", err
 	}
@@ -624,6 +632,7 @@ func runReplayServer(ctx context.Context, addr, replayPath string) {
 	home := homeDir()
 	allowed := []string{
 		filepath.Join(home, "Library", "Caches", "kinclaw"),
+		filepath.Join(home, ".kinclaw"),
 		filepath.Join(home, ".localkin"),
 		"./output",
 	}
