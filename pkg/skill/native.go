@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -334,6 +335,10 @@ func htmlToText(s string) string {
 type MemoryBackend interface {
 	Save(key, value string) (string, error)
 	Recall(query string) (string, error)
+	// RecallMessages searches the raw messages table (every chat
+	// message ever, not just curated facts). limit caps the number
+	// of returned excerpts so the prompt budget doesn't blow.
+	RecallMessages(query string, limit int) (string, error)
 }
 
 type memorySkill struct{ store MemoryBackend }
@@ -341,15 +346,23 @@ type memorySkill struct{ store MemoryBackend }
 func NewMemorySkill(store MemoryBackend) Skill  { return &memorySkill{store: store} }
 func (s *memorySkill) Name() string             { return "memory" }
 func (s *memorySkill) Description() string {
-	return "Save or recall persistent memories. Use action=save to store key-value pairs, action=recall to search memories by query."
+	return "Save or recall persistent memories. " +
+		"action=save: store user-facts in the durable k-v table. " +
+		"action=recall: search those k-v facts by query (default scope). " +
+		"action=recall scope=history: search the raw conversation log " +
+		"(every message ever, across all past kinclaw sessions of this soul) " +
+		"— use this when the user asks 'what did we say about X' / 'last time we discussed Y' " +
+		"and the answer isn't in the curated facts."
 }
 func (s *memorySkill) ToolDef() json.RawMessage {
 	return MakeToolDef("memory", s.Description(),
 		map[string]map[string]string{
 			"action": {"type": "string", "description": "save or recall"},
-			"key":    {"type": "string", "description": "Memory key (for save)"},
+			"key":    {"type": "string", "description": "Memory key (for save) — use dotted path like 'friends.Sarah.housing'"},
 			"value":  {"type": "string", "description": "Memory value (for save)"},
 			"query":  {"type": "string", "description": "Search query (for recall)"},
+			"scope":  {"type": "string", "description": "For recall: 'memories' (default, k-v facts) or 'history' (raw chat log via LIKE search). 'all' searches both."},
+			"limit":  {"type": "string", "description": "For recall scope=history/all: max excerpts to return (default 10)"},
 		}, []string{"action"})
 }
 
@@ -364,7 +377,25 @@ func (s *memorySkill) Execute(params map[string]string) (string, error) {
 		if params["query"] == "" {
 			return "", fmt.Errorf("query is required for recall")
 		}
-		return s.store.Recall(params["query"])
+		// Parse optional limit; tolerate non-numeric (just default).
+		limit := 10
+		if l := params["limit"]; l != "" {
+			if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 100 {
+				limit = n
+			}
+		}
+		switch params["scope"] {
+		case "", "memories":
+			return s.store.Recall(params["query"])
+		case "history", "msgs", "messages":
+			return s.store.RecallMessages(params["query"], limit)
+		case "all", "both":
+			a, _ := s.store.Recall(params["query"])
+			b, _ := s.store.RecallMessages(params["query"], limit)
+			return "## memories k-v\n" + a + "\n\n## messages history\n" + b, nil
+		default:
+			return "", fmt.Errorf("scope must be 'memories' / 'history' / 'all' (got %q)", params["scope"])
+		}
 	default:
 		return "", fmt.Errorf("action must be 'save' or 'recall'")
 	}

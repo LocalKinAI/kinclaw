@@ -305,4 +305,62 @@ func (s *SQLiteStore) Recall(query string) (string, error) {
 	return strings.Join(results, "\n"), nil
 }
 
+// RecallMessages searches the raw conversation history (messages
+// table) for substring matches against `query`. Returns formatted
+// excerpts with session_id + role + truncated content, most-recent
+// first.
+//
+// This complements Recall(): Recall is for curated user-facts in
+// the memories k-v table (small, hand-saved); RecallMessages is for
+// "I remember we discussed X — what was that exactly?" (big,
+// uncurated stream of every message ever).
+//
+// LIKE-based — fast on tens of thousands of rows, doesn't need an
+// embedding model. False-positive risk is real (search "lobster"
+// matches every Mr. Pinch joke too), so cap results at the limit
+// param (caller controls; default 10) to keep the prompt budget
+// reasonable. For semantic recall over many false-positive cases,
+// future work would add embeddings — see grep-is-all-you-need paper
+// for an alternative approach that also scales without a vector DB.
+//
+// Each excerpt is truncated to 240 chars so a 50KB tool dump
+// matched on a single keyword doesn't drown the response.
+func (s *SQLiteStore) RecallMessages(query string, limit int) (string, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.db.Query(
+		`SELECT session_id, role, content, created_at FROM messages
+		 WHERE content LIKE ?
+		 ORDER BY id DESC LIMIT ?`,
+		"%"+query+"%", limit,
+	)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var results []string
+	for rows.Next() {
+		var sid, role, content, created string
+		if err := rows.Scan(&sid, &role, &content, &created); err != nil {
+			continue
+		}
+		// Truncate per-row so one giant message doesn't blow context.
+		const excerptCap = 240
+		if len(content) > excerptCap {
+			content = content[:excerptCap] + "…"
+		}
+		// Trim time to date+hour for legibility.
+		shortTime := created
+		if len(shortTime) >= 16 {
+			shortTime = shortTime[:16]
+		}
+		results = append(results, fmt.Sprintf("[%s · %s · %s] %s", sid, shortTime, role, content))
+	}
+	if len(results) == 0 {
+		return "No messages found matching: " + query, nil
+	}
+	return strings.Join(results, "\n\n"), nil
+}
+
 func (s *SQLiteStore) Close() error { return s.db.Close() }
