@@ -190,7 +190,7 @@ func newSession(soulPath string, debug bool) (*session, error) {
 		fmt.Fprintf(os.Stderr, "Warning: memory unavailable: %v\n", err)
 	}
 
-	reg := buildRegistry(s)
+	reg := buildRegistry(s, store)
 
 	sessionID := fmt.Sprintf("%s-%d", s.Meta.Name, os.Getpid())
 	var history []brain.Message
@@ -206,7 +206,7 @@ func newSession(soulPath string, debug bool) (*session, error) {
 	}, nil
 }
 
-func buildRegistry(s *soul.Soul) *skill.Registry {
+func buildRegistry(s *soul.Soul, store *memory.SQLiteStore) *skill.Registry {
 	reg := skill.NewRegistry()
 	skillsDir := "./skills"
 	if s.Meta.Skills.Dir != "" {
@@ -222,6 +222,13 @@ func buildRegistry(s *soul.Soul) *skill.Registry {
 	if s.Meta.Permissions.Network {
 		reg.Register(skill.NewWebFetchSkill())
 		reg.Register(skill.NewWebSearchSkill())
+	}
+	// Persistent k-v memory across sessions. Only registers if the
+	// SQLite store opened cleanly (otherwise the soul falls back to
+	// learned.md doctrine + per-session message history). Pilot etc.
+	// gates access via permissions.skills.enable: ["memory"].
+	if store != nil {
+		reg.Register(skill.NewMemorySkill(store))
 	}
 	// KinClaw computer-use claws — macOS only; each gated by its own bit.
 	// On non-darwin builds these register no-op skills that return a clean
@@ -481,7 +488,7 @@ func handleCommand(ctx context.Context, sess *session, input string) bool {
 			break
 		}
 		sess.soul = s
-		sess.registry = buildRegistry(s)
+		sess.registry = buildRegistry(s, sess.store)
 		sess.toolDefs = sess.registry.FilteredToolDefs(s.Meta.Skills.Enable)
 		fmt.Printf("\033[2mReloaded %s (%d skills)\033[0m\n", s.Meta.Name, len(sess.toolDefs))
 
@@ -501,7 +508,7 @@ func handleCommand(ctx context.Context, sess *session, input string) bool {
 			}
 			sess.soul = s
 			sess.soulPath = path
-			sess.registry = buildRegistry(s)
+			sess.registry = buildRegistry(s, sess.store)
 			sess.toolDefs = sess.registry.FilteredToolDefs(s.Meta.Skills.Enable)
 			sess.history = nil
 			fmt.Printf("\033[2mSwitched to %s (%s)\033[0m\n", s.Meta.Name, path)
