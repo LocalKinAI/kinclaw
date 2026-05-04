@@ -37,6 +37,12 @@ import (
 )
 
 func runServe(args []string) {
+	// When kinclaw runs as a subprocess (typically spawned by KinClaw
+	// Mac), watch for our parent dying and exit cleanly instead of
+	// being orphaned to launchd. Standalone CLI runs (parent = shell,
+	// or already pid 1) get a no-op.
+	startOrphanWatch()
+
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	soulPath := fs.String("soul", "", "Path to .soul.md file (defaults to ./souls/pilot.soul.md)")
 	// 8020 not 8019 — localkin (sibling project, "always running") sits
@@ -513,6 +519,36 @@ func browserAddr(listen string) string {
 		host = "127.0.0.1"
 	}
 	return net.JoinHostPort(host, port)
+}
+
+// startOrphanWatch fires off a goroutine that exits the process when
+// the original parent dies. macOS doesn't auto-SIGTERM children when
+// a parent goes away — they get reparented to launchd (pid 1) and
+// keep running, leaking subprocess + port until manually killed.
+//
+// We poll os.Getppid() every 2s. If it changes from the value we saw
+// at startup, the parent died and we got reparented; clean exit.
+//
+// Skipped when the recorded parent is pid 0 or 1 — that means we
+// were either started by launchd directly (no orphan risk) or someone
+// already reparented us before we got here, in which case there's no
+// "original parent" to watch.
+func startOrphanWatch() {
+	origParent := os.Getppid()
+	if origParent <= 1 {
+		return
+	}
+	go func() {
+		t := time.NewTicker(2 * time.Second)
+		defer t.Stop()
+		for range t.C {
+			if os.Getppid() != origParent {
+				fmt.Fprintln(os.Stderr,
+					"[orphan-watch] parent died, exiting")
+				os.Exit(0)
+			}
+		}
+	}()
 }
 
 // captureScreenJPEG shells out to macOS screencapture(1) and returns
