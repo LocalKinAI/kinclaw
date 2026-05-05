@@ -34,6 +34,7 @@ import (
 	"github.com/LocalKinAI/kinclaw/pkg/server"
 	"github.com/LocalKinAI/kinclaw/pkg/skill"
 	"github.com/LocalKinAI/kinclaw/pkg/soul"
+	kinax "github.com/LocalKinAI/kinax-go"
 )
 
 func runServe(args []string) {
@@ -42,6 +43,29 @@ func runServe(args []string) {
 	// being orphaned to launchd. Standalone CLI runs (parent = shell,
 	// or already pid 1) get a no-op.
 	startOrphanWatch()
+
+	// Accessibility preflight: trigger the macOS "kinclaw wants to
+	// control your computer" dialog if we're not yet trusted. Without
+	// this, the user only ever sees the dialog when an actual ui /
+	// input tool call fires — and worse, macOS suppresses re-prompts
+	// after one denial / stale hash record, leaving the user stuck.
+	//
+	// PromptTrust() returns immediately. If trusted, log and continue;
+	// if not, the system dialog fires asynchronously (user gets a
+	// "Open System Settings" button) and we keep booting — chat
+	// surface still works, just the 5 claws will fail until the user
+	// grants. This is intentional: don't block startup on a permission
+	// dialog the user might dismiss with ⌘W.
+	exe, _ := os.Executable()
+	if kinax.PromptTrust() {
+		fmt.Fprintf(os.Stderr, "[kinclaw] Accessibility ✓ (binary: %s)\n", exe)
+	} else {
+		fmt.Fprintf(os.Stderr, "[kinclaw] Accessibility ✗ — system dialog fired\n")
+		fmt.Fprintf(os.Stderr, "[kinclaw]   binary: %s\n", exe)
+		fmt.Fprintf(os.Stderr, "[kinclaw]   Click \"Open System Settings\" in the dialog and toggle ON.\n")
+		fmt.Fprintf(os.Stderr, "[kinclaw]   If no dialog appeared (stale TCC record from previous build),\n")
+		fmt.Fprintf(os.Stderr, "[kinclaw]   run: tccutil reset Accessibility && relaunch.\n")
+	}
 
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	soulPath := fs.String("soul", "", "Path to .soul.md file (defaults to ./souls/pilot.soul.md)")

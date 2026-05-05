@@ -5,6 +5,7 @@ package skill
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -101,7 +102,22 @@ func (s *uiSkill) Execute(params map[string]string) (string, error) {
 		return "", fmt.Errorf("permission denied: soul does not grant `ui` capability")
 	}
 	if !kinax.Trusted() {
-		return "", fmt.Errorf("kinax: Accessibility permission not granted — grant it in System Settings → Privacy & Security → Accessibility, then retry")
+		// Re-trigger the system permission dialog. Boot-time
+		// PromptTrust may have been suppressed by a stale TCC record
+		// (rebuild changed our hash); calling it again here gives us
+		// another shot at surfacing the dialog when the user actively
+		// asks for a ui-skill action.
+		_ = kinax.PromptTrust()
+		exe, _ := os.Executable()
+		return "", fmt.Errorf(
+			"kinax: Accessibility permission not granted for this binary.\n"+
+				"  binary: %s\n"+
+				"  Fix: System Settings → Privacy & Security → Accessibility →\n"+
+				"       remove any old `kinclaw` entry, click +, add the path above, toggle ON.\n"+
+				"  If the system dialog isn't firing (stale TCC record), run:\n"+
+				"       tccutil reset Accessibility\n"+
+				"  Then quit & relaunch.",
+			exe)
 	}
 	action := params["action"]
 	if action == "" {
