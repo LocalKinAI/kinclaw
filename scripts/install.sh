@@ -78,11 +78,54 @@ codesign --force --sign - --identifier "$IDENTIFIER" "$INSTALL_PATH"
 SOULS_DIR="$HOME/.localkin/souls"
 echo "==> Syncing kinclaw souls to $SOULS_DIR (no-clobber)..."
 mkdir -p "$SOULS_DIR"
+# BSD cp on macOS: `cp -n` exits with code 1 when destination exists.
+# Combined with `set -e` at the top, this silently kills the script
+# after the first already-installed file (skipping later syncs and
+# the success message). We do the existence check explicitly instead.
 for soul in "$REPO_DIR"/souls/*.soul.md; do
     if [ -f "$soul" ]; then
-        cp -n "$soul" "$SOULS_DIR/"
+        dst="$SOULS_DIR/$(basename "$soul")"
+        if [ ! -f "$dst" ]; then
+            cp "$soul" "$dst"
+        fi
     fi
 done
+
+# Sync built-in skills (location, weather, web, music_*, imsg_send,
+# git_commit, ...) into ~/.localkin/skills/ so the installed kinclaw
+# can invoke them without depending on the dev repo working dir.
+#
+# This used to be missing — the installed binary at ~/.localkin/bin/
+# would only find skills the user had separately copied, so e.g.
+# `location` (real-time GPS via corelocationcli) was unavailable to
+# pilot when launched by KinClaw Mac, even though the dev repo had
+# the SKILL.md for it. Symptom: pilot replies "I don't have GPS,
+# please tell me your city".
+#
+# `cp -Rn` is recursive + no-clobber: skills are directories
+# (SKILL.md plus any helper scripts), and user-customized skills
+# survive a re-install.
+SKILLS_DIR="$HOME/.localkin/skills"
+echo "==> Syncing kinclaw skills to $SKILLS_DIR (no-clobber)..."
+mkdir -p "$SKILLS_DIR"
+if [ -d "$REPO_DIR/skills" ]; then
+    # Glob `*/` returns paths ending in slash. Important: pass the
+    # path WITHOUT the trailing slash to `cp -R`, otherwise BSD cp
+    # copies the directory's CONTENTS into the destination instead
+    # of copying the directory itself. Symptom (caught in testing):
+    # web/SKILL.md and web/web.py landed at ~/.localkin/skills/SKILL.md
+    # and ~/.localkin/skills/web.py instead of ~/.localkin/skills/web/.
+    for skill in "$REPO_DIR"/skills/*/; do
+        if [ -d "$skill" ]; then
+            src="${skill%/}"             # strip trailing slash
+            name="$(basename "$src")"
+            dst="$SKILLS_DIR/$name"
+            if [ ! -d "$dst" ]; then
+                cp -R "$src" "$dst"
+            fi
+        fi
+    done
+fi
 
 echo
 echo "✓ Installed: $INSTALL_PATH"
