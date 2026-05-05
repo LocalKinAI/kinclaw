@@ -1,5 +1,82 @@
 # Changelog
 
+## [1.11.0] - 2026-05-04
+
+**KinClaw Mac integration polish.** Three small kernel-side changes
+that make the kinclaw kernel behave correctly when spawned as a
+subprocess by [KinClaw Mac](https://github.com/LocalKinAI/kinclaw-mac)
+v0.2.0 (three-mode integration shipped today). Standalone CLI / web
+runs unaffected.
+
+### Added — Wire `LiveScreenCapture` for Cowork mode
+
+`pkg/server/server.go` exposed `/api/screen/current.jpg` as a
+501-Not-Implemented stub since the in-pane preview retired. KinClaw
+Mac's Cowork mode (which renders the agent's view of the screen
+inline above chat in early iterations — later removed but kernel
+side still useful for debug / future shells) needs the real
+implementation back.
+
+`cmd/kinclaw/serve.go` now wires `srv.SetLiveScreenCapture(captureScreenJPEG)`
++ `srv.SetLiveScreenInfo(activeAppName)`:
+
+- `captureScreenJPEG`: shells out to `/usr/sbin/screencapture` per
+  uncached hit. Server caches result 800ms so this fires at most
+  ~1.25/sec under polling. `-C` flag captures the cursor; `-x`
+  silences the shutter sound. JPEG default quality (~75) — 1920×1080
+  captures land 200-300KB.
+- `activeAppName`: AppleScript-frontmost-app via `osascript`,
+  ~5ms call. Lets the UI label the feed `🔴 LIVE · Claude` instead
+  of just `LIVE`.
+
+### Added — Subprocess orphan watch
+
+When kinclaw runs as a subprocess (typically of KinClaw Mac), watch
+for the parent dying and exit cleanly instead of being orphaned to
+launchd. macOS doesn't auto-SIGTERM children when a parent goes
+away — they get reparented to launchd (pid 1) and keep running,
+leaking the bound port until manually killed.
+
+Goroutine polls `os.Getppid()` every 2s; on change, clean exit. No-op
+when run standalone from a shell (start-time PPID is the shell, stays
+stable until terminal closes — at which point exiting is also what
+the user wants). Skipped when start-time PPID ≤1 (launchd-direct
+boot).
+
+Smoke test: `kill -9` of KinClaw Mac → kinclaw self-exits within 4s,
+port :5001 freed.
+
+### Added — Boot-time Accessibility prompt
+
+`cmd/kinclaw/serve.go` now calls `kinax.PromptTrust()` at startup —
+fires the macOS "kinclaw wants to control your computer" system
+dialog with an "Open System Settings" button. Without this, users
+only saw the dialog when an actual ui/input tool call fired (and
+worse, macOS suppresses re-prompts after a stale-hash record),
+leaving them stuck.
+
+Returns immediately; doesn't block boot if user dismisses. If
+trusted, log `✓` with binary path; if not, log `✗` + actionable
+hint:
+
+```
+[kinclaw] Accessibility ✗ — system dialog fired
+[kinclaw]   binary: /Users/.../kinclaw/kinclaw
+[kinclaw]   Click "Open System Settings" in the dialog and toggle ON.
+[kinclaw]   If no dialog appeared (stale TCC record from previous build),
+[kinclaw]   run: tccutil reset Accessibility && relaunch.
+```
+
+The ui-skill error message at runtime also got the same treatment —
+includes the binary path (via `os.Executable()`) and tells the user
+exactly what to do step-by-step.
+
+This pairs with KinClaw Mac's `DisclaimedProcess` (uses
+`responsibility_spawnattrs_setdisclaim` SPI on subprocess spawn so
+TCC attributes permission checks to kinclaw, not the .app). Together
+they fix the long-standing "I granted permissions but kinclaw still
+can't drive Calculator" class of bugs.
+
 ## [1.10.0] - 2026-05-03
 
 **Storage layout cleanup + URL-first doctrine.** Two bigger
