@@ -35,6 +35,7 @@ import (
 	"github.com/LocalKinAI/kinclaw/pkg/skill"
 	"github.com/LocalKinAI/kinclaw/pkg/soul"
 	kinax "github.com/LocalKinAI/kinax-go"
+	sckit "github.com/LocalKinAI/sckit-go"
 )
 
 func runServe(args []string) {
@@ -65,6 +66,24 @@ func runServe(args []string) {
 		fmt.Fprintf(os.Stderr, "[kinclaw]   Click \"Open System Settings\" in the dialog and toggle ON.\n")
 		fmt.Fprintf(os.Stderr, "[kinclaw]   If no dialog appeared (stale TCC record from previous build),\n")
 		fmt.Fprintf(os.Stderr, "[kinclaw]   run: tccutil reset Accessibility && relaunch.\n")
+	}
+
+	// Screen Recording preflight. sckit-go has no Preflight* helper, so
+	// we test by listing displays — that itself triggers the TCC prompt
+	// on first call and returns ErrPermissionDenied if we're not yet
+	// allowed. Cheap (~10ms when granted) and side-effect-free.
+	//
+	// Without this preflight log, `make doctor` / external tools have
+	// no way to know whether kinclaw can record without actually trying
+	// (and the only "actual try" path is invoking a recording skill,
+	// which requires the agent to be involved).
+	if probeScreenRecording() {
+		fmt.Fprintf(os.Stderr, "[kinclaw] Screen Recording ✓ (binary: %s)\n", exe)
+	} else {
+		fmt.Fprintf(os.Stderr, "[kinclaw] Screen Recording ✗ — system dialog fired (or stale TCC)\n")
+		fmt.Fprintf(os.Stderr, "[kinclaw]   binary: %s\n", exe)
+		fmt.Fprintf(os.Stderr, "[kinclaw]   Click \"Open System Settings\" in the dialog and toggle ON.\n")
+		fmt.Fprintf(os.Stderr, "[kinclaw]   record / screen skills will fail until granted.\n")
 	}
 
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
@@ -862,4 +881,22 @@ func runReplayServer(ctx context.Context, addr, replayPath string) {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// probeScreenRecording returns true if kinclaw has Screen Recording
+// permission. macOS doesn't expose a no-side-effect preflight via
+// sckit-go's API, so we do the cheapest probe available: ListDisplays.
+// On a denied process this triggers the macOS TCC prompt (good — same
+// UX as kinax.PromptTrust) AND returns ErrPermissionDenied. On a
+// granted process it returns the display list in ~10ms.
+//
+// Returns true on success, false on ErrPermissionDenied OR any other
+// error. The "any other error" bucket conservatively assumes "not
+// granted" so the user sees the actionable message instead of a
+// silent green ✓ when something else broke.
+func probeScreenRecording() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := sckit.ListDisplays(ctx)
+	return err == nil
 }
