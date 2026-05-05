@@ -210,6 +210,24 @@ func ParseSoul(data []byte) (*Soul, error) {
 	prompt = strings.ReplaceAll(prompt, "{{arch}}", runtime.GOARCH)
 	prompt = strings.ReplaceAll(prompt, "{{tz}}", timezoneTag())
 	loc, lat, lon, city, country := locationContext()
+	// Soft fallback when KINCLAW_LOCATION isn't set: don't leave the
+	// {{location}} field blank. Empirically (kimi-k2.5:cloud), an
+	// empty `位置: ` in the system prompt makes the model reply "I
+	// don't have GPS access" — even though the location skill is
+	// loaded and enabled. The model treats the empty field as
+	// "model has no location info" instead of "look it up".
+	//
+	// If the location skill is in skills.enable, hint the model to
+	// call it. Otherwise leave loc empty (the soul body's leftover
+	// `{{location}}` is filtered to "" — see legacyTemplateClean).
+	if loc == "" {
+		for _, s := range meta.Skills.Enable {
+			if s == "location" {
+				loc = "(unknown — call the `location` skill to query macOS CoreLocation)"
+				break
+			}
+		}
+	}
 	prompt = strings.ReplaceAll(prompt, "{{location}}", loc)
 	prompt = strings.ReplaceAll(prompt, "{{lat}}", lat)
 	prompt = strings.ReplaceAll(prompt, "{{lon}}", lon)
