@@ -42,8 +42,25 @@ echo "==> Ad-hoc codesigning (identifier: $IDENTIFIER)..."
 # --force: replace existing signature
 # --sign -: ad-hoc (no Apple cert needed)
 # --identifier: stable signed identifier — TCC uses this in some matching paths
-# --options=runtime: enable hardened runtime so signature is more meaningful
-codesign --force --sign - --identifier "$IDENTIFIER" --options=runtime ./kinclaw
+#
+# NO --options=runtime here. Hardened runtime enables library
+# validation, which requires every dlopen'd dylib to share the host's
+# Team ID. Ad-hoc signatures don't have a real Team ID — macOS
+# synthesizes one per file from the cdhash, so two separately
+# ad-hoc-signed files look like "different teams" and the loader
+# rejects with:
+#
+#   "mapping process and mapped file have different Team IDs"
+#
+# This bit us specifically with libkinrec_writer.dylib (the screen
+# recording library kinclaw extracts to ~/Library/Caches/kinrec/
+# at first use). With runtime hardening on kinclaw, the linker-signed
+# kinrec dylib failed validation; without it, dlopen succeeds.
+#
+# We can't notarize ad-hoc anyway (need $99 Apple Developer cert,
+# deferred to M6), so hardened runtime gains nothing here and only
+# breaks dynamic loading.
+codesign --force --sign - --identifier "$IDENTIFIER" ./kinclaw
 
 echo "==> Installing to $INSTALL_PATH..."
 mkdir -p "$INSTALL_DIR"
@@ -51,7 +68,7 @@ cp ./kinclaw "$INSTALL_PATH"
 
 # Re-sign at install path so the signed binary's stored path attribute
 # matches its actual location (some TCC verification paths check this).
-codesign --force --sign - --identifier "$IDENTIFIER" --options=runtime "$INSTALL_PATH"
+codesign --force --sign - --identifier "$IDENTIFIER" "$INSTALL_PATH"
 
 # Sync kinclaw-branded souls into the LocalKin family location
 # (~/.localkin/souls/) so the installed binary can find pilot.soul.md
