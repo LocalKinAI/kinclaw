@@ -287,10 +287,29 @@ func buildRegistry(s *soul.Soul, store *memory.SQLiteStore) *skill.Registry {
 	// register unconditionally; the skill self-disables when the
 	// permission bit is off.
 	reg.Register(skill.NewSpawnSkill(s.Meta.Permissions.Spawn, soulDirs()))
-	for _, dir := range []string{skillsDir, homeSkillsDir()} {
+	// External skill discovery: scan an ordered list of directories,
+	// loading SKILL.md files from each. Same name in two dirs = the
+	// LATER dir wins (Registry's `r.skills[name] = s` last-write-wins),
+	// so the priority order matters. We go from least-specific to
+	// most-specific so user customizations override defaults:
+	//
+	//   1. Extra dirs from $KINCLAW_SKILL_DIRS env or
+	//      ~/.localkin/skill-sources.txt (dev repos, package paths, etc.)
+	//   2. ~/.localkin/skills/  (family-shared, persists across reinstalls)
+	//   3. ./skills              (cwd-relative; e.g. "cd kinclaw && kinclaw
+	//                             serve" picks up the dev repo's skills)
+	//
+	// Avoids the install-time copy hack: the dev repo's skills/ stays
+	// the source of truth, edits are immediately live, no
+	// re-install.sh needed when a new skill lands.
+	dirs := skillSearchDirs(skillsDir)
+	for _, dir := range dirs {
 		exts, _ := skill.LoadExternalSkills(dir)
 		for _, ext := range exts {
 			reg.Register(ext)
+		}
+		if len(exts) > 0 {
+			fmt.Fprintf(os.Stderr, "[skills] %d from %s\n", len(exts), dir)
 		}
 	}
 	return reg
@@ -609,6 +628,73 @@ func homeDir() string {
 
 func homeSkillsDir() string {
 	return filepath.Join(homeDir(), ".localkin", "skills")
+}
+
+// skillSearchDirs builds the ordered list of directories to scan for
+// SKILL.md files at boot. Order is least-to-most specific; later
+// dirs override earlier ones (Registry's `r.skills[name] = s`
+// last-write-wins).
+//
+//	1. Extra dirs from $KINCLAW_SKILL_DIRS env var (colon-separated).
+//	   Set by KinClaw Mac's Makefile to point at the dev repo's
+//	   skills/, so a user who pulled kinclaw-mac and ran `make run`
+//	   gets all built-in skills without a copy step.
+//	2. Extra dirs from ~/.localkin/skill-sources.txt (one path per
+//	   line, # comments, blank lines OK). Persistent equivalent of
+//	   the env var — written by install.sh or set by the user.
+//	3. ~/.localkin/skills/ — family-shared user customizations,
+//	   survives reinstalls.
+//	4. The skill dir from the soul's frontmatter (or "./skills"
+//	   default) — repo-local, so `cd dev-repo && kinclaw serve`
+//	   picks up source-tree skills automatically.
+//
+// Missing dirs are skipped silently. Duplicate paths across sources
+// are deduped so we don't load the same dir twice.
+func skillSearchDirs(soulSkillsDir string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		// Resolve to absolute so two spellings of the same dir
+		// (e.g. "./skills" and "/abs/repo/skills") don't both load.
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			abs = p
+		}
+		if seen[abs] {
+			return
+		}
+		seen[abs] = true
+		out = append(out, abs)
+	}
+	// 1. env var
+	if env := os.Getenv("KINCLAW_SKILL_DIRS"); env != "" {
+		for _, p := range strings.Split(env, ":") {
+			add(strings.TrimSpace(p))
+		}
+	}
+	// 2. ~/.localkin/skill-sources.txt
+	srcFile := filepath.Join(homeDir(), ".localkin", "skill-sources.txt")
+	if data, err := os.ReadFile(srcFile); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			// Expand ~/ to home for convenience.
+			if strings.HasPrefix(line, "~/") {
+				line = filepath.Join(homeDir(), line[2:])
+			}
+			add(line)
+		}
+	}
+	// 3. user family-shared
+	add(homeSkillsDir())
+	// 4. soul-specified or cwd-relative
+	add(soulSkillsDir)
+	return out
 }
 
 func loadOAuthToken() string {

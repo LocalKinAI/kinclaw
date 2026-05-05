@@ -91,40 +91,25 @@ for soul in "$REPO_DIR"/souls/*.soul.md; do
     fi
 done
 
-# Sync built-in skills (location, weather, web, music_*, imsg_send,
-# git_commit, ...) into ~/.localkin/skills/ so the installed kinclaw
-# can invoke them without depending on the dev repo working dir.
+# Register the dev repo's skills/ as a source for runtime discovery.
+# kinclaw at boot reads ~/.localkin/skill-sources.txt and scans every
+# listed dir for SKILL.md files. So skills stay where they are (no
+# copy = no stale duplicates), and edits to the dev repo are
+# immediately live without re-running install.sh.
 #
-# This used to be missing — the installed binary at ~/.localkin/bin/
-# would only find skills the user had separately copied, so e.g.
-# `location` (real-time GPS via corelocationcli) was unavailable to
-# pilot when launched by KinClaw Mac, even though the dev repo had
-# the SKILL.md for it. Symptom: pilot replies "I don't have GPS,
-# please tell me your city".
-#
-# `cp -Rn` is recursive + no-clobber: skills are directories
-# (SKILL.md plus any helper scripts), and user-customized skills
-# survive a re-install.
-SKILLS_DIR="$HOME/.localkin/skills"
-echo "==> Syncing kinclaw skills to $SKILLS_DIR (no-clobber)..."
-mkdir -p "$SKILLS_DIR"
-if [ -d "$REPO_DIR/skills" ]; then
-    # Glob `*/` returns paths ending in slash. Important: pass the
-    # path WITHOUT the trailing slash to `cp -R`, otherwise BSD cp
-    # copies the directory's CONTENTS into the destination instead
-    # of copying the directory itself. Symptom (caught in testing):
-    # web/SKILL.md and web/web.py landed at ~/.localkin/skills/SKILL.md
-    # and ~/.localkin/skills/web.py instead of ~/.localkin/skills/web/.
-    for skill in "$REPO_DIR"/skills/*/; do
-        if [ -d "$skill" ]; then
-            src="${skill%/}"             # strip trailing slash
-            name="$(basename "$src")"
-            dst="$SKILLS_DIR/$name"
-            if [ ! -d "$dst" ]; then
-                cp -R "$src" "$dst"
-            fi
-        fi
-    done
+# Same skill name in two dirs = the LATER dir wins. Order in
+# kinclaw's skillSearchDirs() is: env > skill-sources.txt >
+# ~/.localkin/skills > ./skills. So user customizations in
+# ~/.localkin/skills/ override the dev repo's, but the dev repo's
+# are available as the floor.
+SKILL_SOURCES="$HOME/.localkin/skill-sources.txt"
+DEV_SKILLS="$REPO_DIR/skills"
+if [ -d "$DEV_SKILLS" ]; then
+    if ! grep -qxF "$DEV_SKILLS" "$SKILL_SOURCES" 2>/dev/null; then
+        echo "==> Registering $DEV_SKILLS as a skill source"
+        mkdir -p "$(dirname "$SKILL_SOURCES")"
+        printf '%s\n' "$DEV_SKILLS" >> "$SKILL_SOURCES"
+    fi
 fi
 
 echo
