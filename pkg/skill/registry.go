@@ -3,6 +3,7 @@ package skill
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -47,6 +48,21 @@ func (r *Registry) ToolDefs() []json.RawMessage {
 		defs = append(defs, s.ToolDef())
 	}
 	return defs
+}
+
+// AllNames returns the names of every registered skill, sorted.
+// Used by buildRegistry's startup banner to surface the full list
+// of skills (vs. just the count) and by diagnostics that need to
+// know what's actually in the registry.
+func (r *Registry) AllNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.skills))
+	for name := range r.skills {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (r *Registry) FilteredToolDefs(allow []string) []json.RawMessage {

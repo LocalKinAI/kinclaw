@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/LocalKinAI/kinclaw/pkg/applifecycle"
@@ -309,10 +310,76 @@ func buildRegistry(s *soul.Soul, store *memory.SQLiteStore) *skill.Registry {
 			reg.Register(ext)
 		}
 		if len(exts) > 0 {
-			fmt.Fprintf(os.Stderr, "[skills] %d from %s\n", len(exts), dir)
+			names := make([]string, len(exts))
+			for i, e := range exts {
+				names[i] = e.Name()
+			}
+			sort.Strings(names)
+			fmt.Fprintf(os.Stderr, "[skills] %2d from %s: %s\n",
+				len(exts), dir, strings.Join(names, ", "))
 		}
 	}
+	// Final list of skills the model will actually see, after the
+	// soul's `skills.enable` allowlist filter. Catches the common
+	// "I loaded N skills but pilot says it has no <X>" surprise:
+	// the skill IS in the registry but isn't in the soul's enable
+	// list, so the model never sees it. Listing both is one
+	// glance to spot the gap.
+	allRegistered := reg.AllNames()
+	enabled := s.Meta.Skills.Enable
+	if len(enabled) > 0 {
+		fmt.Fprintf(os.Stderr,
+			"[skills] %d registered total; soul enables %d → exposed to model: %s\n",
+			len(allRegistered), len(enabled),
+			strings.Join(intersect(allRegistered, enabled), ", "))
+		// Surface gaps so misconfigured souls don't silently drop skills.
+		gaps := missingFromEnabled(enabled, allRegistered)
+		if len(gaps) > 0 {
+			fmt.Fprintf(os.Stderr,
+				"[skills] ⚠ soul enables %d skill(s) NOT registered: %s\n",
+				len(gaps), strings.Join(gaps, ", "))
+		}
+	} else {
+		fmt.Fprintf(os.Stderr,
+			"[skills] %d registered, soul has empty enable → ALL exposed to model\n",
+			len(allRegistered))
+	}
 	return reg
+}
+
+// intersect returns the elements of `want` that exist in `have`,
+// preserving the order of `want`. Used to print the actual list
+// of tools the model will see (registry ∩ soul.skills.enable).
+func intersect(have, want []string) []string {
+	set := make(map[string]bool, len(have))
+	for _, h := range have {
+		set[h] = true
+	}
+	out := make([]string, 0, len(want))
+	for _, w := range want {
+		if set[w] {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// missingFromEnabled returns names in the soul's enable list that
+// have no matching registered skill. Surfaces typos / gone-stale
+// references so the user can spot "soul says enable: ['locaton']
+// but skill is named 'location'" in 1 second instead of 1 hour.
+func missingFromEnabled(enabled, registered []string) []string {
+	set := make(map[string]bool, len(registered))
+	for _, r := range registered {
+		set[r] = true
+	}
+	var out []string
+	for _, e := range enabled {
+		if !set[e] {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func runREPL(sess *session) {
