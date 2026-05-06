@@ -340,7 +340,21 @@ Flags:
 			return fmt.Errorf("API key required for %s; set in request body, soul, or env", req.Provider)
 		}
 
-		newBrain := brain.NewBrain(req.Provider, req.Endpoint,
+		// Default the endpoint based on provider — same logic
+		// soul.LoadSoul uses at boot. Without this, picking
+		// "ollama/<model>" from the Mac dropdown sends an empty
+		// endpoint, brain.NewBrain falls through to OpenAI's
+		// default api.openai.com, the request hits OpenAI without
+		// a key, and the user sees a confusing 401 on a brain
+		// they expected to be local. Same source-of-truth
+		// (soul.DefaultEndpointFor) used in both paths so they
+		// can't drift.
+		endpoint := req.Endpoint
+		if endpoint == "" {
+			endpoint = soul.DefaultEndpointFor(req.Provider)
+		}
+
+		newBrain := brain.NewBrain(req.Provider, endpoint,
 			req.Model, apiKey, curSoul.Meta.Brain.Temperature)
 
 		sessMu.Lock()
@@ -350,7 +364,7 @@ Flags:
 		// rows display in the souls list — not persisted to disk).
 		currentSess.soul.Meta.Brain.Provider = req.Provider
 		currentSess.soul.Meta.Brain.Model = req.Model
-		currentSess.soul.Meta.Brain.Endpoint = req.Endpoint
+		currentSess.soul.Meta.Brain.Endpoint = endpoint
 		newProv := req.Provider
 		newModel := req.Model
 		newSkillCount := len(currentSess.toolDefs)

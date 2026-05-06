@@ -42,6 +42,34 @@ func timezoneTag() string {
 	return fmt.Sprintf("%s (UTC%+d)", zone, hours)
 }
 
+// DefaultEndpointFor returns the conventional API endpoint for a
+// given provider when the soul / brain-switch request leaves it
+// empty. Single source of truth — used both at soul-load time
+// (LoadSoul) and at runtime brain swap (cmd/kinclaw/serve.go's
+// brain switch handler) so the two paths can't drift.
+//
+// Without this, an empty endpoint sent to brain.NewOpenAIBrain
+// silently defaults to api.openai.com — burning anyone who picks
+// an Ollama model from the brain dropdown without a custom
+// endpoint (the symptom: "OpenAI API error 401: didn't provide
+// API key" from a request the user expected to go to localhost).
+func DefaultEndpointFor(provider string) string {
+	switch provider {
+	case "claude", "anthropic":
+		return "https://api.anthropic.com"
+	case "openai":
+		return "https://api.openai.com"
+	case "ollama":
+		return "http://localhost:11434"
+	default:
+		// Conservative fallback — same as the old switch's default
+		// arm. Unknown providers route to local Ollama so a typo in
+		// the soul file fails loudly (connection refused) instead
+		// of silently leaking to OpenAI.
+		return "http://localhost:11434"
+	}
+}
+
 // locationContext parses the $KINCLAW_LOCATION env var and produces
 // substitution values for {{location}}, {{lat}}, {{lon}}, {{city}},
 // {{country}}. Format is comma-separated:
@@ -183,14 +211,7 @@ func ParseSoul(data []byte) (*Soul, error) {
 		meta.Brain.Provider = "claude"
 	}
 	if meta.Brain.Endpoint == "" {
-		switch meta.Brain.Provider {
-		case "claude":
-			meta.Brain.Endpoint = "https://api.anthropic.com"
-		case "openai":
-			meta.Brain.Endpoint = "https://api.openai.com"
-		default:
-			meta.Brain.Endpoint = "http://localhost:11434"
-		}
+		meta.Brain.Endpoint = DefaultEndpointFor(meta.Brain.Provider)
 	}
 	if strings.HasPrefix(meta.Brain.APIKey, "$") {
 		meta.Brain.APIKey = os.Getenv(strings.TrimPrefix(meta.Brain.APIKey, "$"))
