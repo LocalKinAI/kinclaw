@@ -91,12 +91,33 @@ type SoulListHandler func() []SoulInfo
 // an error if the soul fails to load.
 type SoulSwitchHandler func(path string) error
 
+// BrainSwitchRequest is the body of POST /api/brain. APIKey and
+// Endpoint are optional — handler falls back to env vars / soul
+// defaults when they're empty. Mirrors kincode's shape so the same
+// Mac dropdown can drive both kernels.
+type BrainSwitchRequest struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	APIKey   string `json:"api_key,omitempty"`
+	Endpoint string `json:"endpoint,omitempty"`
+}
+
+// BrainSwitchHandler swaps the brain (provider + model) on the
+// running session WITHOUT changing the soul. Lets the user keep
+// Pilot's prompt + skills + permissions while flipping between
+// claude / openai / ollama backends. Should atomically swap so
+// in-flight turns either complete on the old brain or fail clean.
+// Returns an error if the new config is invalid (missing key for
+// non-ollama, unreachable endpoint, etc.).
+type BrainSwitchHandler func(req BrainSwitchRequest) error
+
 type Server struct {
 	addr             string
 	chatHandler      ChatHandler
 	interruptHandler InterruptHandler
 	soulList         SoulListHandler
 	soulSwitch       SoulSwitchHandler
+	brainSwitch      BrainSwitchHandler
 	allowedDirs      []string // /file allow-list (absolute, cleaned)
 
 	mu          sync.Mutex
@@ -148,6 +169,11 @@ func (s *Server) SetSoulHandlers(list SoulListHandler, switcher SoulSwitchHandle
 	s.soulList = list
 	s.soulSwitch = switcher
 }
+
+// SetBrainSwitchHandler wires POST /api/brain. Without it the
+// endpoint returns 501 — UI's brain dropdown will fail with a
+// clear "not wired" error.
+func (s *Server) SetBrainSwitchHandler(h BrainSwitchHandler) { s.brainSwitch = h }
 
 // EventLogger is called for every event Push'd to subscribers. Used
 // by the recorder in serve.go to append events to a JSONL session
@@ -298,6 +324,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	mux.HandleFunc("/api/chat", s.handleChat)
 	mux.HandleFunc("/api/souls", s.handleSouls)
 	mux.HandleFunc("/api/soul", s.handleSoul)
+	mux.HandleFunc("/api/brain", s.handleBrain)
 	mux.HandleFunc("/api/screen/current.jpg", s.handleLiveScreen)
 	mux.HandleFunc("/api/screen/info", s.handleLiveScreenInfo)
 	mux.HandleFunc("/api/voice/transcribe", s.handleVoiceTranscribe)
@@ -502,6 +529,44 @@ func (s *Server) handleSoul(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// handleBrain swaps the running session's brain (provider + model)
+// without touching the soul. Body: {provider, model, api_key?,
+// endpoint?}. On success returns 202; on failure returns the error
+// from the brain handler (e.g. "anthropic API key required") with
+// 4xx so the UI can show "couldn't switch".
+//
+// Mirrors kincode's /api/brain endpoint by design — same Mac
+// dropdown drives both kernels with identical request shape.
+func (s *Server) handleBrain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.brainSwitch == nil {
+		http.Error(w, "brain switching not wired", http.StatusNotImplemented)
+		return
+	}
+	var body BrainSwitchRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Provider == "" || body.Model == "" {
+		http.Error(w, "provider and model are required", http.StatusBadRequest)
+		return
+	}
+	if err := s.brainSwitch(body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+
+	// Re-emit a hello event with the new brain marker so any new
+	// SSE subscribers see the live state. UI dropdown also refreshes
+	// optimistically based on its own POST result.
+	s.Push(Event{Type: "brain_switched"})
 }
 
 // handleLiveScreen serves a fresh JPEG screenshot of the user's

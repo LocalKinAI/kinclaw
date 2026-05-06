@@ -302,9 +302,83 @@ Flags:
 		return nil
 	}
 
+	// Brain switching: same soul (Pilot stays Pilot — its prompt,
+	// skills, permissions all unchanged) but swap the underlying
+	// brain.Brain to a different provider/model. Lets the user flip
+	// from kimi-k2.5:cloud → claude-sonnet-4-6 → qwen3:8b live
+	// without restarting kinclaw or rewriting souls.
+	//
+	// API-key resolution: caller's req.APIKey wins when set; else
+	// fall back to the soul's brain.api_key; else env var. ollama
+	// needs no key. Mirrors newSession's resolution order.
+	brainSwitchHandler := func(req server.BrainSwitchRequest) error {
+		if !turnMu.TryLock() {
+			return fmt.Errorf("turn in progress, cancel first (Esc) then switch")
+		}
+		defer turnMu.Unlock()
+
+		sessMu.Lock()
+		curSoul := currentSess.soul
+		sessMu.Unlock()
+
+		apiKey := req.APIKey
+		if apiKey == "" {
+			apiKey = curSoul.Meta.Brain.APIKey
+		}
+		if apiKey == "" {
+			switch req.Provider {
+			case "claude":
+				apiKey = os.Getenv("ANTHROPIC_API_KEY")
+				if apiKey == "" {
+					apiKey = loadOAuthToken()
+				}
+			case "openai":
+				apiKey = os.Getenv("OPENAI_API_KEY")
+			}
+		}
+		if apiKey == "" && req.Provider != "ollama" {
+			return fmt.Errorf("API key required for %s; set in request body, soul, or env", req.Provider)
+		}
+
+		newBrain := brain.NewBrain(req.Provider, req.Endpoint,
+			req.Model, apiKey, curSoul.Meta.Brain.Temperature)
+
+		sessMu.Lock()
+		currentSess.brain = newBrain
+		// Mutate the soul's brain meta so /api/souls reflects truth
+		// (the soul object is shared, so this changes what Active
+		// rows display in the souls list — not persisted to disk).
+		currentSess.soul.Meta.Brain.Provider = req.Provider
+		currentSess.soul.Meta.Brain.Model = req.Model
+		currentSess.soul.Meta.Brain.Endpoint = req.Endpoint
+		newProv := req.Provider
+		newModel := req.Model
+		newSkillCount := len(currentSess.toolDefs)
+		sessMu.Unlock()
+
+		// Repoint hello so reconnects see the new brain. Push event
+		// so the live UI updates its dropdown without polling.
+		srv.SetHello(server.Event{
+			Type: "hello",
+			Name: curSoul.Meta.Name,
+			Params: map[string]string{
+				"brain":  fmt.Sprintf("%s/%s", newProv, newModel),
+				"skills": fmt.Sprintf("%d", newSkillCount),
+			},
+		})
+		srv.Push(server.Event{
+			Type: "brain_switched",
+			Params: map[string]string{
+				"brain": fmt.Sprintf("%s/%s", newProv, newModel),
+			},
+		})
+		return nil
+	}
+
 	srv = server.New(*addr, allowed, chatHandler)
 	srv.SetInterruptHandler(interruptHandler)
 	srv.SetSoulHandlers(soulListHandler, soulSwitchHandler)
+	srv.SetBrainSwitchHandler(brainSwitchHandler)
 	// Wire the live-screen feed for KinClaw Mac's Cowork mode (which
 	// renders /api/screen/current.jpg inline above the chat). The
 	// server caches the result for 800ms so faster polling buys
