@@ -288,6 +288,11 @@ func buildRegistry(s *soul.Soul, store *memory.SQLiteStore) *skill.Registry {
 	// register unconditionally; the skill self-disables when the
 	// permission bit is off.
 	reg.Register(skill.NewSpawnSkill(s.Meta.Permissions.Spawn, soulDirs()))
+	// todo_write — structured plan visible to the desktop shell as a
+	// checklist. Mirrors kincode's surface so the same Mac component
+	// renders both. Always registered (no soul flag) — soul controls
+	// access via permissions.skills.enable: ["todo_write"].
+	reg.Register(skill.NewTodoSkill())
 	// External skill discovery: scan an ordered list of directories,
 	// loading SKILL.md files from each. Same name in two dirs = the
 	// LATER dir wins (Registry's `r.skills[name] = s` last-write-wins),

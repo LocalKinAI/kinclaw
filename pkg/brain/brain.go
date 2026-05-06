@@ -67,6 +67,19 @@ type ToolCall struct {
 	} `json:"function"`
 }
 
+// ParseArguments flattens the model's tool args (arbitrary JSON
+// shape) into the map[string]string skills consume. Primitives
+// stringify directly; complex values (arrays, maps, nested objects)
+// JSON-encode so skills can parse them back. The previous
+// `fmt.Sprintf("%v", v)` path produced Go's default map formatting
+// like "map[activeForm:y content:x]" which isn't valid JSON and
+// can't be parsed back into structured data — that blocked any
+// skill needing array/object parameters (todo_write being the
+// motivating case).
+//
+// Mirrors kincode's stringifyArgs by design — desktop shells +
+// kernel agree on the wire format, so SSE event params decode
+// uniformly across kinclaw and kincode.
 func (tc ToolCall) ParseArguments() (map[string]string, error) {
 	var raw map[string]interface{}
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &raw); err != nil {
@@ -74,7 +87,20 @@ func (tc ToolCall) ParseArguments() (map[string]string, error) {
 	}
 	out := make(map[string]string, len(raw))
 	for k, v := range raw {
-		out[k] = fmt.Sprintf("%v", v)
+		switch s := v.(type) {
+		case string:
+			out[k] = s
+		case nil:
+			out[k] = ""
+		case bool, int, int64, float64:
+			out[k] = fmt.Sprint(s)
+		default:
+			if blob, err := json.Marshal(s); err == nil {
+				out[k] = string(blob)
+			} else {
+				out[k] = fmt.Sprint(s)
+			}
+		}
 	}
 	return out, nil
 }

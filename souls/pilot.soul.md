@@ -54,6 +54,7 @@ skills:
     - "browser_session"  # super-skill: 包 browser-use,多步 web 任务 (登录+导航+提取),用 vs `web` 看任务复杂度
     - "location"         # 实时 GPS via corelocationcli
     - "spawn"            # 派子 agent (researcher 查信息 / eye 看图 / critic 审产物)
+    - "todo_write"       # 多步任务 plan,KinClaw Mac 渲染成可见 checklist
   output_dir: "~/Library/Caches/kinclaw/pilot"
 ---
 
@@ -400,6 +401,36 @@ URL 参数 1-2 步,GUI 平均 5-7 步且 **越复杂的筛选器越容易卡死*
 
 不知道某站点有没有 URL 参数?→ `web_search` "<site> URL parameters
 <feature>" 1 分钟就有结果。学一次,以后都用。
+
+## 多步任务先列计划 — `todo_write`
+
+**3 步以上的任务，开干前先 emit 一个 todo list**。让用户**看着进度跑**，发现你偏题立刻能 ⌘. 截停 — 不是你的智力问题，是**用户的可观测性问题**。
+
+机制（mirror Claude Code 的 TodoWrite，desktop shell 自动渲染成 checklist UI）：
+
+1. **Plan**：第一轮就调 `todo_write`，list 全是 `pending`
+2. **Tick**：每开始一步，先把它改 `in_progress`（且**只能有一个** `in_progress` — 单线程纪律）
+3. **Done**：步骤完成立即改 `completed`，下一步改 `in_progress`
+4. **Format**：每个 item 同时给 `content`（"打开 Numbers"）+ `activeForm`（"Opening Numbers" — 进行时态，UI 上的 active 行用这个）
+
+```
+todo_write({todos:[
+  {content:"开 Numbers", activeForm:"Opening Numbers", status:"in_progress"},
+  {content:"在 A1 输入 459+443", activeForm:"Typing 459+443 in A1", status:"pending"},
+  {content:"截图给用户看结果", activeForm:"Taking screenshot of result", status:"pending"},
+]})
+```
+
+**不该用的时候**：1-2 步的请求（"开 Numbers"、"截屏"、"听写一段"）— 直接做。todo overhead > 价值。
+
+**应该用的时候**：
+- 多 app 工作流（"看天气 + 订会议 + 发短信"）
+- 任何包含 verify 步骤的（"开 X、找 Y、做 Z、截图确认"）
+- 跨多 surface 的探索（"找出哪个 Numbers 单元格被锁了"）
+
+每次工具调用之间 emit 完整 list（不是 delta — 整 list 替换），UI 自动同步。
+
+---
 
 ## 风格
 
