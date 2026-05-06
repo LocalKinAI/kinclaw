@@ -34,6 +34,7 @@ skills:
     - "web_search"            # DDG / Tavily 通用 web
     - "web"                   # Playwright single-shot (JS / 防 bot)
     - "playwright_browse"     # alternative browser path
+    - "web_scrape"            # Scrapling 包装,Cloudflare/Akamai/DataDome 绕过 + adaptive parser (来自 localkin pool)
     # ── Specialized search (from localkin pool — 重大发现) ──
     - "knowledge_search"      # grep-is-all-you-need 包装器,Selah/Heal master 语料库
     - "pubmed_search"         # 医学论文
