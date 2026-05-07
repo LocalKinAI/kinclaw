@@ -27,9 +27,36 @@ import (
 //   - per-spawn timeout (default 180s, max 600s) — runaway children
 //     don't trap the parent
 //   - returns child stdout only (boot banner goes to stderr, gets dropped)
+// SpawnResult is the payload pushed to the kernel when a detached
+// spawn job finishes. Kernel decides what to do with it (typically:
+// SSE event for UI + queue for next-turn history injection).
+type SpawnResult struct {
+	JobID    string        // ab12cd-style short id for UI threading
+	Soul     string        // e.g. "researcher"
+	Prompt   string        // what the child was asked
+	Output   string        // child's final text (stdout)
+	Err      error         // non-nil if cmd.Output failed or timed out
+	Started  time.Time     // for "took 4m 23s" rendering
+	Duration time.Duration // wall-clock from goroutine start to finish
+}
+
+// SpawnResultCallback is invoked from the spawn skill's goroutine when
+// a detached child completes. Implementations should be cheap + non-
+// blocking — typically they push an SSE event and append to a per-
+// session pending-results queue. nil = sync-only mode (legacy behavior).
+type SpawnResultCallback func(SpawnResult)
+
 type spawnSkill struct {
 	enabled  bool
 	soulDirs []string
+
+	// onResult runs from a goroutine when a detached spawn finishes.
+	// Set via SetResultCallback after the kernel's SSE server is wired
+	// up (chicken-and-egg: skill is built before serve.go has its
+	// Server). nil → all spawns run sync regardless of detach hint,
+	// which is the right fallback for `kinclaw -exec` one-shot mode
+	// where there's no SSE consumer to deliver async results to.
+	onResult SpawnResultCallback
 }
 
 // NewSpawnSkill is registered when the soul declares permissions.spawn:
@@ -38,6 +65,13 @@ type spawnSkill struct {
 // "~/.localkin/souls/researcher.soul.md", whichever wins.
 func NewSpawnSkill(enabled bool, soulDirs []string) Skill {
 	return &spawnSkill{enabled: enabled, soulDirs: soulDirs}
+}
+
+// SetResultCallback wires the async-completion hook. Called by serve.go
+// after the SSE Server is constructed. Safe to call multiple times
+// (e.g. after a soul switch); the latest callback wins.
+func (s *spawnSkill) SetResultCallback(cb SpawnResultCallback) {
+	s.onResult = cb
 }
 
 func (s *spawnSkill) Name() string { return "spawn" }
@@ -83,6 +117,10 @@ func (s *spawnSkill) ToolDef() json.RawMessage {
 			"timeout_s": {
 				"type":        "integer",
 				"description": "Optional timeout in seconds. Default 180, capped at 600.",
+			},
+			"detach": {
+				"type":        "string",
+				"description": "Optional. \"true\" forces detached/async mode (child runs in background, parent turn ends immediately, result is delivered via UI event when child finishes). \"false\" forces sync. Default: auto — sync if timeout_s ≤ 90, detached if > 90. Use detached for deep-research / long synthesis so the user can keep chatting; sync for quick verifications (critic review, eye glance) that complete in under a minute.",
 			},
 		},
 		[]string{"soul", "prompt"})
@@ -134,6 +172,37 @@ func (s *spawnSkill) Execute(params map[string]string) (string, error) {
 		return "", fmt.Errorf("spawn: cannot locate kinclaw binary: %w", err)
 	}
 
+	// Decide sync vs detached. Auto-rule: long-running spawns
+	// (timeout > 90s) detach by default so the parent's turn can
+	// release turnMu and the user can keep chatting. Quick spawns
+	// (critic review, eye glance) stay sync so pilot can branch on
+	// the result inline. Explicit detach=true/false param overrides.
+	detach := timeoutS > 90
+	switch strings.ToLower(strings.TrimSpace(params["detach"])) {
+	case "true", "1", "yes":
+		detach = true
+	case "false", "0", "no":
+		detach = false
+	}
+	// Detach requires the result callback be wired. In `kinclaw -exec`
+	// one-shot mode there's no SSE consumer to deliver async results,
+	// so we degrade to sync (still works, just blocks).
+	if detach && s.onResult == nil {
+		detach = false
+	}
+
+	if detach {
+		jobID := newJobID()
+		go s.runDetached(jobID, bin, soulPath, soulName, prompt, timeoutS)
+		return fmt.Sprintf(
+			"Detached spawn started: soul=%s job=%s timeout=%ds.\n"+
+				"The child is running in the background — your current turn ends now, the user can continue chatting, and the result will be delivered via a `spawn_done` UI event when the child finishes (typically a few minutes for research / synthesis tasks).\n"+
+				"Tell the user briefly that you've dispatched the work and that they're free to ask other things while it runs. Do NOT call spawn again for the same task.",
+			soulName, jobID, timeoutS,
+		), nil
+	}
+
+	// Sync path (legacy + short tasks).
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutS)*time.Second)
 	defer cancel()
 
@@ -159,6 +228,52 @@ func (s *spawnSkill) Execute(params map[string]string) (string, error) {
 	}
 
 	return strings.TrimSpace(string(stdout)), nil
+}
+
+// runDetached executes the child kinclaw subprocess in a goroutine and
+// hands the result back to the kernel via s.onResult. Errors don't
+// propagate to the parent's tool_result (that already returned the
+// "Detached spawn started" ack); they ride along in SpawnResult.Err
+// so the kernel can surface them in the spawn_done UI event.
+func (s *spawnSkill) runDetached(jobID, bin, soulPath, soulName, prompt string, timeoutS int) {
+	start := time.Now()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutS)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, bin, "-soul", soulPath, "-exec", prompt)
+	cmd.Env = append(os.Environ(), spawnDepthEnv+"=1")
+
+	stdout, runErr := cmd.Output()
+
+	res := SpawnResult{
+		JobID:    jobID,
+		Soul:     soulName,
+		Prompt:   prompt,
+		Started:  start,
+		Duration: time.Since(start),
+		Output:   strings.TrimSpace(string(stdout)),
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		res.Err = fmt.Errorf("child timed out after %ds", timeoutS)
+	} else if runErr != nil {
+		stderr := ""
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
+			stderr = string(exitErr.Stderr)
+		}
+		res.Err = fmt.Errorf("%w\nstderr: %s", runErr, truncateStr(stderr, 500))
+	}
+
+	if s.onResult != nil {
+		s.onResult(res)
+	}
+}
+
+// newJobID returns a short hex token good enough to disambiguate
+// detached spawns within a session. Not cryptographic — just a UI
+// thread handle so user / pilot can refer to "job ab12cd".
+func newJobID() string {
+	return fmt.Sprintf("%06x", time.Now().UnixNano()&0xFFFFFF)
 }
 
 // resolveSoul searches the configured soul dirs for "<name>.soul.md".

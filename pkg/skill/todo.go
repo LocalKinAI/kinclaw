@@ -55,6 +55,7 @@ func (s *todoSkill) Description() string {
 		"  2. Execute: before each step, mark exactly ONE item as in_progress\n" +
 		"  3. Tick: mark completed when done, then move to the next\n\n" +
 		"Single-tasking discipline — only ONE item is in_progress at a time. The desktop shell renders this list as an inline checklist so the user sees your plan + progress without you re-narrating.\n\n" +
+		"Each item: content (imperative, required), activeForm (continuous tense for the in-progress label, optional — falls back to content if omitted), status (pending|in_progress|completed). For Chinese / non-English todos activeForm is usually unnecessary — just provide content.\n\n" +
 		"Skip for trivial 1-2 step requests (overhead > value). Use for: multi-app workflows, anything with a verify-step (\"open X, find Y, do Z, take screenshot to confirm\"), file edits across 3+ files."
 }
 
@@ -83,7 +84,7 @@ func (s *todoSkill) ToolDef() json.RawMessage {
 								},
 								"activeForm": map[string]interface{}{
 									"type":        "string",
-									"description": "Present-continuous form, e.g. \"Opening Numbers\".",
+									"description": "Present-continuous form for the in-progress label, e.g. \"Opening Numbers\". Optional — falls back to content if omitted; not needed for non-English todos.",
 								},
 								"status": map[string]interface{}{
 									"type":        "string",
@@ -91,7 +92,7 @@ func (s *todoSkill) ToolDef() json.RawMessage {
 									"description": "pending / in_progress / completed.",
 								},
 							},
-							"required": []string{"content", "activeForm", "status"},
+							"required": []string{"content", "status"},
 						},
 					},
 				},
@@ -120,13 +121,22 @@ func (s *todoSkill) Execute(params map[string]string) (string, error) {
 
 	// Validate the whole batch before committing — partial accept
 	// would leave the list in an inconsistent state.
+	//
+	// activeForm is treated as soft: if the model omits it (very
+	// common for Chinese todos, where there's no continuous-tense
+	// distinction, and frequent enough in English that strict
+	// rejection wastes a turn on a trivial validation error) we
+	// fall back to content. The user sees a slightly-off label
+	// like "Search X" instead of "Searching X" — acceptable
+	// degradation. Better than a noisy error → skill loop guard
+	// firing → no-progress trap.
 	inProgress := 0
 	for i, it := range parsed {
 		if strings.TrimSpace(it.Content) == "" {
 			return "", fmt.Errorf("todo %d: content is required", i+1)
 		}
 		if strings.TrimSpace(it.ActiveForm) == "" {
-			return "", fmt.Errorf("todo %d: activeForm is required", i+1)
+			parsed[i].ActiveForm = it.Content
 		}
 		switch it.Status {
 		case "pending", "in_progress", "completed":

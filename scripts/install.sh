@@ -70,26 +70,23 @@ cp ./kinclaw "$INSTALL_PATH"
 # matches its actual location (some TCC verification paths check this).
 codesign --force --sign - --identifier "$IDENTIFIER" "$INSTALL_PATH"
 
-# Sync kinclaw-branded souls into the LocalKin family location
-# (~/.localkin/souls/) so the installed binary can find pilot.soul.md
-# / coder.soul.md / etc. without depending on the dev repo path.
-# `cp -n` = no-clobber: user customizations to ~/.localkin/souls/<name>
-# survive re-install.
+# Souls live in the repo. The installed binary at $INSTALL_PATH is
+# launched with -soul pointing directly at $REPO_DIR/souls/*.soul.md
+# (kinclaw-mac's Makefile/Supervisor + KINCLAW_SOUL_DIRS env var
+# both point there too). No copy step needed — and the old `cp -n`
+# no-clobber sync silently caused multi-day stale-soul debugging
+# sessions where dev edits never reached the running helper.
+#
+# Removed 2026-05-06. If a future kinclaw install loses access to
+# $REPO_DIR (e.g. user installs the .app on a fresh machine without
+# cloning the kinclaw repo), souls should ship inside the .app
+# bundle (Bundle.main.url path in KinClawSupervisor.swift) rather
+# than as a copied family-dir snapshot that drifts on every edit.
 SOULS_DIR="$HOME/.localkin/souls"
-echo "==> Syncing kinclaw souls to $SOULS_DIR (no-clobber)..."
-mkdir -p "$SOULS_DIR"
-# BSD cp on macOS: `cp -n` exits with code 1 when destination exists.
-# Combined with `set -e` at the top, this silently kills the script
-# after the first already-installed file (skipping later syncs and
-# the success message). We do the existence check explicitly instead.
-for soul in "$REPO_DIR"/souls/*.soul.md; do
-    if [ -f "$soul" ]; then
-        dst="$SOULS_DIR/$(basename "$soul")"
-        if [ ! -f "$dst" ]; then
-            cp "$soul" "$dst"
-        fi
-    fi
-done
+if [ -d "$SOULS_DIR" ]; then
+    echo "==> Removing legacy $SOULS_DIR (souls now read directly from $REPO_DIR/souls/) ..."
+    rm -rf "$SOULS_DIR"
+fi
 
 # Register the dev repo's skills/ as a source for runtime discovery.
 # kinclaw at boot reads ~/.localkin/skill-sources.txt and scans every

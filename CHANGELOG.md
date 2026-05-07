@@ -1,5 +1,193 @@
 # Changelog
 
+## [1.12.0] - 2026-05-06
+
+**Deep research loop ships, end-to-end.** Researcher soul + supporting
+kernel infrastructure now produce academic-grade multi-source reports
+without blocking pilot's chat. First successful turn on 2026-05-06
+generated a 241-line markdown report on "因信称义" with 11 citations
+mixing local Guyon / Teresa-of-Avila corpora + 8 web sources.
+
+This release is the convergence of ~30 small kernel + soul changes
+that, taken together, made the LangChain `local-deep-researcher` +
+LearningCircuit `local-deep-research` patterns work in our single-
+turn tool-loop architecture (no LangGraph state machine needed —
+conversation history IS the state).
+
+### Added — Detached spawn (async sub-agent dispatch)
+
+`pkg/skill/spawn.go` now supports **detach mode**: `spawn(soul=...,
+prompt=..., timeout_s>90)` returns immediately with an ack +
+job-id, runs the child kinclaw subprocess in a goroutine, and
+delivers the result via two channels when it finishes:
+
+1. SSE event `spawn_done` (UI renders the child's report inline as
+   a "🔬 \<soul\> (job xxx) finished in Ns" assistant bubble).
+2. Synthetic user message appended to the parent session's history,
+   drained at the start of the next turn — so the parent (typically
+   pilot) sees the child's report and can reference it ("you said
+   researcher's finding was…") without the user re-narrating.
+
+Auto-rule: timeouts > 90s detach by default (deep research, multi-
+step synthesis). Quick spawns (≤ 90s — critic review, eye glance)
+stay sync. Explicit `detach="true"|"false"` param overrides.
+
+Before this, `spawn` blocked the parent's turnMu for the full child
+duration: a 5-minute research dispatch made pilot reject every user
+message with "已有任务在跑". Now pilot's turn ends within 200µs of
+calling `spawn` and the user keeps full interactivity. Multiple
+researchers can run in parallel; each delivers when ready.
+
+`pkg/skill/registry.go` adds `SetSpawnResultCallback(cb)`.
+`cmd/kinclaw/main.go` adds `pendingSpawn []SpawnResult` per-session
+queue with `spawnMu` lock. `cmd/kinclaw/serve.go` wires the
+callback both at startup and on soul-switch (new session = new
+registry = re-bind).
+
+### Added — Session reset endpoint (`POST /api/session/reset`)
+
+`pkg/server/server.go` + `cmd/kinclaw/serve.go`: new endpoint that
+clears the running session's conversation history without changing
+soul / brain / skills / permissions. Mac UI's "New session" button
+now hits this so a stuck mid-task tool-call loop from a prior
+conversation can't bleed into the next "你好". 202 Accepted on
+success, 409 Conflict if a turn is in flight, 501 if not wired.
+
+`pkg/memory/memory.go`: new `ClearSession(sessionID)` (deletes
+messages rows for the session) and `ClearTransientMemories()`
+(deletes memory rows where key starts with `_`). Reset endpoint
+calls both.
+
+### Added — Transient memory key convention
+
+`pkg/memory/memory.go`'s `AllMemories()` (used to inject durable
+user facts into the soul's system prompt at session start) now
+filters out keys starting with `_` via SQL `WHERE key NOT LIKE
+'\_%' ESCAPE '\'`. Convention:
+
+- Bare key (e.g. `daughter_name`, `home_city`) → durable fact,
+  injected into prompt at session start, survives reset.
+- `_`-prefix key (e.g. `_finding_1`, `_draft_intro`) → transient
+  working memory, NOT injected, cleared on session reset.
+
+### Added — SearXNG support in `web_search`
+
+`pkg/skill/web_search.go`: when `$SEARXNG_ENDPOINT` is set, queries
+the SearXNG meta-search engine first (privacy-respecting, multi-
+engine aggregation, no API key needed). DDG HTML scrape stays as
+fallback for when SearXNG is unreachable.
+
+DDG's `html.duckduckgo.com` endpoint started returning HTTP 202 +
+empty homepage shells (anti-bot guard) circa 2026-04, breaking the
+previous DDG-only path entirely. SearXNG (typically a local Docker
+container at `:8080`) sidesteps the issue.
+
+When BOTH backends fail, the error message is now actionable —
+explains each backend's state, suggests `docker restart searxng`
+where applicable, and points at `web_scrape` (Scrapling) as the
+fallback path.
+
+### Added — Async-friendly circuit breaker wording
+
+`pkg/skill/circuit.go`: all three trigger messages
+(over-iteration / N-failures-this-session / consecutive-same-error)
+rewritten so "task is NOT over, pivot" is the dominant signal —
+not "stop and ask the user", which models read as "emit a final
+message + turn_done". 9 circuit-breaker tests still pass.
+
+### Added — `~` expansion in file_read / file_write / file_edit
+
+`pkg/skill/native.go`: new `expandTilde(p)` helper applied to
+`path` params in all three file skills. A model writing
+`file_write(path="~/Library/Caches/...", ...)` now lands the file
+at `$HOME/Library/Caches/...` instead of creating a literal `~/`
+directory under the helper's cwd.
+
+### Added — `KINCLAW_SOUL_DIRS` env var
+
+`cmd/kinclaw/main.go` `soulDirs()`: now reads `$KINCLAW_SOUL_DIRS`
+(colon-separated, takes priority over the legacy `./souls` and
+`~/.localkin/souls` defaults). Set by kinclaw-mac's Makefile +
+Supervisor to point at the dev repo's `souls/` so spawn lookups
+resolve correctly.
+
+### Changed — `todo_write` activeForm now optional
+
+`pkg/skill/todo.go`: `activeForm` no longer required. When omitted
+(very common for Chinese todos and frequent enough in English),
+the skill auto-falls-back to using `content` as the in-progress
+label. JSON schema's `required` list dropped from `["content",
+"activeForm", "status"]` to `["content", "status"]`.
+
+### Changed — `pkg/memory/memory.go` SQLite contention
+
+`OpenMemory()` now sets `db.SetMaxOpenConns(1)` (SQLite serializes
+writes even in WAL mode), and applies `journal_mode=WAL` +
+`busy_timeout=5000` + `synchronous=NORMAL` PRAGMAs explicitly
+instead of via DSN. 50-parallel-write smoke test: 50 ok / 0 locked
+(was variable failures before).
+
+### Changed — Researcher soul (`souls/researcher.soul.md`)
+
+Removed the LangGraph-borrowed `memory.save` for every search-hit
+pattern. Conversation history is the state; every prior tool_result
+is already in the LLM's context for the next round. Step 2 (search)
+no longer instructs `memory action=save key="_finding_<n>" ...`;
+Step 5 (synthesize) reads URLs straight from history.
+
+Plus: explicit fallback chain (web_search → web_scrape → web_fetch
+Bing → ask user); explicit knowledge_search collection inventory
+(augustine / luther / john_calvin / wesley / edwards / spurgeon /
+chrysostom / …); strengthened Step 5 ("you MUST file_write a report
+and return a TL;DR — empty status messages are forbidden").
+
+### Changed — Pilot soul: spawn delegation teaching
+
+`souls/pilot.soul.md`: rewrote spawn trigger criteria. New list
+makes "帮我分析 X" / "调研一下 X" / "X 跟 Y 有什么区别" /
+"X 的发展历史" the canonical research trigger → spawn researcher
+with timeout_s=300. Single-fact lookups stay in pilot's own
+`web_search`. New section explains detached-spawn semantics so
+pilot tells the user "I dispatched X, you can ask other things"
+instead of waiting silently.
+
+### Changed — Soul lookup, no more `~/.localkin/souls/` middleman
+
+Multi-day debugging session traced to `install.sh`'s `cp -n`
+no-clobber soul sync: once a soul existed in `~/.localkin/souls/`,
+edits to the repo's `souls/*.soul.md` never reached the running
+helper because supervisor preferred the family-dir copy. Three
+fixes together:
+
+1. `scripts/install.sh`: stopped copying souls. Now actively
+   `rm -rf`s `~/.localkin/souls/` if found (legacy cleanup).
+2. `cmd/kinclaw/main.go` `soulDirs()`: prefers
+   `$KINCLAW_SOUL_DIRS` (set to repo path by Makefile/Supervisor).
+3. (kinclaw-mac side) `KinClawSupervisor.swift`: priority flipped
+   so dev repo's `souls/` wins over family dir.
+
+Repo is now the sole source of truth for souls. Edit `.soul.md`,
+`make kill && make run`, effect is live.
+
+### Fixed — Researcher's first successful end-to-end turn
+
+Pre-1.12 the researcher soul was unrunnable end-to-end: web_search
+hit DDG's anti-bot wall, knowledge_search bailed because of a
+cwd-relative shell path, every saved finding spammed sqlite into
+BUSY errors, the circuit breaker's "stop and explain" wording made
+the model emit final text + turn_done before writing the report,
+and the report's path used a literal `~` that got created as a
+directory.
+
+1.12 fixes all six: SearXNG primary backend, dual-runtime SKILL.md
+path resolution (`$SKILL_DIR` first then cwd-relative), single-conn
+sqlite, softened circuit messages, file_write tilde expansion, and
+the soul itself rewritten to not save findings to memory in the
+first place. Result on 2026-05-06 18:04: 241-line academic-grade
+report on "因信称义" with 11 working citations including 2 from
+local Guyon + Teresa corpora — the first turn that actually
+delivered.
+
 ## [1.11.0] - 2026-05-04
 
 **KinClaw Mac integration polish.** Three small kernel-side changes

@@ -19,6 +19,42 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// expandTilde resolves a leading "~" or "~/" in a path to the user's
+// home dir. Without this, file_read / file_write / file_edit on a
+// path like "~/Library/Caches/kinclaw/researcher/foo.md" treats "~"
+// as a literal directory name relative to cwd — and helpers running
+// from kinclaw-mac end up creating "~/Library/..." INSIDE the
+// kinclaw-mac repo. Real bug observed: researcher's first successful
+// report landed at .../kinclaw-mac/~/Library/Caches/... instead of
+// $HOME/Library/Caches/...
+//
+// Mirrors the helper in cmd/kinclaw/serve.go (expandHome). Kept
+// internal to this package — too small to warrant a shared util.
+func expandTilde(p string) string {
+	if p == "" || p[0] != '~' {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Fall back to original path; filepath.Abs will then create
+		// a literal "~/foo" relative to cwd. Surfaced via tool result
+		// so the model can see something went sideways and re-emit
+		// an absolute path on retry.
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	if p[1] == '/' {
+		return filepath.Join(home, p[2:])
+	}
+	// "~user/foo" form — we don't resolve other users' homes; pass
+	// through unchanged. (Standard shells do, but our threat model
+	// already restricts skill writes to permission-allowed dirs, so
+	// not implementing this is safer than getting it subtly wrong.)
+	return p
+}
+
 // envDenylist are exact env var names to strip from shell environment.
 var envDenylist = map[string]bool{
 	"ANTHROPIC_API_KEY": true, "OPENAI_API_KEY": true,
@@ -133,7 +169,7 @@ func (s *fileReadSkill) Execute(params map[string]string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	abs, err := filepath.Abs(path)
+	abs, err := filepath.Abs(expandTilde(path))
 	if err != nil {
 		return "", err
 	}
@@ -170,7 +206,7 @@ func (s *fileWriteSkill) Execute(params map[string]string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	abs, err := filepath.Abs(path)
+	abs, err := filepath.Abs(expandTilde(path))
 	if err != nil {
 		return "", err
 	}
@@ -204,7 +240,7 @@ func (s *fileEditSkill) Execute(params map[string]string) (string, error) {
 	if path == "" || oldText == "" {
 		return "", fmt.Errorf("path and old_text are required")
 	}
-	abs, err := filepath.Abs(path)
+	abs, err := filepath.Abs(expandTilde(path))
 	if err != nil {
 		return "", err
 	}
@@ -347,12 +383,16 @@ func NewMemorySkill(store MemoryBackend) Skill  { return &memorySkill{store: sto
 func (s *memorySkill) Name() string             { return "memory" }
 func (s *memorySkill) Description() string {
 	return "Save or recall persistent memories. " +
-		"action=save: store user-facts in the durable k-v table. " +
-		"action=recall: search those k-v facts by query (default scope). " +
+		"action=save: store a key-value fact. " +
+		"action=recall: search saved facts by query (default scope). " +
 		"action=recall scope=history: search the raw conversation log " +
 		"(every message ever, across all past kinclaw sessions of this soul) " +
 		"— use this when the user asks 'what did we say about X' / 'last time we discussed Y' " +
-		"and the answer isn't in the curated facts."
+		"and the answer isn't in the curated facts. " +
+		"\n\nKEY CONVENTION (important): " +
+		"- DURABLE user facts (their name, daughter, city, preferences) → use a BARE key like 'daughter_name' or 'home_city'. These survive across sessions and are auto-injected into your system prompt next time. " +
+		"- TRANSIENT working memory (mid-task drafts, search hits, scratch notes you'll cite from in this turn) → prefix the key with '_' like '_finding_1' or '_draft_intro'. These get wiped on 'New session' so they don't bleed into unrelated future conversations. " +
+		"When in doubt: would the user want this in next week's context? Yes → bare key. No → '_' prefix."
 }
 func (s *memorySkill) ToolDef() json.RawMessage {
 	return MakeToolDef("memory", s.Description(),

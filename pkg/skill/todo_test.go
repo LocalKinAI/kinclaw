@@ -71,7 +71,6 @@ func TestTodoSkill_RejectsBadInput(t *testing.T) {
 		{"missing", ""},
 		{"not json", "not-json"},
 		{"empty content", `[{"content":"","activeForm":"x","status":"pending"}]`},
-		{"empty activeForm", `[{"content":"x","activeForm":"","status":"pending"}]`},
 		{"bad status", `[{"content":"x","activeForm":"y","status":"banana"}]`},
 	}
 	for _, c := range cases {
@@ -88,6 +87,40 @@ func TestTodoSkill_RejectsBadInput(t *testing.T) {
 	// State should still be empty after rejected calls.
 	if items := s.Items(); len(items) != 0 {
 		t.Errorf("rejected calls should not mutate state, got %d items", len(items))
+	}
+}
+
+// TestTodoSkill_ActiveFormFallsBackToContent: when the model omits
+// activeForm (common for Chinese / common when models forget the
+// English-only convention) the skill accepts the call and falls back
+// to using content as the in-progress label. Strict rejection here
+// burns a whole turn on a trivial validation error and can trip
+// the kernel's no-progress loop guard.
+func TestTodoSkill_ActiveFormFallsBackToContent(t *testing.T) {
+	s := NewTodoSkill().(*todoSkill)
+	out, err := s.Execute(map[string]string{
+		"todos": `[
+            {"content":"Search 因信称义","status":"in_progress"},
+            {"content":"Synthesize and explain","status":"pending"}
+        ]`,
+	})
+	if err != nil {
+		t.Fatalf("expected acceptance with auto-fallback, got: %v", err)
+	}
+	// Active item label should be the content (since activeForm
+	// was empty and got filled from content).
+	if !strings.Contains(out, "[~] Search 因信称义") {
+		t.Errorf("expected fallback label '[~] Search 因信称义', got: %q", out)
+	}
+	items := s.Items()
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	if items[0].ActiveForm != "Search 因信称义" {
+		t.Errorf("expected activeForm to fall back to content, got %q", items[0].ActiveForm)
+	}
+	if items[1].ActiveForm != "Synthesize and explain" {
+		t.Errorf("expected pending item activeForm fallback, got %q", items[1].ActiveForm)
 	}
 }
 

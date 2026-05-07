@@ -75,7 +75,12 @@ func (cb *CircuitBreaker) Record(results []ToolResult) (tripped bool, msg string
 		cb.usage[r.Name]++
 		if cb.usage[r.Name] >= cbUsageMax {
 			msg = fmt.Sprintf(
-				"[SYSTEM] Skill %q has been called %d times this turn — that's a lot for a single task. The current approach probably isn't making progress (over-verifying / retry-and-fix loop). Stop iterating, report what you've observed, and finish the user's task with what you have.",
+				"[SYSTEM] Skill %q has been called %d times this turn — enough. STOP calling THIS skill, but the user's task is NOT done.\n\n"+
+					"What to do RIGHT NOW (in this order):\n"+
+					"  1. If you've already gathered enough material to answer / write a report → SYNTHESIZE NOW. For research tasks: file_write the markdown report + reply to the user with the path + TL;DR. For action tasks: do the next concrete step that delivers the result.\n"+
+					"  2. If you need more info but THIS skill keeps failing → switch to a DIFFERENT skill or different params (your soul's protocol probably has a fallback chain).\n"+
+					"  3. Only ask the user for guidance as a LAST resort, after trying (1) or (2).\n\n"+
+					"DO NOT just reply with a status message ('I'm working on it...', 'Let me think about this...'). The user is waiting for the deliverable. Produce the deliverable now using what you've gathered.",
 				r.Name, cb.usage[r.Name],
 			)
 			cb.usage[r.Name] = 0
@@ -98,7 +103,7 @@ func (cb *CircuitBreaker) Record(results []ToolResult) (tripped bool, msg string
 			cb.consecOut = 0
 			if cb.failures[r.Name] >= cbThreshold {
 				msg = fmt.Sprintf(
-					"[SYSTEM] Skill %q has failed %d times in this session.\nStop retrying this skill. Explain the problem to the user and ask for guidance.",
+					"[SYSTEM] Skill %q has failed %d times in this session.\nSTOP retrying THIS specific skill — but the task is NOT over. Pivot to an alternative path: a fallback skill suggested by the failing skill's error message, a different tool entirely, or different params. Your soul's protocol may have a documented fallback chain (e.g. web_search → web_scrape → web_fetch). Only ask the user for guidance if you've exhausted alternatives, not as a first response to this notice.",
 					r.Name, cb.failures[r.Name],
 				)
 				delete(cb.failures, r.Name)
@@ -109,7 +114,7 @@ func (cb *CircuitBreaker) Record(results []ToolResult) (tripped bool, msg string
 			}
 			if cb.consec >= cbThreshold {
 				msg = fmt.Sprintf(
-					"[SYSTEM] Skill %q has failed %d consecutive times with the same error:\n  %s\nStop retrying this approach. Explain the problem to the user and ask for guidance.",
+					"[SYSTEM] Skill %q has failed %d consecutive times with the same error:\n  %s\nSTOP retrying THIS approach — but the task is NOT over. The error message above usually contains a fallback hint; if not, pivot to a different skill or different params. Only ask the user for guidance after trying an alternative.",
 					cb.lastSkill, cb.consec, cb.lastError,
 				)
 				delete(cb.failures, cb.lastSkill)
@@ -139,7 +144,7 @@ func (cb *CircuitBreaker) Record(results []ToolResult) (tripped bool, msg string
 		}
 		if cb.consecOut >= cbThreshold {
 			msg = fmt.Sprintf(
-				"[SYSTEM] Skill %q has returned the same result %d times in a row — looks like a no-progress loop. Replan, try a different matcher / approach, or ask the user. Last result snippet:\n  %s",
+				"[SYSTEM] Skill %q has returned the same result %d times in a row — looks like a no-progress loop. STOP repeating this exact call — but the task is NOT over. Replan: try a different matcher, different params, or a different skill entirely. Ask the user only after trying an alternative. Last result snippet:\n  %s",
 				r.Name, cb.consecOut, snip,
 			)
 			cb.lastOutSkill = ""

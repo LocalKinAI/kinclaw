@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/LocalKinAI/kinclaw/pkg/applifecycle"
 	"github.com/LocalKinAI/kinclaw/pkg/auth"
@@ -20,7 +21,7 @@ import (
 )
 
 const (
-	version = "1.11.0"
+	version = "1.12.0"
 	// maxToolRounds caps the tool-call sequence per user turn. 20 was
 	// fine for kernel-only flows but compound demos (record start + tts
 	// + multi-step ui find/click/verify + tts + record stop) easily
@@ -40,6 +41,14 @@ type session struct {
 	history  []brain.Message
 	debug    bool
 	soulPath string
+
+	// Pending detached-spawn results, drained at the start of the next
+	// turn and prepended to messages as synthetic user messages so the
+	// parent (typically pilot) sees what the child returned without
+	// the user having to re-narrate it. Guarded by spawnMu — written
+	// from the spawn skill's goroutine, read under turnMu by chatHandler.
+	spawnMu      sync.Mutex
+	pendingSpawn []skill.SpawnResult
 }
 
 func main() {
@@ -689,8 +698,34 @@ func findSoulFile(explicit string) string {
 	return ""
 }
 
+// soulDirs returns the search path for *.soul.md lookup. Used by:
+//   - the spawn skill (resolving "researcher" → researcher.soul.md)
+//   - /api/souls listing
+//   - /api/soul switching by name
+//
+// Order (first match wins for name resolution; later dirs visible in
+// the listing for completeness):
+//
+//  1. $KINCLAW_SOUL_DIRS env var (colon-separated). Set by kinclaw-mac's
+//     Makefile/Supervisor to point at the repo's souls/ so dev edits
+//     are immediately discoverable for spawn — without this, pilot's
+//     `spawn(soul="researcher")` falls back to ./souls (cwd-relative,
+//     usually empty) → ~/.localkin/souls (we deleted that on purpose
+//     since souls now live in the repo) → "soul not found" error.
+//  2. ./souls (cwd-relative, for `kinclaw serve` from repo root)
+//  3. ~/.localkin/souls (.app users without dev repo)
 func soulDirs() []string {
-	return []string{"./souls", filepath.Join(homeDir(), ".localkin", "souls")}
+	dirs := []string{}
+	if env := os.Getenv("KINCLAW_SOUL_DIRS"); env != "" {
+		for _, p := range strings.Split(env, ":") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				dirs = append(dirs, p)
+			}
+		}
+	}
+	dirs = append(dirs, "./souls", filepath.Join(homeDir(), ".localkin", "souls"))
+	return dirs
 }
 
 func homeDir() string {

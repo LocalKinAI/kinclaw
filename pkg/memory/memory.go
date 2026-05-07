@@ -75,9 +75,34 @@ func OpenMemory(path string) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path+"?_journal_mode=WAL")
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("opening memory db: %w", err)
+	}
+
+	// SQLite serializes writes even in WAL mode. When researcher loops
+	// emit several `memory action=save` calls in one turn, the database/sql
+	// pool can hand out parallel write connections that collide on the
+	// underlying lock and surface as `SQLITE_BUSY (5)`. Capping at 1
+	// connection turns that race into a queue — slower per-call but
+	// every call succeeds, which matters more than throughput here.
+	db.SetMaxOpenConns(1)
+
+	// Apply PRAGMAs explicitly (instead of via DSN params, which
+	// vary by driver). Order matters: journal_mode WAL must come
+	// before any write so the rollback journal isn't half-set up.
+	//   journal_mode=WAL    — concurrent readers + single writer
+	//   busy_timeout=5000   — wait up to 5s for a lock before failing
+	//   synchronous=NORMAL  — safe with WAL, ~3x faster than FULL
+	for _, pragma := range []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA busy_timeout=5000",
+		"PRAGMA synchronous=NORMAL",
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("applying %q: %w", pragma, err)
+		}
 	}
 	schema := `
 	CREATE TABLE IF NOT EXISTS messages (
@@ -245,17 +270,26 @@ func (s *SQLiteStore) LoadHistory(sessionID string, limit int) []brain.Message {
 	return messages
 }
 
-// AllMemories returns every key/value in the memories table, most-
-// recently-updated first. Used at session start to dump the user's
-// durable facts into the soul's system prompt — so pilot doesn't
-// have to remember to call recall just to find out who you are.
+// AllMemories returns durable user facts, most-recently-updated first.
+// Used at session start to dump them into the soul's system prompt so
+// pilot doesn't have to remember to call recall just to find out who
+// you are.
 //
-// Caps at 50 entries to keep the prompt budget reasonable; if the
-// table grows beyond that, the oldest entries get filtered out at
-// inject time (kernel-side).
+// Convention: keys starting with "_" are TRANSIENT working memory
+// (researcher's draft findings, pilot's scratch todos, mid-task
+// notes) and are deliberately excluded here. Those bleed
+// across sessions if injected — "你好" wakes up a researcher that
+// thinks it's still mid-apartment-hunt because finding_1..9 are in
+// its prompt. Reset (Clear Transient) wipes them outright; this
+// filter is belt-and-suspenders so a stale `_*` survives even on
+// kernels older than the reset endpoint.
+//
+// Caps at 50 entries to keep the prompt budget reasonable.
 func (s *SQLiteStore) AllMemories() ([]struct{ Key, Value string }, error) {
 	rows, err := s.db.Query(
-		`SELECT key, value FROM memories ORDER BY updated_at DESC LIMIT 50`,
+		`SELECT key, value FROM memories
+		 WHERE key NOT LIKE '\_%' ESCAPE '\'
+		 ORDER BY updated_at DESC LIMIT 50`,
 	)
 	if err != nil {
 		return nil, err
@@ -363,6 +397,35 @@ func (s *SQLiteStore) RecallMessages(query string, limit int) (string, error) {
 		return "No messages found matching: " + query, nil
 	}
 	return strings.Join(results, "\n\n"), nil
+}
+
+// ClearSession deletes all messages stored under sessionID. Used by
+// the "new session" path: kernel keeps the same soul/brain/skills,
+// but the conversation tape is wiped so the next user message starts
+// from a clean slate. Memories table (key/value) is NOT touched —
+// callers who want a clean slate including transient working memory
+// should ALSO call ClearTransientMemories.
+func (s *SQLiteStore) ClearSession(sessionID string) error {
+	_, err := s.db.Exec(`DELETE FROM messages WHERE session_id = ?`, sessionID)
+	return err
+}
+
+// ClearTransientMemories deletes every memory whose key starts with
+// "_" — the convention for working memory the agent stashes mid-task
+// (researcher's `_finding_<n>`, pilot's `_draft_*` etc.). Durable
+// user facts (bare keys like "daughter_name", "home_city") survive.
+//
+// Called from the session-reset path so "New session" really means
+// "agent forgets what it was doing" without also forgetting who you
+// are. Idempotent — safe to call when there's nothing transient to
+// clear.
+//
+// SQL note: the LIKE pattern uses ESCAPE '\' so '\_' matches a
+// literal underscore (otherwise '_' is the single-char wildcard
+// and we'd nuke every key whose first char is anything).
+func (s *SQLiteStore) ClearTransientMemories() error {
+	_, err := s.db.Exec(`DELETE FROM memories WHERE key LIKE '\_%' ESCAPE '\'`)
+	return err
 }
 
 func (s *SQLiteStore) Close() error { return s.db.Close() }

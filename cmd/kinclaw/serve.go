@@ -218,6 +218,34 @@ Flags:
 		s := currentSess
 		sessMu.Unlock()
 
+		// Drain detached-spawn results that arrived since the last
+		// turn ended. Each becomes a synthetic user message inserted
+		// BEFORE the user's actual new message, so the parent agent
+		// (typically pilot) sees what the child returned and can refer
+		// to it in this turn's reply. Without this drain, pilot would
+		// only know "I dispatched researcher" and lose the report.
+		s.spawnMu.Lock()
+		drained := s.pendingSpawn
+		s.pendingSpawn = nil
+		s.spawnMu.Unlock()
+		for _, res := range drained {
+			body := res.Output
+			if res.Err != nil {
+				body = fmt.Sprintf("ERROR: %v\n\n%s", res.Err, res.Output)
+			}
+			synthetic := brain.Message{
+				Role: brain.RoleUser,
+				Content: fmt.Sprintf(
+					"[Detached spawn `%s` (job %s) finished after %s]\n\n%s",
+					res.Soul, res.JobID, res.Duration.Round(time.Second), body,
+				),
+			}
+			s.history = append(s.history, synthetic)
+			if s.store != nil {
+				_ = s.store.SaveMessage(s.id, synthetic)
+			}
+		}
+
 		turnCtx, cancel := context.WithCancel(ctx)
 		cancelMu.Lock()
 		currentCancel = cancel
@@ -389,10 +417,123 @@ Flags:
 		return nil
 	}
 
+	// Session reset: wipe the conversation tape on the running session
+	// (in-memory history slice + sqlite messages rows) without touching
+	// soul/brain/skills/permissions. The Mac UI's "New session" button
+	// hits this so a stuck mid-task tool-call loop from a previous
+	// conversation can't bleed into the next "你好,你都能做什么" by
+	// having the model continue the old turn's plan. memories table
+	// (durable key/value) is intentionally NOT cleared — those are
+	// long-lived facts about the user that survive sessions.
+	sessionResetHandler := func() error {
+		if !turnMu.TryLock() {
+			return fmt.Errorf("turn in progress, cancel first (Esc) then reset")
+		}
+		defer turnMu.Unlock()
+
+		sessMu.Lock()
+		s := currentSess
+		// Drop in-memory history. Reassign rather than truncate so
+		// any stale slice header captured elsewhere can't observe
+		// length changes mid-flight (turnMu held = no readers in
+		// flight, but defense-in-depth).
+		s.history = nil
+		sessMu.Unlock()
+
+		if s.store != nil {
+			if err := s.store.ClearSession(s.id); err != nil {
+				return fmt.Errorf("clear store: %w", err)
+			}
+			// Also drop transient working memory ("_" prefix).
+			// Without this, AllMemories() at next-turn prompt-build
+			// time still re-injects every `_finding_<n>` from the
+			// previous task, and "你好" wakes a researcher that
+			// thinks it's still mid-apartment-hunt. Durable user
+			// facts (bare keys) are preserved by design.
+			if err := s.store.ClearTransientMemories(); err != nil {
+				// Don't fail the whole reset — messages were already
+				// cleared, partial success is the right call. Log
+				// and move on.
+				fmt.Fprintf(os.Stderr,
+					"[session-reset] transient memory clear failed: %v\n", err)
+			}
+		}
+
+		srv.Push(server.Event{
+			Type: "session_reset",
+			Name: s.soul.Meta.Name,
+		})
+		return nil
+	}
+
 	srv = server.New(*addr, allowed, chatHandler)
 	srv.SetInterruptHandler(interruptHandler)
 	srv.SetSoulHandlers(soulListHandler, soulSwitchHandler)
 	srv.SetBrainSwitchHandler(brainSwitchHandler)
+	srv.SetSessionResetHandler(sessionResetHandler)
+
+	// Detached-spawn delivery: when a child kinclaw subprocess finishes
+	// in the background (pilot dispatched it with `spawn(...)` while
+	// the user kept chatting), we get the result here. Two deliveries:
+	//   1. SSE event `spawn_done` so the UI can render the result as
+	//      a separate message bubble (lobster icon for the child soul).
+	//   2. Append to the active session's `pendingSpawn` queue so the
+	//      NEXT turn drains it as a synthetic user message — this lets
+	//      pilot reference the child's report ("you said researcher's
+	//      finding was…") without the user having to copy-paste.
+	// The callback is invoked from the spawn skill's goroutine, so
+	// pendingSpawn writes go through s.spawnMu (zero contention with
+	// turn-loop reads, which happen under turnMu at chatHandler entry).
+	spawnResultCallback := func(res skill.SpawnResult) {
+		// Body for the SSE event + history message. Includes timing
+		// + first-line summary so a 50-line report still gives a
+		// readable preview in the chat surface.
+		summary := res.Output
+		if res.Err != nil {
+			summary = fmt.Sprintf("ERROR: %v\n\n%s", res.Err, res.Output)
+		}
+
+		srv.Push(server.Event{
+			Type: "spawn_done",
+			Name: res.Soul,
+			ID:   res.JobID,
+			Params: map[string]string{
+				"duration_s": fmt.Sprintf("%.0f", res.Duration.Seconds()),
+				"prompt":     res.Prompt,
+			},
+			Output: summary,
+		})
+
+		// Queue for next-turn injection. Take the active session ref
+		// under sessMu (might have changed if user soul-switched while
+		// child was running — in that case we still inject into the
+		// CURRENT session, accepting that minor mismatch over losing
+		// the result entirely).
+		sessMu.Lock()
+		s := currentSess
+		sessMu.Unlock()
+		s.spawnMu.Lock()
+		s.pendingSpawn = append(s.pendingSpawn, res)
+		s.spawnMu.Unlock()
+	}
+	if currentSess.registry != nil {
+		currentSess.registry.SetSpawnResultCallback(spawnResultCallback)
+	}
+	// Re-register on soul switch (newSession rebuilds registry).
+	prevSoulSwitch := soulSwitchHandler
+	soulSwitchHandler = func(p string) error {
+		if err := prevSoulSwitch(p); err != nil {
+			return err
+		}
+		sessMu.Lock()
+		s := currentSess
+		sessMu.Unlock()
+		if s.registry != nil {
+			s.registry.SetSpawnResultCallback(spawnResultCallback)
+		}
+		return nil
+	}
+	srv.SetSoulHandlers(soulListHandler, soulSwitchHandler)
 	// Wire the live-screen feed for KinClaw Mac's Cowork mode (which
 	// renders /api/screen/current.jpg inline above the chat). The
 	// server caches the result for 800ms so faster polling buys

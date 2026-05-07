@@ -40,6 +40,30 @@ func (r *Registry) Get(name string) (Skill, error) {
 	return s, nil
 }
 
+// SetSpawnResultCallback installs the async-completion hook on the
+// registered spawn skill (if any). Called from serve.go after the SSE
+// Server is constructed — the spawn skill needs a way to deliver
+// detached child results back to the UI without going through the
+// parent's tool_result protocol (the parent's turn already ended).
+//
+// Returns false if no spawn skill is registered (soul didn't enable
+// it, or kinclaw built without it). Caller can ignore the return —
+// it just means detached spawn won't have a delivery path and falls
+// back to sync.
+func (r *Registry) SetSpawnResultCallback(cb SpawnResultCallback) bool {
+	r.mu.RLock()
+	s, ok := r.skills["spawn"]
+	r.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	if sp, ok := s.(*spawnSkill); ok {
+		sp.SetResultCallback(cb)
+		return true
+	}
+	return false
+}
+
 func (r *Registry) ToolDefs() []json.RawMessage {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

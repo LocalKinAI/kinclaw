@@ -606,6 +606,14 @@ func (m *mockMemory) Recall(query string) (string, error) {
 	return "No memories found matching: " + query, nil
 }
 
+// RecallMessages stubs the messages-table search added when the
+// MemoryBackend interface grew a `scope=history` recall path. Tests
+// in this file don't exercise it, so a minimal "no results" return
+// keeps the mock interface-compliant without changing test intent.
+func (m *mockMemory) RecallMessages(query string, limit int) (string, error) {
+	return "No messages found matching: " + query, nil
+}
+
 func TestMemorySkill_Save(t *testing.T) {
 	mem := newMockMemory()
 	s := NewMemorySkill(mem)

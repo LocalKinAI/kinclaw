@@ -287,3 +287,66 @@ func TestDefaultDBPath(t *testing.T) {
 		t.Errorf("expected path to end with 'memory.db', got %q", path)
 	}
 }
+
+// TestClearTransientMemories: '_' prefixed keys get nuked, bare keys
+// survive. The whole point of the new-session bug fix.
+func TestClearTransientMemories(t *testing.T) {
+	store := openTestDB(t)
+	// 2 durable user facts + 3 transient working scratches.
+	store.Save("daughter_name", "Mei")
+	store.Save("home_city", "SF")
+	store.Save("_finding_1", "zillow.com/abc: SOMA 1BR")
+	store.Save("_finding_2", "apartments.com/xyz: Marina")
+	store.Save("_draft_report", "## Apartments\n…")
+
+	if err := store.ClearTransientMemories(); err != nil {
+		t.Fatalf("ClearTransientMemories: %v", err)
+	}
+
+	all, err := store.AllMemories()
+	if err != nil {
+		t.Fatalf("AllMemories: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 durable rows after clear, got %d: %+v", len(all), all)
+	}
+	keys := map[string]bool{}
+	for _, m := range all {
+		keys[m.Key] = true
+		if strings.HasPrefix(m.Key, "_") {
+			t.Errorf("transient key leaked into AllMemories: %q", m.Key)
+		}
+	}
+	if !keys["daughter_name"] || !keys["home_city"] {
+		t.Errorf("durable facts missing after transient clear: %+v", keys)
+	}
+
+	// Recall by an exact transient key should miss now.
+	got, _ := store.Recall("_finding_1")
+	if !strings.Contains(got, "No memories") {
+		t.Errorf("expected transient _finding_1 gone post-clear, got: %q", got)
+	}
+
+	// Idempotent — second clear is a no-op.
+	if err := store.ClearTransientMemories(); err != nil {
+		t.Errorf("second clear should be no-op, got error: %v", err)
+	}
+}
+
+// TestAllMemories_FiltersTransient: even WITHOUT calling clear,
+// AllMemories() (which feeds the system-prompt boot dump) hides
+// '_'-prefixed keys. Belt-and-suspenders for older kernel builds
+// or DBs migrated from before the convention.
+func TestAllMemories_FiltersTransient(t *testing.T) {
+	store := openTestDB(t)
+	store.Save("user_name", "Jacky")
+	store.Save("_scratch_1", "ephemeral")
+
+	all, _ := store.AllMemories()
+	if len(all) != 1 {
+		t.Fatalf("expected only durable to surface, got %d: %+v", len(all), all)
+	}
+	if all[0].Key != "user_name" {
+		t.Errorf("expected user_name, got %q", all[0].Key)
+	}
+}

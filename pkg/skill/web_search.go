@@ -66,30 +66,61 @@ func (s *webSearchSkill) Execute(params map[string]string) (string, error) {
 		return "", fmt.Errorf("query is required")
 	}
 
-	// Backend dispatch: prefer SearXNG when configured, fall back to
-	// DuckDuckGo HTML scrape on any error. The fallback note is
-	// surfaced in the result so the LLM can see which path served it.
+	// Backend dispatch: SearXNG first when configured, then DDG as
+	// fallback. Both can fail — DDG in particular has been returning
+	// HTTP 202 + an empty homepage shell since mid-2026 (anti-bot
+	// guard against the html.duckduckgo.com endpoint). When ALL
+	// backends fail, the error message tells the model what to do
+	// next instead of just dying — the researcher soul's fallback
+	// chain points to web_scrape (Scrapling, browser TLS fingerprint,
+	// can hit duckduckgo.com directly and parse SERP) as plan B.
 	var (
-		results []searchResult
-		backend string
+		results       []searchResult
+		backend       string
+		searxngErr    error
+		ddgErr        error
+		searxngTried  bool
 	)
 	if s.searxngEndpoint != "" {
+		searxngTried = true
 		r, err := searchSearXNG(s.searxngEndpoint, query)
 		if err == nil {
 			results, backend = r, "searxng"
 		} else {
-			ddg, ddgErr := searchDuckDuckGo(query)
-			if ddgErr != nil {
-				return "", fmt.Errorf("searxng failed (%v) and DDG fallback also failed (%v)", err, ddgErr)
+			searxngErr = err
+			ddg, e := searchDuckDuckGo(query)
+			if e == nil {
+				results = ddg
+				backend = fmt.Sprintf("duckduckgo (searxng unreachable: %v)", err)
+			} else {
+				ddgErr = e
 			}
-			results, backend = ddg, fmt.Sprintf("duckduckgo (searxng unreachable: %v)", err)
 		}
 	} else {
 		r, err := searchDuckDuckGo(query)
 		if err != nil {
-			return "", fmt.Errorf("search failed: %w", err)
+			ddgErr = err
+		} else {
+			results, backend = r, "duckduckgo"
 		}
-		results, backend = r, "duckduckgo"
+	}
+
+	// Both backends down — surface an actionable message. The
+	// researcher soul's fallback chain reads this and pivots to
+	// web_scrape rather than spinning on web_search.
+	if results == nil && (searxngErr != nil || ddgErr != nil) {
+		var msg strings.Builder
+		msg.WriteString("web_search backends all unreachable:\n")
+		if searxngTried {
+			fmt.Fprintf(&msg, "  - searxng %s: %v\n", s.searxngEndpoint, searxngErr)
+			msg.WriteString("    → if you run a local SearXNG, restart it (e.g. `docker restart searxng`).\n")
+		}
+		if ddgErr != nil {
+			fmt.Fprintf(&msg, "  - duckduckgo html scrape: %v\n", ddgErr)
+			msg.WriteString("    → DDG's html.duckduckgo.com endpoint blocks non-browser TLS in 2026.\n")
+		}
+		msg.WriteString("\nFallback: call `web_scrape` with url=\"https://duckduckgo.com/?q=<query>\" — Scrapling has browser TLS fingerprinting and can bypass DDG's bot guard. Or hit a specific source directly via `web_fetch` if you already have a URL in mind.")
+		return "", fmt.Errorf("%s", msg.String())
 	}
 
 	if len(results) == 0 {

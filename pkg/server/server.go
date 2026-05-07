@@ -111,6 +111,15 @@ type BrainSwitchRequest struct {
 // non-ollama, unreachable endpoint, etc.).
 type BrainSwitchHandler func(req BrainSwitchRequest) error
 
+// SessionResetHandler clears the kernel's conversation history for
+// the running session WITHOUT changing the soul, brain, skills, or
+// permissions. The "New session" button in the UI hits this so the
+// next user message starts from a clean tape — otherwise a previous
+// turn's mid-task chatter (esp. a stuck tool-call retry loop) bleeds
+// into the new turn and confuses the model. Should refuse if a turn
+// is in flight (caller-policy via TryLock on turnMu).
+type SessionResetHandler func() error
+
 type Server struct {
 	addr             string
 	chatHandler      ChatHandler
@@ -118,6 +127,7 @@ type Server struct {
 	soulList         SoulListHandler
 	soulSwitch       SoulSwitchHandler
 	brainSwitch      BrainSwitchHandler
+	sessionReset     SessionResetHandler
 	allowedDirs      []string // /file allow-list (absolute, cleaned)
 
 	mu          sync.Mutex
@@ -174,6 +184,12 @@ func (s *Server) SetSoulHandlers(list SoulListHandler, switcher SoulSwitchHandle
 // endpoint returns 501 — UI's brain dropdown will fail with a
 // clear "not wired" error.
 func (s *Server) SetBrainSwitchHandler(h BrainSwitchHandler) { s.brainSwitch = h }
+
+// SetSessionResetHandler wires POST /api/session/reset. Without it
+// the endpoint returns 501 — Mac UI's "New session" button will fall
+// back to clearing only client-side state (which leaves the kernel's
+// history buffer dirty — the bug this endpoint exists to fix).
+func (s *Server) SetSessionResetHandler(h SessionResetHandler) { s.sessionReset = h }
 
 // EventLogger is called for every event Push'd to subscribers. Used
 // by the recorder in serve.go to append events to a JSONL session
@@ -325,6 +341,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	mux.HandleFunc("/api/souls", s.handleSouls)
 	mux.HandleFunc("/api/soul", s.handleSoul)
 	mux.HandleFunc("/api/brain", s.handleBrain)
+	mux.HandleFunc("/api/session/reset", s.handleSessionReset)
 	mux.HandleFunc("/api/screen/current.jpg", s.handleLiveScreen)
 	mux.HandleFunc("/api/screen/info", s.handleLiveScreenInfo)
 	mux.HandleFunc("/api/voice/transcribe", s.handleVoiceTranscribe)
@@ -567,6 +584,34 @@ func (s *Server) handleBrain(w http.ResponseWriter, r *http.Request) {
 	// SSE subscribers see the live state. UI dropdown also refreshes
 	// optimistically based on its own POST result.
 	s.Push(Event{Type: "brain_switched"})
+}
+
+// handleSessionReset clears the kernel's per-session conversation
+// history (in-memory + sqlite) without rebuilding the soul/brain.
+// Returns 202 on success, 409 if a turn is in flight (the caller
+// should hit DELETE /api/chat first to abort, then retry), 501 if
+// the handler isn't wired.
+//
+// Reset events fan out as `session_reset` SSE so any open browser
+// tab can clear its local rendered transcript without a full reload.
+func (s *Server) handleSessionReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.sessionReset == nil {
+		http.Error(w, "session reset not wired", http.StatusNotImplemented)
+		return
+	}
+	if err := s.sessionReset(); err != nil {
+		// Most likely cause is "turn in progress" — surface as 409
+		// Conflict so the UI can show a useful message instead of a
+		// generic 500. Other errors (sqlite write failure) are also
+		// retriable from the user's perspective so 409 still fits.
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // handleLiveScreen serves a fresh JPEG screenshot of the user's
