@@ -33,9 +33,16 @@ func (s *uiSkill) Description() string {
 	return "Navigate and control macOS UI by semantic identity (role, title, " +
 		"identifier) via the Accessibility API. Prefer this over 'input click " +
 		"at x,y' whenever the element has an AX title — it's faster, reliable " +
-		"across resolutions, and survives app-layout changes. Actions: " +
-		"focused_app, tree, find, click, click_sequence, read, at_point. Requires macOS " +
-		"Accessibility permission."
+		"across resolutions, and survives app-layout changes. " +
+		"Actions: " +
+		"focused_app | tree | find | click | click_sequence | read | at_point | watch | " +
+		"actions (list AX actions on element) | app_state (windows + main + focused) | " +
+		"state_diff (snapshot before/after change verification) | " +
+		"wait_until (block until predicate true: appears/enabled/disabled/focused/selected/visible/disappears) | " +
+		"menu_path (walk 'File > Export > PDF...' menu path) | " +
+		"shortcut (read keyboard shortcut for menu path) | " +
+		"select_text (read/replace selected text in focused field). " +
+		"Requires macOS Accessibility permission."
 }
 
 func (s *uiSkill) ToolDef() json.RawMessage {
@@ -43,7 +50,7 @@ func (s *uiSkill) ToolDef() json.RawMessage {
 		map[string]map[string]string{
 			"action": {
 				"type":        "string",
-				"description": "focused_app | tree | find | click | click_sequence | read | at_point | watch",
+				"description": "focused_app | tree | find | click | click_sequence | read | at_point | watch | actions | app_state | state_diff | wait_until | menu_path | shortcut | select_text",
 			},
 			"bundle_id": {
 				"type":        "string",
@@ -94,6 +101,46 @@ func (s *uiSkill) ToolDef() json.RawMessage {
 				"type":        "integer",
 				"description": "For action=watch: block this many milliseconds collecting events, then return everything observed. Default: 3000ms. Max: 30000ms.",
 			},
+			"timeout_ms": {
+				"type":        "integer",
+				"description": "For action=wait_until: max ms to wait for predicate to become true. Default: 10000. Max: 60000.",
+			},
+			"predicate": {
+				"type":        "string",
+				"description": "For action=wait_until: which predicate to test on the matched element. One of: appears (default — element exists), enabled, disabled, focused, selected, visible, disappears. Match the predicate to what your downstream action requires (e.g. wait `enabled` before clicking Submit).",
+			},
+			"visible_only": {
+				"type":        "string",
+				"description": "For action=tree: only emit elements whose AXVisible is true and size>0. Drops offscreen rows in long lists / collapsed sections. Default false.",
+			},
+			"role_filter": {
+				"type":        "string",
+				"description": "For action=tree: comma-separated list of AXRoles to keep (intermediate containers still recurse but don't emit). E.g. 'AXButton,AXTextField,AXMenuItem'. 5-10x token reduction on dense apps.",
+			},
+			"click_after_role": {
+				"type":        "string",
+				"description": "For action=state_diff: snapshot, then click the element matching this role + click_after_title / click_after_identifier, then snapshot again. Returns the JSON diff. Replaces 'screenshot before / screenshot after / model compares' with token-cheap structured diff.",
+			},
+			"click_after_title": {
+				"type":        "string",
+				"description": "For action=state_diff: title of element to click between snapshots.",
+			},
+			"click_after_identifier": {
+				"type":        "string",
+				"description": "For action=state_diff: identifier of element to click between snapshots.",
+			},
+			"path": {
+				"type":        "string",
+				"description": "For action=menu_path / shortcut: menu path string. Separators: '>' or '/' or '→'. Examples: 'File > Export > PDF...', 'Format > Cell > Conditional Highlighting', 'Edit > Find > Find...'. menu_path walks + commits the action; shortcut just reads the keyboard equivalent.",
+			},
+			"mode": {
+				"type":        "string",
+				"description": "For action=select_text: 'read' returns currently-selected text, 'replace' replaces it with `text` param. Default read.",
+			},
+			"text": {
+				"type":        "string",
+				"description": "For action=select_text mode=replace: text to replace the current selection with.",
+			},
 		}, []string{"action"})
 }
 
@@ -128,6 +175,11 @@ func (s *uiSkill) Execute(params map[string]string) (string, error) {
 	case "focused_app":
 		return s.focusedApp()
 	case "tree":
+		// Filter params trigger the new pruning path; without them we
+		// keep the original tree() so existing callers see no diff.
+		if params["visible_only"] != "" || params["role_filter"] != "" {
+			return s.treeFiltered(params)
+		}
 		return s.tree(params)
 	case "find":
 		return s.find(params, false)
@@ -141,6 +193,20 @@ func (s *uiSkill) Execute(params map[string]string) (string, error) {
 		return s.atPoint(params)
 	case "watch":
 		return s.watch(params)
+	case "actions":
+		return s.actions(params)
+	case "app_state":
+		return s.appState(params)
+	case "state_diff":
+		return s.stateDiff(params)
+	case "wait_until":
+		return s.waitUntil(params)
+	case "menu_path":
+		return s.menuPath(params)
+	case "shortcut":
+		return s.shortcut(params)
+	case "select_text":
+		return s.selectText(params)
 	default:
 		return "", fmt.Errorf("unknown action %q", action)
 	}

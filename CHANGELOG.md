@@ -1,5 +1,124 @@
 # Changelog
 
+## [1.13.0] - 2026-05-07
+
+**Deep AX — eight new ui verbs that close the gap on macOS-native UI control.**
+
+Doubling down on the `ui` skill (semantic Accessibility-API control of
+real macOS apps) as the structural moat against cross-platform tools
+that lean on screenshot-clicking. AX-tree-driven control is faster
+(100-300ms/action vs 3-8s for visual reasoning), cheaper (semantic
+queries vs sending screenshots), and survives app-layout changes.
+
+This release expands ui from 8 verbs (focused_app / tree / find /
+click / click_sequence / read / at_point / watch) to **16 verbs**.
+The new eight are layered on top of existing kinax-go primitives —
+no breaking changes, existing soul protocols keep working.
+
+### Added — `ui actions` (verb #5)
+
+Lists AX actions available on a matched element (AXPress, AXShowMenu,
+AXIncrement, AXDecrement, AXPick, etc.). Lets the model ask "what
+can this do?" before guessing — replaces trial-and-error like trying
+AXPress on an AXPopUpButton that needs AXShowMenu.
+
+### Added — `ui app_state` (verb #8)
+
+Snapshot of an app's windows: title, count, main, focused, minimized
+or fullscreen flags. One IPC. Useful at the start of any multi-window
+flow to ground the model in "what's actually open right now".
+
+### Added — `ui tree` filtering (verb #4)
+
+`visible_only=true` drops offscreen / zero-size elements (long lists in
+Slack, Twitter, Notion shrink 5-10x). `role_filter=AXButton,AXTextField`
+keeps only those roles in output. Both compose. Existing `ui tree`
+without these params keeps original behavior.
+
+### Added — `ui state_diff` (verb #3)
+
+Snapshots AX state, optionally clicks an element (`click_after_role` /
+`click_after_title` / `click_after_identifier`), snapshots again,
+returns a structured before-vs-after diff:
+
+```
+ax state diff: +1 -1 ~1
+added:
+  + AXWindow/AXSheet[Confirm]
+removed:
+  - AXButton[Cancel]
+changed:
+  ~ AXTextField[entry]: "before" → "after"
+```
+
+Replaces the "screenshot before / take action / screenshot after /
+model compares pixels" pattern with a token-cheap structured diff.
+Critical for verifying multi-step flows reliably.
+
+### Added — `ui wait_until` (verb #1)
+
+Block until a predicate on a found element becomes true:
+`appears` (default — element exists),
+`enabled`, `disabled`, `focused`, `selected`, `visible`, `disappears`.
+Polls every 250ms; default 10s timeout (cap 60s).
+
+Eliminates the model's previous "click then sleep then click" rhythm.
+"Click Send → wait_until role=AXStaticText title='Sent' appears"
+becomes one logical step instead of three guesses.
+
+### Added — `ui menu_path` (verb #2)
+
+Walk a macOS menu-bar path string and click the leaf:
+
+```
+menu_path path="Format > Cell > Conditional Highlighting"
+menu_path path="File / Export / PDF..."
+menu_path path="Edit→Find→Find..."
+```
+
+Three accepted separators (` > ` / `/` / `→`). Walks AXMenuBar →
+AXMenuBarItem → AXMenu → AXMenuItem with intermediate AXPress to
+open submenus. Replaces the multi-turn "screenshot, find Format,
+click, screenshot, find Cell..." loop with a single call.
+
+### Added — `ui shortcut` (verb #7)
+
+Read the keyboard equivalent of a menu item without firing it:
+
+```
+ui shortcut path="File > Save"
+→ shortcut for File > Save: ⌘S
+```
+
+Decodes AXMenuItemCmdChar + AXMenuItemCmdModifiers (Apple's bitfield
+quirk: bit 3 = 0 means ⌘ implicit). Once known, calling `input.key`
+with the shortcut is 30x faster than walking the menu. Soul protocols
+should bias toward this when applicable.
+
+### Added — `ui select_text` (verb #6)
+
+Read or replace selected text in the focused text element (or one
+matched by role/title/identifier):
+
+- `mode=read` returns the current selection
+- `mode=replace text="..."` replaces selection with new text via
+  AXSelectedText settable attribute
+
+Lets the model edit prose mid-paragraph without overwriting the
+whole field.
+
+### Test coverage
+
+Added `ui_extras_test.go`:
+- `TestSplitMenuPath` — separator parsing for `>` / `/` / `→`
+- `TestFormatShortcut` — Apple's modifier bitfield quirks
+- `TestFormatDiff` — added/removed/changed classification
+- `TestFormatDiff_NoChanges` — happy path
+
+The AX-touching verbs need real app integration tests (deferred to
+CI when we have a macOS runner). All 4 added unit tests pass; all
+existing skill tests still pass.
+
 ## [1.12.2] - 2026-05-06
 
 **Patch — spawn timeout cap raised + pilot soul anti-repetition guard.**
