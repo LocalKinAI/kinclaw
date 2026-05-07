@@ -1,5 +1,56 @@
 # Changelog
 
+## [1.12.1] - 2026-05-06
+
+**Patch — circuit breaker no longer trips throughput skills.**
+
+Removed Trigger 4 ("per-turn skill call cap of 8") from the kernel's
+circuit breaker (`pkg/skill/circuit.go`). The other three triggers
+(consecutive-same-error / total-failures-this-session / consecutive-
+same-output) cover all genuinely-stuck scenarios; Trigger 4 was an
+empirical heuristic for ui-driven Pilot tasks that misfired on the
+research workflow shipped in 1.12.0.
+
+### The bug
+
+A research turn against the masters corpus legitimately calls
+`knowledge_search` across 8-15 different collections (augustine /
+luther / calvin / wesley / edwards / spurgeon / chrysostom / ...).
+Each call returns DIFFERENT material (Trigger 3 doesn't fire — no
+repeated output) and succeeds (Triggers 1/2 don't fire — no errors).
+Trigger 4's blunt "≥ 8 calls = stuck" rule was the only thing that
+fired, and the [SYSTEM] message it emitted derailed the turn before
+Step 5's `file_write` happened.
+
+Same problem applied to `web_search` across many queries,
+`pubmed_search` across many specialty journals, `web_fetch` across
+many URLs.
+
+### The fix
+
+The 4-trigger taxonomy collapses to 3:
+
+| Trigger | Detects |
+|---|---|
+| 1 (Consec same error) | Tight error retry loop |
+| 2 (3 total failures)  | forge ↔ broken_skill cycles |
+| 3 (Consec same output)| `ui find` returning "no elements" 3× |
+
+A throughput task where every call returns DIFFERENT useful material
+trips none of these — which is the right behavior. The dropped
+Trigger 4 heuristic was useful for ui workflows ("the LLM bouncing
+between ui tree → ui find → ui click → ui read") but caused more
+false positives than it caught real bugs as soon as researcher /
+pubmed / knowledge_search joined the skill set.
+
+### Test coverage
+
+- Dropped: `TestCircuitBreaker_OverIterationTrips`,
+  `TestCircuitBreaker_OverIterationCountsAcrossOutcomes`
+- Added: `TestCircuitBreaker_ThroughputDoesNotTrip` — 15 calls to
+  `knowledge_search` with varied output, must not trip
+- Kept all 9 other tests, all still pass
+
 ## [1.12.0] - 2026-05-06
 
 **Deep research loop ships, end-to-end.** Researcher soul + supporting

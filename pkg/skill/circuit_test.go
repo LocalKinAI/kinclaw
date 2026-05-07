@@ -138,47 +138,25 @@ func TestCircuitBreaker_OutputStreakResetsBetweenSkills(t *testing.T) {
 	}
 }
 
-// TestCircuitBreaker_OverIterationTrips covers trigger 4: a single
-// skill called many times in one turn — even with different params
-// and different outputs — signals over-verification or a fix-and-
-// retry loop. Live observation: demo runs where the LLM bounced
-// between ui tree → ui find → ui read → ui click → ui tree to
-// "fix" an ambiguous verification, blowing through 10+ ui calls.
-func TestCircuitBreaker_OverIterationTrips(t *testing.T) {
+// TestCircuitBreaker_ThroughputDoesNotTrip — many calls to the same
+// skill with VARIED output (e.g. researcher running knowledge_search
+// across 12 different masters, web_search across 12 different queries)
+// must NOT trip the breaker. This was the failure mode the v1.12.1
+// removal of Trigger 4 (per-turn call cap) addressed: research turns
+// legitimately make 8-15 calls to a single throughput skill, each
+// gathering new material; the kernel mistook that throughput for
+// "stuck verifying" and emitted a STOP message that derailed the
+// research turn before file_write.
+func TestCircuitBreaker_ThroughputDoesNotTrip(t *testing.T) {
 	cb := NewCircuitBreaker()
-	// First 7 calls (varied output to avoid trigger 3): no trip.
-	for i := 0; i < 7; i++ {
-		out := fmt.Sprintf("variant %d", i)
-		tripped, _ := cb.Record([]ToolResult{{Name: "ui", Output: out}})
+	// 15 calls to knowledge_search, each with different output.
+	// Pre-1.12.1 this tripped at call 8.
+	for i := 0; i < 15; i++ {
+		out := fmt.Sprintf("hits for master %d: ...", i)
+		tripped, msg := cb.Record([]ToolResult{{Name: "knowledge_search", Output: out}})
 		if tripped {
-			t.Fatalf("trip on call %d, expected to wait until cbUsageMax=8", i+1)
+			t.Fatalf("call %d tripped breaker (varied output, no error) — should not. msg: %s", i+1, msg)
 		}
-	}
-	tripped, msg := cb.Record([]ToolResult{{Name: "ui", Output: "variant 7"}})
-	if !tripped {
-		t.Fatal("expected trip at 8th call to same skill in one turn")
-	}
-	if !strings.Contains(msg, "called") {
-		t.Errorf("expected message to mention call count, got: %s", msg)
-	}
-}
-
-// TestCircuitBreaker_OverIterationCountsAcrossOutcomes — failures and
-// successes both count toward the per-turn usage cap.
-func TestCircuitBreaker_OverIterationCountsAcrossOutcomes(t *testing.T) {
-	cb := NewCircuitBreaker()
-	for i := 0; i < 7; i++ {
-		var r ToolResult
-		if i%2 == 0 {
-			r = ToolResult{Name: "shell", Output: fmt.Sprintf("ok %d", i)}
-		} else {
-			r = ToolResult{Name: "shell", Err: fmt.Errorf("err %d", i)}
-		}
-		cb.Record([]ToolResult{r})
-	}
-	tripped, _ := cb.Record([]ToolResult{{Name: "shell", Output: "ok again"}})
-	if !tripped {
-		t.Fatal("8th call (mixed outcomes) should trip the usage cap")
 	}
 }
 

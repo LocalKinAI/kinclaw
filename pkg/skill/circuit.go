@@ -4,7 +4,7 @@ import "fmt"
 
 // CircuitBreaker detects when a skill is going nowhere and forces human
 // escalation instead of letting the LLM burn through all tool rounds.
-// Four triggers:
+// Three triggers:
 //  1. Same skill + same error 3 consecutive times (tight error loop)
 //  2. Same skill fails 3 times total, regardless of error or intervening
 //     successes from other skills (catches forge↔broken_skill cycles)
@@ -12,10 +12,19 @@ import "fmt"
 //     (no-progress loop — e.g. `ui find` returning "no elements matching"
 //     three times in a row, or `ui focused_app` returning Terminal three
 //     times after osascript activate calls).
-//  4. Any single skill called more than `cbUsageMax` times this turn
-//     (over-iteration — the agent is stuck "verifying" or "fixing" in a
-//     way that's not making progress; healthy demos use ui 3-4 times,
-//     not 8+).
+//
+// **Removed in v1.12.1**: a fourth trigger that capped per-skill calls
+// at 8 per turn. It was designed for ui-driven Pilot tasks where 8+
+// invocations of `ui find` / `ui tree` indicate "verifying-without-
+// progress" — but it actively harmed throughput tasks where 8+ calls
+// are healthy work (researcher running knowledge_search across 8
+// masters / web_search across 8 different queries / pubmed_search
+// across 8 specialty journals). The other three triggers already
+// catch the genuinely-stuck cases: same error → Trigger 1, same
+// output → Trigger 3, repeated failures → Trigger 2. A throughput
+// loop where every call returns DIFFERENT material trips none of
+// the three remaining triggers because nothing's actually stuck —
+// which is the right behavior.
 //
 // Triggers are intentionally generic. They don't know what the LLM is
 // trying to do; they just notice that the world isn't changing in
@@ -37,19 +46,12 @@ type CircuitBreaker struct {
 	lastOutSkill string
 	lastOutSnip  string
 	consecOut    int
-
-	// Total calls per skill this turn — catches over-iteration even
-	// when each call has different params/output (the LLM bouncing
-	// between ui tree → ui find → ui click → ui read trying to "fix"
-	// a verification ambiguity).
-	usage map[string]int
 }
 
 // NewCircuitBreaker returns a fresh circuit breaker for a chat session.
 func NewCircuitBreaker() *CircuitBreaker {
 	return &CircuitBreaker{
 		failures: make(map[string]int),
-		usage:    make(map[string]int),
 	}
 }
 
@@ -59,34 +61,12 @@ const (
 	// Long enough to disambiguate near-identical responses, short enough
 	// to keep tree dumps from being treated as different on whitespace.
 	cbOutputSnippet = 200
-	// Per-turn call cap per skill. A healthy demo uses ui 3-4 times
-	// (tree + click_sequence + occasional read). 8+ means the agent
-	// is grinding on verification or trying to "fix" something that
-	// isn't broken from the kernel's perspective.
-	cbUsageMax = 8
 )
 
 // Record inspects a batch of tool results and returns tripped=true with
-// an escalation message if any of the four triggers fires.
+// an escalation message if any of the three triggers fires.
 func (cb *CircuitBreaker) Record(results []ToolResult) (tripped bool, msg string) {
 	for _, r := range results {
-		// Trigger 4 — total per-skill usage this turn. Counted before
-		// branching on Err so both successful and failing calls add up.
-		cb.usage[r.Name]++
-		if cb.usage[r.Name] >= cbUsageMax {
-			msg = fmt.Sprintf(
-				"[SYSTEM] Skill %q has been called %d times this turn — enough. STOP calling THIS skill, but the user's task is NOT done.\n\n"+
-					"What to do RIGHT NOW (in this order):\n"+
-					"  1. If you've already gathered enough material to answer / write a report → SYNTHESIZE NOW. For research tasks: file_write the markdown report + reply to the user with the path + TL;DR. For action tasks: do the next concrete step that delivers the result.\n"+
-					"  2. If you need more info but THIS skill keeps failing → switch to a DIFFERENT skill or different params (your soul's protocol probably has a fallback chain).\n"+
-					"  3. Only ask the user for guidance as a LAST resort, after trying (1) or (2).\n\n"+
-					"DO NOT just reply with a status message ('I'm working on it...', 'Let me think about this...'). The user is waiting for the deliverable. Produce the deliverable now using what you've gathered.",
-				r.Name, cb.usage[r.Name],
-			)
-			cb.usage[r.Name] = 0
-			return true, msg
-		}
-
 		if r.Err != nil {
 			// Error path — feeds triggers 1 and 2, resets trigger 3.
 			cb.failures[r.Name]++
