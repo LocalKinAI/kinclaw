@@ -116,7 +116,7 @@ func (s *spawnSkill) ToolDef() json.RawMessage {
 			},
 			"timeout_s": {
 				"type":        "integer",
-				"description": "Optional timeout in seconds. Default 180, capped at 600.",
+				"description": "Optional timeout in seconds. Default 180, capped at 900 (15 min). Use 600+ for deep research / multi-source synthesis (researcher running 8+ knowledge_search calls + 5+ web_search rounds + Step 5 file_write commonly takes 2-7 min). Use 60-90 for quick verifications (critic review, eye glance) — those auto-stay-sync at <=90s.",
 			},
 			"detach": {
 				"type":        "string",
@@ -155,8 +155,13 @@ func (s *spawnSkill) Execute(params map[string]string) (string, error) {
 	timeoutS := 180
 	if t := strings.TrimSpace(params["timeout_s"]); t != "" {
 		if n, err := strconv.Atoi(t); err == nil && n > 0 {
-			if n > 600 {
-				n = 600
+			// 900s = 15 min cap. Researcher's deep-dive (8 masters via
+			// knowledge_search + 5+ web_search rounds + Step 5 file_write)
+			// has been observed taking 2-7 min; 5-min hard cap was
+			// causing borderline timeouts. 15 min gives comfortable
+			// headroom while still bounding runaway children.
+			if n > 900 {
+				n = 900
 			}
 			timeoutS = n
 		}

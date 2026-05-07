@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.12.2] - 2026-05-06
+
+**Patch — spawn timeout cap raised + pilot soul anti-repetition guard.**
+
+### Spawn timeout cap 600s → 900s
+
+`pkg/skill/spawn.go`: `timeout_s` now capped at 900s (15 min, was
+600s). Deep-research turns under the new soul protocol (8 masters
+via knowledge_search + 5+ web_search rounds + Step 5 file_write)
+have been observed taking 2-7 min in practice; a borderline run
+on 2026-05-06 hit the 5-min cap mid-synthesis and the user got a
+TIMEOUT response instead of the report.
+
+`pilot.soul.md` updated to recommend `timeout_s=600` for research
+dispatches (was 300). Same change in the timeout_s ToolDef
+description so the model sees the new guidance.
+
+### Pilot anti-repetition guard
+
+Pilot's spawn-confirmation reply to the user was getting stuck in
+a sampling loop — the model emitted "我已经派 researcher 去深度
+调研'X'了..." 8-10 times in the same turn before settling. Looks
+like a kimi-k2.5/k2.6 low-temperature degenerate behavior on
+template-shaped instructions.
+
+`pilot.soul.md` adds explicit anti-repetition guidance to the
+spawn confirmation step: "say it once and shut up — turn_done.
+Do not repeat the dispatch confirmation". Plus a clearer fallback
+playbook for when researcher TIMES OUT (look at partial output
+first, tell the user truthfully, offer re-dispatch with longer
+timeout — don't silently invent answers from training memory).
+
 ## [1.12.1] - 2026-05-06
 
 **Patch — circuit breaker no longer trips throughput skills.**
