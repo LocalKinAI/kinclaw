@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.14.1] - 2026-05-07
+
+**Patch — kit dependency cleanup so v1.14 actually `go get`-s.**
+
+v1.14.0 shipped with `go.mod` pinning kit deps to versions that
+predated the features the release relies on:
+
+```
+github.com/LocalKinAI/kinax-go v0.2.0   ← no Observer (used by wait_until / record_user_input)
+github.com/LocalKinAI/sckit-go v0.1.0   ← no OCR (used by ocr_regions / smart_click)
+```
+
+Plus two `replace` directives pointing at the dev's local checkout
+paths, which only worked on that one machine. A fresh `go get
+github.com/LocalKinAI/kinclaw@v1.14.0` would resolve to the
+published kit tags and FAIL the build with "undefined kinax.Observer
+/ kinax.NotifMenuOpened / sckit.OCR" symbol errors.
+
+This patch:
+
+- **kinax-go v0.3.0 published** (commit was sitting unpushed; `feat:
+  Observer — push-based AX event subscriptions`). Cuts +830 lines
+  including `observer.go`, `objc/kinax_ax.m` runloop wiring, tests.
+- **sckit-go v0.2.0 published** (commit was unpushed; `feat: OCR via
+  VNRecognizeTextRequest`). Cuts +416 lines including `ocr.go`,
+  `objc/sckit_sync.m` Vision wrapper, tests.
+- `kinclaw/go.mod` bumped: `kinax-go v0.2.0 → v0.3.0`, `sckit-go
+  v0.1.0 → v0.2.0`.
+- `kinclaw/go.mod` `replace` directives **removed** — kinclaw now
+  resolves kit deps from public module proxy like any other consumer.
+- `go.sum` regenerated via `go mod tidy`.
+
+`go build ./cmd/kinclaw` and `go test ./pkg/skill ./pkg/memory`
+both pass against the **public** kit versions (no local replace
+needed). v1.14.1 is the version anyone cloning fresh should use;
+v1.14.0 stays in the tag history but is effectively shadowed.
+
+No code changes in `pkg/skill/*` between v1.14.0 and v1.14.1 —
+the entire 5-claw 100% feature set is unchanged. This release
+exists purely to make the previous one installable.
+
 ## [1.14.0] - 2026-05-07
 
 **5-claw 100% — every prioritized ROI item shipped, including the

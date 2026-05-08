@@ -5,9 +5,9 @@ go 1.25.6
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/LocalKinAI/input-go v0.2.0
-	github.com/LocalKinAI/kinax-go v0.2.0
+	github.com/LocalKinAI/kinax-go v0.3.0
 	github.com/LocalKinAI/kinrec v0.1.0
-	github.com/LocalKinAI/sckit-go v0.1.0
+	github.com/LocalKinAI/sckit-go v0.2.0
 	golang.org/x/term v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.46.1
@@ -26,7 +26,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/LocalKinAI/sckit-go => /Users/jackysun/Documents/Workspace/sckit-go
-
-replace github.com/LocalKinAI/kinax-go => /Users/jackysun/Documents/Workspace/kinax-go
