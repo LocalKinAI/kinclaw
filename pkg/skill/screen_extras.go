@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"image"
 	"image/png"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -246,34 +245,21 @@ func (s *screenSkill) diffScreenshots(ctx context.Context, params map[string]str
 		return "", fmt.Errorf("diff_screenshots: capture after: %w", err)
 	}
 
-	// Compare. Resize-equalize would be needed if region changed; we
-	// assume same target between captures and bail if dims differ.
-	bb := before.Bounds()
-	ab := after.Bounds()
-	if bb != ab {
-		return "", fmt.Errorf("diff_screenshots: before/after dims differ (%v vs %v)", bb, ab)
-	}
+	// Delegate the grid math to sckit-go's DiffImages helper. v0.3+
+	// gives us DiffGrid with Dirty / BoundingBox / Render methods,
+	// so this verb stays a thin LLM-shape wrapper around the kit
+	// primitive instead of re-implementing pixel comparison.
 	const cells = 16
-	grid := computeDiffGrid(before, after, cells)
-	threshold := atoiDefault(params["threshold"], 8) // mean delta out of 255
-	dirty := flagDirtyCells(grid, float64(threshold))
-
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "diff_screenshots: %dx%d grid, threshold=%d/255, dirty=%d cell(s)\n",
-		cells, cells, threshold, countDirty(dirty))
-	for r := 0; r < cells; r++ {
-		for c := 0; c < cells; c++ {
-			if dirty[r][c] {
-				sb.WriteByte('#')
-			} else if grid[r][c] >= float64(threshold)/2 {
-				sb.WriteByte('.')
-			} else {
-				sb.WriteByte(' ')
-			}
-		}
-		sb.WriteByte('\n')
+	threshold := float64(atoiDefault(params["threshold"], 8))
+	grid, err := sckit.DiffImages(before, after, cells, cells)
+	if err != nil {
+		return "", fmt.Errorf("diff_screenshots: %w", err)
 	}
-	if bbox, ok := dirtyBoundingBox(dirty, bb, cells); ok {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "diff_screenshots: %dx%d grid, threshold=%.0f/255, dirty=%d cell(s)\n",
+		grid.Rows, grid.Cols, threshold, grid.Dirty(threshold))
+	sb.WriteString(grid.Render(threshold))
+	if bbox, ok := grid.BoundingBox(threshold); ok {
 		fmt.Fprintf(&sb, "dirty_bbox: x=%d y=%d w=%d h=%d (display-local px)\n",
 			bbox.Min.X, bbox.Min.Y, bbox.Dx(), bbox.Dy())
 	} else {
@@ -306,121 +292,6 @@ func (s *screenSkill) captureForDiff(ctx context.Context, params map[string]stri
 		return sckit.Capture(ctx, sckit.Region{Display: display, Bounds: image.Rect(x, y, x+w, y+h)})
 	}
 	return sckit.Capture(ctx, display)
-}
-
-func computeDiffGrid(a, b image.Image, cells int) [][]float64 {
-	bounds := a.Bounds()
-	cw := bounds.Dx() / cells
-	ch := bounds.Dy() / cells
-	grid := make([][]float64, cells)
-	for r := 0; r < cells; r++ {
-		grid[r] = make([]float64, cells)
-		for c := 0; c < cells; c++ {
-			x0 := bounds.Min.X + c*cw
-			y0 := bounds.Min.Y + r*ch
-			x1 := x0 + cw
-			y1 := y0 + ch
-			if c == cells-1 {
-				x1 = bounds.Max.X
-			}
-			if r == cells-1 {
-				y1 = bounds.Max.Y
-			}
-			grid[r][c] = meanAbsDelta(a, b, x0, y0, x1, y1)
-		}
-	}
-	return grid
-}
-
-// meanAbsDelta samples a coarse subset of pixels in the rect (every
-// 4th pixel in each axis) and returns mean abs delta of grayscale
-// intensity (0..255). Keeps diff fast on retina-resolution captures.
-func meanAbsDelta(a, b image.Image, x0, y0, x1, y1 int) float64 {
-	var sum, n int
-	const stride = 4
-	for y := y0; y < y1; y += stride {
-		for x := x0; x < x1; x += stride {
-			ar, ag, ab_, _ := a.At(x, y).RGBA()
-			br, bg, bb_, _ := b.At(x, y).RGBA()
-			ai := int((ar + ag + ab_) / 3 / 257) // / 257 ≈ 16-bit → 8-bit
-			bi := int((br + bg + bb_) / 3 / 257)
-			d := ai - bi
-			if d < 0 {
-				d = -d
-			}
-			sum += d
-			n++
-		}
-	}
-	if n == 0 {
-		return 0
-	}
-	return float64(sum) / float64(n)
-}
-
-func flagDirtyCells(grid [][]float64, threshold float64) [][]bool {
-	cells := len(grid)
-	out := make([][]bool, cells)
-	for r := 0; r < cells; r++ {
-		out[r] = make([]bool, cells)
-		for c := 0; c < cells; c++ {
-			if grid[r][c] >= threshold {
-				out[r][c] = true
-			}
-		}
-	}
-	return out
-}
-
-func countDirty(g [][]bool) int {
-	n := 0
-	for _, row := range g {
-		for _, v := range row {
-			if v {
-				n++
-			}
-		}
-	}
-	return n
-}
-
-func dirtyBoundingBox(dirty [][]bool, full image.Rectangle, cells int) (image.Rectangle, bool) {
-	minR, minC := cells, cells
-	maxR, maxC := -1, -1
-	for r := 0; r < cells; r++ {
-		for c := 0; c < cells; c++ {
-			if dirty[r][c] {
-				if r < minR {
-					minR = r
-				}
-				if c < minC {
-					minC = c
-				}
-				if r > maxR {
-					maxR = r
-				}
-				if c > maxC {
-					maxC = c
-				}
-			}
-		}
-	}
-	if maxR < 0 {
-		return image.Rectangle{}, false
-	}
-	cw := full.Dx() / cells
-	ch := full.Dy() / cells
-	x0 := full.Min.X + minC*cw
-	y0 := full.Min.Y + minR*ch
-	x1 := full.Min.X + (maxC+1)*cw
-	y1 := full.Min.Y + (maxR+1)*ch
-	if x1 > full.Max.X {
-		x1 = full.Max.X
-	}
-	if y1 > full.Max.Y {
-		y1 = full.Max.Y
-	}
-	return image.Rect(x0, y0, x1, y1), true
 }
 
 // ---------------------------------------------------------------------
@@ -475,34 +346,6 @@ func safeFilenameFragment(s string) string {
 		}
 	}
 	return string(out)
-}
-
-// imageDistance is a sanity helper used by tests — returns the L2
-// pixel intensity distance between two images of equal size, divided
-// by pixel count. Not used in production diff (cell-grid is faster).
-func imageDistance(a, b image.Image) float64 {
-	ab := a.Bounds()
-	bb := b.Bounds()
-	if ab != bb {
-		return math.Inf(1)
-	}
-	var sum, n float64
-	const stride = 4
-	for y := ab.Min.Y; y < ab.Max.Y; y += stride {
-		for x := ab.Min.X; x < ab.Max.X; x += stride {
-			ar, ag, ab_, _ := a.At(x, y).RGBA()
-			br, bg, bb_, _ := b.At(x, y).RGBA()
-			dr := float64(ar) - float64(br)
-			dg := float64(ag) - float64(bg)
-			db := float64(ab_) - float64(bb_)
-			sum += dr*dr + dg*dg + db*db
-			n++
-		}
-	}
-	if n == 0 {
-		return 0
-	}
-	return math.Sqrt(sum / n)
 }
 
 // helper byte buffer for image encode (used by tests).

@@ -53,10 +53,8 @@ func (s *uiSkill) scrollTo(params map[string]string) (string, error) {
 	defer el.Close()
 
 	// Try AXScrollToVisible first (AXScrollArea + various list
-	// containers honor this); fall back to AXShowMenu / AXPick if
-	// not. We don't expose AXScrollToVisible as a constant in
-	// kinax-go yet, so call by raw name.
-	if err := el.Perform("AXScrollToVisible"); err == nil {
+	// containers honor this); fall back to AXSelected if not.
+	if err := el.Perform(kinax.ActionScrollToVisible); err == nil {
 		return fmt.Sprintf("scroll_to: AXScrollToVisible succeeded on %s", desc), nil
 	}
 	// Fallback: try setting AXSelected = true. Tables and outline

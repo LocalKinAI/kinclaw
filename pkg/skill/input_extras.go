@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -48,62 +47,22 @@ func (s *inputSkill) paste(ctx context.Context, params map[string]string, opts [
 		return "", fmt.Errorf("paste: missing `text`")
 	}
 
+	// kinclaw exposes a `restore_clipboard=false` knob; input-go's
+	// PasteText always restores. When the caller wants no-restore
+	// semantics, we replicate by writing to the clipboard explicitly
+	// AFTER PasteText (which restores prev), overriding the restore.
 	restoreClip := parseBoolParam(params["restore_clipboard"], true)
 
-	// 1. Save current clipboard (best-effort).
-	prev, _ := pbpaste(ctx)
-
-	// 2. Write our text to the clipboard.
-	if err := pbcopy(ctx, text); err != nil {
-		return "", fmt.Errorf("paste: pbcopy: %w", err)
-	}
-
-	// 3. Fire ⌘V. Use the existing input.Hotkey path so target_pid +
-	//    delay opts route consistently with the rest of the skill.
-	mods, _ := input.ParseModifiers("cmd")
-	v, ok := input.KeyByName("v")
-	if !ok {
-		return "", fmt.Errorf("paste: cannot resolve key 'v' for ⌘V")
-	}
-	if err := input.Hotkey(ctx, mods, v, opts...); err != nil {
-		return "", fmt.Errorf("paste: ⌘V: %w", err)
-	}
-
-	// 4. Tiny settle so the target app reads the clipboard before we
-	//    overwrite it. 100ms is generous for non-Electron; Electron
-	//    apps can take 200-300ms in pathological cases — bump if you
-	//    see truncated paste in Electron.
-	time.Sleep(150 * time.Millisecond)
-
-	// 5. Restore previous clipboard.
-	if restoreClip && prev != "" {
-		if err := pbcopy(ctx, prev); err != nil {
-			// Don't fail the paste call — text was already injected.
-			// Surface the warning in the result message.
-			return fmt.Sprintf("pasted %d chars%s (warning: clipboard restore failed: %v)",
-				len([]rune(text)), pidLabel, err), nil
-		}
-	}
-	return fmt.Sprintf("pasted %d chars via clipboard%s", len([]rune(text)), pidLabel), nil
-}
-
-// pbcopy / pbpaste shell out to the macOS pasteboard CLI tools. They
-// pipe via stdin/stdout so binary-safe up to the user's locale —
-// good enough for arbitrary UTF-8 text. For richer typed pasteboard
-// content we'd need NSPasteboard via purego; not needed for this
-// verb's "fast text" charter.
-func pbcopy(ctx context.Context, text string) error {
-	cmd := exec.CommandContext(ctx, "pbcopy")
-	cmd.Stdin = strings.NewReader(text)
-	return cmd.Run()
-}
-
-func pbpaste(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "pbpaste").Output()
-	if err != nil {
+	if err := input.PasteText(ctx, text, opts...); err != nil {
 		return "", err
 	}
-	return string(out), nil
+	if !restoreClip {
+		// Override input.PasteText's auto-restore by re-writing the
+		// new text. Best-effort; failure leaves the user's previous
+		// clipboard in place which is also fine.
+		_ = input.WriteClipboard(ctx, text)
+	}
+	return fmt.Sprintf("pasted %d chars via clipboard%s", len([]rune(text)), pidLabel), nil
 }
 
 // ---------------------------------------------------------------------

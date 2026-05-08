@@ -7,38 +7,10 @@ import (
 	"testing"
 )
 
-// TestSplitMenuPath covers the menu-path parser used by `ui menu_path`
-// and `ui shortcut`. Three accepted separators: ' > ', '>', '/', '→'
-// (with or without surrounding spaces). Empty parts get dropped.
-func TestSplitMenuPath(t *testing.T) {
-	cases := []struct {
-		in   string
-		want []string
-	}{
-		{"File > Save", []string{"File", "Save"}},
-		{"File>Save", []string{"File", "Save"}},
-		{"Format > Cell > Conditional Highlighting",
-			[]string{"Format", "Cell", "Conditional Highlighting"}},
-		{"View / Show Toolbar", []string{"View", "Show Toolbar"}},
-		{"Edit→Find→Find...", []string{"Edit", "Find", "Find..."}},
-		{"OnlyOne", []string{"OnlyOne"}},
-		{"  Spaced  >  Out  ", []string{"Spaced", "Out"}},
-	}
-	for _, c := range cases {
-		got := splitMenuPath(c.in)
-		if len(got) != len(c.want) {
-			t.Errorf("splitMenuPath(%q): got %d parts, want %d (got=%v)",
-				c.in, len(got), len(c.want), got)
-			continue
-		}
-		for i := range got {
-			if got[i] != c.want[i] {
-				t.Errorf("splitMenuPath(%q) part %d: got %q, want %q",
-					c.in, i, got[i], c.want[i])
-			}
-		}
-	}
-}
+// TestSplitMenuPath has moved to kinax-go's menu_test.go (the kit
+// owns the parser now via Element.NavigateMenu). The kinclaw
+// `ui menu_path` verb is just a thin wrapper around kinax —
+// integration covered by the kit's own tests.
 
 // TestFormatShortcut covers the bit decoding for AXMenuItemCmdModifiers.
 // Apple's quirk: bit 3 (value 8) means "no command" — set when ⌘ is

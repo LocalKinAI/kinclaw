@@ -594,140 +594,15 @@ func (s *uiSkill) menuPath(params map[string]string) (string, error) {
 	if pathStr == "" {
 		return "", fmt.Errorf("menu_path: 'path' is required (e.g. 'File > Export > PDF...')")
 	}
-	parts := splitMenuPath(pathStr)
-	if len(parts) == 0 {
-		return "", fmt.Errorf("menu_path: empty path after parsing")
+
+	// kinax v0.4+ exposes the menu walk + commit logic as a single
+	// method. We just call through; the helper handles AXMenuBar →
+	// AXMenuBarItem → AXMenu → AXMenuItem layering, sub-menu opens,
+	// and the final AXPress.
+	if err := app.NavigateMenu(pathStr); err != nil {
+		return "", err
 	}
-
-	menubar, err := app.AttributeElement(kinax.AttrMenuBar)
-	if err != nil || menubar == nil {
-		return "", fmt.Errorf("menu_path: app has no AXMenuBar (sandboxed / non-AppKit?)")
-	}
-	defer menubar.Close()
-
-	current := menubar
-	closeWhenDone := []*kinax.Element{}
-	defer func() {
-		for _, e := range closeWhenDone {
-			e.Close()
-		}
-	}()
-
-	for i, name := range parts {
-		// Find the AXMenuItem (or AXMenuBarItem at level 0) inside
-		// current's children whose AXTitle matches `name`. Children
-		// of an AXMenuBarItem are an AXMenu container, then its
-		// children are AXMenuItems — we walk through transparently.
-		next, err := findMenuChild(current, name)
-		if err != nil {
-			return "", fmt.Errorf("menu_path: at step %d/%d (%q): %w",
-				i+1, len(parts), name, err)
-		}
-		closeWhenDone = append(closeWhenDone, next)
-
-		isLast := i == len(parts)-1
-		if isLast {
-			// Final step — commit. AXPress works for menu items in
-			// most apps; AXPick is the official action but rarely
-			// needed in practice.
-			if err := next.Perform(kinax.ActionPress); err != nil {
-				return "", fmt.Errorf("menu_path: final AXPress on %q: %w", name, err)
-			}
-			return fmt.Sprintf("menu_path: clicked through %s",
-				strings.Join(parts, " > ")), nil
-		}
-		// Intermediate step — open the submenu.
-		if err := next.Perform(kinax.ActionPress); err != nil {
-			return "", fmt.Errorf("menu_path: AXPress on %q to open submenu: %w", name, err)
-		}
-		// Submenu reveal is async; tiny settle.
-		time.Sleep(80 * time.Millisecond)
-		current = next
-	}
-	return "", fmt.Errorf("menu_path: should be unreachable")
-}
-
-func splitMenuPath(p string) []string {
-	// Accept either ">" or "/" or "→" as separator. Trim each part.
-	for _, sep := range []string{" > ", ">", " / ", "/", " → ", "→"} {
-		if strings.Contains(p, sep) {
-			parts := strings.Split(p, sep)
-			out := make([]string, 0, len(parts))
-			for _, x := range parts {
-				if t := strings.TrimSpace(x); t != "" {
-					out = append(out, t)
-				}
-			}
-			return out
-		}
-	}
-	return []string{strings.TrimSpace(p)}
-}
-
-func findMenuChild(parent *kinax.Element, title string) (*kinax.Element, error) {
-	kids, err := parent.Children()
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		// Close everything we don't return.
-		// (We dup-close the returned one via the caller's deferred
-		// closeWhenDone, but Close is idempotent in kinax-go.)
-	}()
-
-	for _, k := range kids {
-		t, _ := k.Title()
-		if t == title {
-			// Child found. If this is an AXMenuBarItem or AXMenuItem
-			// that contains a submenu (AXMenu child), descend through
-			// the submenu container to its items lazily — but the
-			// CALLER only needs the item itself for AXPress. So return
-			// as-is and let the caller keep walking via Children().
-			//
-			// Subtle: kinax MenuBar > MenuBarItem > Menu > MenuItem.
-			// When walking "Format > Cell > Conditional...", "Format"
-			// is the MenuBarItem; pressing it opens an AXMenu. The
-			// next-level lookup for "Cell" must come from THAT AXMenu,
-			// not from the MenuBarItem directly. We handle this by
-			// peeking: if `k` has exactly one AXMenu child, return
-			// that child instead so the next iteration looks inside
-			// the submenu.
-			subKids, _ := k.Children()
-			var menuChild *kinax.Element
-			for _, sk := range subKids {
-				r, _ := sk.Role()
-				if r == kinax.RoleMenu && menuChild == nil {
-					menuChild = sk
-				} else {
-					sk.Close()
-				}
-			}
-			if menuChild != nil {
-				// Press the parent first (to "activate" the menu
-				// path), then return the submenu container so the
-				// next step looks inside it.
-				_ = k.Perform(kinax.ActionPress)
-				k.Close()
-				// Drain remaining siblings.
-				closeAll(kids[len(kids)-(len(kids)-indexOf(kids, k)-1):])
-				return menuChild, nil
-			}
-			// Leaf menu item — return directly. Drain other siblings.
-			defer closeAll(kids[len(kids)-(len(kids)-indexOf(kids, k)-1):])
-			return k, nil
-		}
-	}
-	closeAll(kids)
-	return nil, fmt.Errorf("no child titled %q", title)
-}
-
-func indexOf(arr []*kinax.Element, target *kinax.Element) int {
-	for i, e := range arr {
-		if e == target {
-			return i
-		}
-	}
-	return -1
+	return fmt.Sprintf("menu_path: navigated %s", pathStr), nil
 }
 
 // ---------------------------------------------------------------------
@@ -750,34 +625,105 @@ func (s *uiSkill) shortcut(params map[string]string) (string, error) {
 	if pathStr == "" {
 		return "", fmt.Errorf("shortcut: 'path' required (e.g. 'File > Save')")
 	}
-	parts := splitMenuPath(pathStr)
+
+	// Walk the menu path WITHOUT committing the final action — we
+	// just want to read the keyboard equivalent. NavigateMenu
+	// presses the leaf, which we DON'T want here. Use the matcher
+	// approach: find the leaf AXMenuItem by walking children of
+	// AXMenuBar via the same logic kinax uses internally.
+	//
+	// Future kinax: split NavigateMenu into FindMenuItem(path) +
+	// PressMenuItem(item). Until then, do the final-step lookup
+	// here, then call MenuItemShortcut on the matched leaf.
+	leaf, err := findMenuLeafForShortcut(app, pathStr)
+	if err != nil {
+		return "", err
+	}
+	defer leaf.Close()
+	char, mods, vk, err := leaf.MenuItemShortcut()
+	if err != nil {
+		return fmt.Sprintf("shortcut: %s has no keyboard equivalent", pathStr), nil
+	}
+	return formatShortcut(char, mods, vk, pathStr), nil
+}
+
+// findMenuLeafForShortcut walks the menu path WITHOUT pressing any
+// item. Returns the leaf AXMenuItem so the caller can read its
+// keyboard equivalent via MenuItemShortcut. This is a kinclaw-
+// internal helper because it duplicates partial logic that should
+// eventually live in kinax-go as `FindMenuItem(path)` (separate
+// from the press-leaf NavigateMenu). Tracked as a kit follow-up.
+func findMenuLeafForShortcut(app *kinax.Element, path string) (*kinax.Element, error) {
+	parts := strings.FieldsFunc(path, func(r rune) bool {
+		return r == '>' || r == '/' || r == '→'
+	})
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	// Filter empty parts.
+	cleaned := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			cleaned = append(cleaned, p)
+		}
+	}
+	if len(cleaned) == 0 {
+		return nil, fmt.Errorf("shortcut: empty path")
+	}
 
 	menubar, err := app.AttributeElement(kinax.AttrMenuBar)
 	if err != nil || menubar == nil {
-		return "", fmt.Errorf("shortcut: app has no AXMenuBar")
+		return nil, fmt.Errorf("shortcut: app has no AXMenuBar")
 	}
 	defer menubar.Close()
 
+	// Walk by child-title at each level. We DO need to open submenus
+	// for AppKit to populate AXMenu contents, so we still press
+	// intermediate items — just not the leaf.
 	current := menubar
-	for i, name := range parts {
-		next, err := findMenuChild(current, name)
+	for i, name := range cleaned {
+		isLast := i == len(cleaned)-1
+		kids, err := current.Children()
 		if err != nil {
-			return "", fmt.Errorf("shortcut: at step %d (%q): %w", i+1, name, err)
+			return nil, fmt.Errorf("shortcut: at step %d (%q): %w", i+1, name, err)
 		}
-		isLast := i == len(parts)-1
-		if isLast {
-			defer next.Close()
-			char, _ := next.Attribute("AXMenuItemCmdChar")
-			modBits, _ := next.AttributeInt("AXMenuItemCmdModifiers")
-			vk, _ := next.AttributeInt("AXMenuItemCmdVirtualKey")
-			if char == "" && vk == 0 {
-				return fmt.Sprintf("shortcut: %s has no keyboard equivalent", pathStr), nil
+		var match *kinax.Element
+		for _, k := range kids {
+			t, _ := k.Title()
+			if t == name && match == nil {
+				match = k
+			} else {
+				k.Close()
 			}
-			return formatShortcut(char, int(modBits), int(vk), pathStr), nil
 		}
-		current = next
+		if match == nil {
+			return nil, fmt.Errorf("shortcut: no menu item titled %q at step %d/%d", name, i+1, len(cleaned))
+		}
+		if isLast {
+			return match, nil // caller closes
+		}
+		// Intermediate: open submenu so its children populate.
+		_ = match.Perform(kinax.ActionPress)
+		// Find the AXMenu child container.
+		subKids, _ := match.Children()
+		var menuChild *kinax.Element
+		for _, sk := range subKids {
+			r, _ := sk.Role()
+			if r == kinax.RoleMenu && menuChild == nil {
+				menuChild = sk
+			} else {
+				sk.Close()
+			}
+		}
+		match.Close()
+		if menuChild == nil {
+			return nil, fmt.Errorf("shortcut: %q has no submenu", name)
+		}
+		current = menuChild
+		// Brief settle for AppKit to populate.
+		time.Sleep(80 * time.Millisecond)
 	}
-	return "", fmt.Errorf("shortcut: unreachable")
+	return nil, fmt.Errorf("shortcut: unreachable")
 }
 
 func formatShortcut(char string, modBits int, vk int, path string) string {

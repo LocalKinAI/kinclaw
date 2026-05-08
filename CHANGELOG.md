@@ -1,5 +1,85 @@
 # Changelog
 
+## [1.14.2] - 2026-05-07
+
+**Architecture cleanup — kit-debt repayment.** v1.14.0 / v1.14.1
+shipped ~400 lines of generic-purpose helpers that had landed in
+the kinclaw skill layer when they should have been at kit level.
+This patch lifts them up to where they belong + thins kinclaw's
+verb implementations to pass-throughs.
+
+The user-facing verb surface is **byte-equivalent** between v1.14.1
+and v1.14.2 — same 75 verbs, same params, same output format.
+The change is structural: kit primitives now live in kit repos
+where kincode / future agents / OSS consumers can reuse them
+without re-implementing.
+
+### Migrated to kinax-go v0.4.0
+
+- **Element.NavigateMenu(path)** — walks AXMenuBar → AXMenuBarItem →
+  AXMenu → AXMenuItem with intermediate AXPress + 80ms settle, fires
+  AXPress on the leaf. Replaces ~80 lines of `findMenuChild` +
+  walking logic that was inline in `pkg/skill/ui_extras.go`.
+- **Element.MenuItemShortcut() (char, mods, vk, err)** — typed
+  accessor for AXMenuItem keyboard equivalents. Replaces raw
+  `el.Attribute("AXMenuItemCmdChar")` + AttributeInt incantations.
+- New constants: `ActionScrollToVisible`, `AttrMenuItemCmdChar` /
+  `Modifiers` / `VirtualKey` / `MarkChar`.
+
+### Migrated to sckit-go v0.3.0
+
+- **DiffImages(a, b, rows, cols) (\*DiffGrid, error)** + DiffGrid
+  methods (`Dirty`, `BoundingBox`, `Render`). Replaces
+  `pkg/skill/screen_extras.go`'s `computeDiffGrid`,
+  `flagDirtyCells`, `countDirty`, `dirtyBoundingBox`,
+  `meanAbsDelta` (~70 lines).
+
+### Migrated to input-go v0.3.0
+
+- **PasteText(ctx, text, opts...)** — clipboard-paste via pbcopy + ⌘V
+  + auto-restore. Replaces inline pbcopy/pbpaste/Hotkey dance
+  (~50 lines) in `pkg/skill/input_extras.go::paste`.
+- **ReadClipboard / WriteClipboard** — sibling helpers for
+  pasteboard read/write without firing ⌘V.
+
+### kinclaw side
+
+- `go.mod` bumped: `kinax-go v0.3.0 → v0.4.0`, `sckit-go v0.2.0 →
+  v0.3.0`, `input-go v0.2.0 → v0.3.0`. No replace directives.
+- `pkg/skill/ui_extras.go` `menuPath` verb collapses to a single
+  `app.NavigateMenu(path)` call (~5 lines vs ~80 before).
+- `pkg/skill/ui_extras.go` `shortcut` verb uses
+  `Element.MenuItemShortcut()` to read the keyboard equivalent
+  (raw attribute access removed).
+- `pkg/skill/ui_extras2.go` `scroll_to` uses
+  `kinax.ActionScrollToVisible` constant instead of the magic
+  string.
+- `pkg/skill/screen_extras.go` `diff_screenshots` verb collapses
+  to `sckit.DiffImages(...)` + `grid.Render(...)` /
+  `BoundingBox(...)` (~10 lines vs ~70 before).
+- `pkg/skill/input_extras.go` `paste` verb collapses to
+  `input.PasteText(...)` + optional WriteClipboard re-write
+  for the no-restore path (~10 lines vs ~50 before).
+- Test file `screen_extras_test.go`: removed diff-grid tests
+  (kit owns the algorithm now; covered in sckit's `diff_test.go`
+  when added). `ui_extras_test.go` removed `TestSplitMenuPath`
+  (kit-internal helper now).
+
+### Why this matters
+
+KinClaw skills are now genuinely **LLM-tool-shape thin wrappers**
+around kit primitives. The 5 claws (kinax / sckit / input / kinrec)
+are the reusable atoms; kinclaw's `pkg/skill/*` is just the
+verb-surface and param-parsing layer. Other consumers (kincode,
+future apps) can use the same kit features without re-implementing
+~400 lines of menu walking + pixel diff + clipboard plumbing.
+
+### Test coverage
+
+`go test ./pkg/skill ./pkg/memory` — all pass against the published
+v0.4.0 / v0.3.0 / v0.3.0 kit versions. Diff-grid tests moved to
+sckit-go.
+
 ## [1.14.1] - 2026-05-07
 
 **Patch — kit dependency cleanup so v1.14 actually `go get`-s.**
