@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/LocalKinAI/sckit-go"
@@ -42,12 +43,21 @@ func NewScreenSkill(allowed bool, outputDir string) Skill {
 func (s *screenSkill) Name() string { return "screen" }
 
 func (s *screenSkill) Description() string {
-	return "Capture a screenshot, list displays, or run on-device OCR via Vision " +
-		"framework. 'screenshot' saves a PNG (returns path); 'list_displays' " +
-		"enumerates options; 'ocr' returns recognized text + bounding boxes from " +
-		"either the current screen (omit `path`) or a specified PNG/JPEG file. " +
-		"Use OCR instead of vision-LLM when you only need the literal text — it's " +
-		"local, ~50-200ms, free. Requires Screen Recording permission (macOS TCC)."
+	return "Capture macOS screen, enumerate UI graph, OCR text, sample pixels, " +
+		"diff before/after. Actions: " +
+		"screenshot (full display, or sub-region region=x,y,w,h, or single window " +
+		"bundle_id=) | screenshot_app (composite all windows of bundle_id) | " +
+		"list_displays | list_windows (visible window enumeration) | " +
+		"list_apps (apps with visible windows) | " +
+		"ocr (concatenated text) | ocr_regions (JSON with bbox + center_x/y for " +
+		"direct input.click feed) | diff_screenshots (16×16 heatmap + dirty bbox) | " +
+		"color_at_point (sample pixel — RGB hex + rough color name like red/green/gray, " +
+		"useful for status indicators / dark-mode detection / spinner-still-spinning) | " +
+		"live_stream (mode=start/frame/stop/list — long-lived sckit.Stream gives " +
+		"~80-160ms/frame amortized vs 250-400ms per fresh capture; ideal for " +
+		"watching UI react to a sequence of clicks). " +
+		"Use OCR instead of vision-LLM when you only need the literal text — local, " +
+		"~50-200ms, free. Requires Screen Recording permission (macOS TCC)."
 }
 
 func (s *screenSkill) ToolDef() json.RawMessage {
@@ -55,8 +65,30 @@ func (s *screenSkill) ToolDef() json.RawMessage {
 		map[string]map[string]string{
 			"action": {
 				"type":        "string",
-				"description": "screenshot (default) | list_displays | ocr",
+				"description": "screenshot (default) | list_displays | list_windows | list_apps | screenshot_app | ocr | ocr_regions | diff_screenshots | color_at_point | live_stream",
 			},
+			"mode": {
+				"type":        "string",
+				"description": "For action=live_stream: start | frame | stop | list. Default: start.",
+			},
+			"id": {
+				"type":        "string",
+				"description": "For action=live_stream mode=frame|stop: stream id returned by start (e.g. 'ls-0001').",
+			},
+			"fps": {
+				"type":        "integer",
+				"description": "For action=live_stream mode=start: frame rate (default 30). Higher fps = smoother captures but more buffer pressure.",
+			},
+			"on_screen": {
+				"type":        "string",
+				"description": "For action=list_windows: 'true' (default) only on-screen windows, 'false' includes minimized.",
+			},
+			"name_contains": {
+				"type":        "string",
+				"description": "For action=list_apps: filter apps whose name contains this substring (case-insensitive).",
+			},
+			"x": {"type": "number", "description": "For color_at_point: X coordinate (display-local)"},
+			"y": {"type": "number", "description": "For color_at_point: Y coordinate (display-local)"},
 			"display_id": {
 				"type":        "string",
 				"description": "Optional CGDirectDisplayID from list_displays. Default: main display.",
@@ -67,7 +99,27 @@ func (s *screenSkill) ToolDef() json.RawMessage {
 			},
 			"path": {
 				"type":        "string",
-				"description": "For action=ocr: path to an existing PNG/JPEG. Omit to OCR a fresh screen capture.",
+				"description": "For action=ocr / ocr_regions: path to an existing PNG/JPEG. Omit to OCR a fresh screen capture.",
+			},
+			"region": {
+				"type":        "string",
+				"description": "For action=screenshot or diff_screenshots: 'x,y,w,h' in display-local px. Captures only that sub-rectangle. 5-20× token reduction vs full-display capture.",
+			},
+			"bundle_id": {
+				"type":        "string",
+				"description": "For action=screenshot: capture a specific app's window (e.g. 'com.apple.Safari'). Pair with title_contains= when the app has multiple windows.",
+			},
+			"title_contains": {
+				"type":        "string",
+				"description": "For action=screenshot bundle_id=...: pick the window whose title contains this substring (case-insensitive). When multiple windows match the bundle and you want a specific one.",
+			},
+			"wait_ms": {
+				"type":        "integer",
+				"description": "For action=diff_screenshots: ms to wait between before and after captures. Caller is expected to perform the action externally during this window. Default: 0 (caller must split into two calls).",
+			},
+			"threshold": {
+				"type":        "integer",
+				"description": "For action=diff_screenshots: per-cell mean-abs-delta threshold (0..255) above which a cell is flagged dirty. Default 8 — sensitive enough to catch text changes, insensitive enough to ignore antialiasing.",
 			},
 		}, nil)
 }
@@ -89,11 +141,35 @@ func (s *screenSkill) Execute(params map[string]string) (string, error) {
 	case "list_displays":
 		return s.listDisplays(ctx)
 	case "screenshot":
+		// region= and bundle_id= take screenshot down a more
+		// specific capture path (sub-rect or single window). Without
+		// them we keep the original full-display behavior so existing
+		// callers see no diff.
+		if strings.TrimSpace(params["region"]) != "" {
+			return s.screenshotRegion(ctx, params)
+		}
+		if strings.TrimSpace(params["bundle_id"]) != "" {
+			return s.screenshotWindow(ctx, params)
+		}
 		return s.screenshot(ctx, params)
 	case "ocr":
 		return s.ocr(ctx, params)
+	case "ocr_regions":
+		return s.ocrRegions(ctx, params)
+	case "diff_screenshots":
+		return s.diffScreenshots(ctx, params)
+	case "list_windows":
+		return s.listWindows(ctx, params)
+	case "list_apps":
+		return s.listApps(ctx, params)
+	case "screenshot_app":
+		return s.screenshotApp(ctx, params)
+	case "color_at_point":
+		return s.colorAtPoint(ctx, params)
+	case "live_stream":
+		return s.liveStream(ctx, params)
 	default:
-		return "", fmt.Errorf("unknown action %q (expected: screenshot, list_displays, ocr)", action)
+		return "", fmt.Errorf("unknown action %q (expected: screenshot | list_displays | list_windows | list_apps | screenshot_app | ocr | ocr_regions | diff_screenshots | color_at_point | live_stream)", action)
 	}
 }
 

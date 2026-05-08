@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,14 @@ type activeRec struct {
 	rec     *kinrec.Recorder
 	path    string
 	started time.Time
+	// User-supplied metadata that lands in the .mp4.json sidecar
+	// when the recording finalizes. Pure passthrough — kinclaw
+	// doesn't interpret these fields, just writes them so a future
+	// reader (replayer / harvest tool / forge importer) can identify
+	// the recording's provenance.
+	sessionID string
+	soul      string
+	taskNote  string
 }
 
 // NewRecordSkill returns the record skill. If allowed is false every
@@ -64,13 +73,19 @@ func (s *recordSkill) Name() string { return "record" }
 
 func (s *recordSkill) Description() string {
 	return "Record the macOS screen to a video file (MP4). " +
-		"Non-blocking: 'start' returns a recording_id immediately so the " +
-		"agent can keep operating the Mac while recording; 'stop' finalizes " +
-		"the file and returns its path + duration + frame count. Other " +
-		"actions: 'list' shows active recordings, 'stats' shows live " +
-		"frame/audio counters for one recording. Optional system audio " +
-		"and microphone capture. Requires Screen Recording permission " +
-		"(macOS TCC); microphone use also requires Microphone permission."
+		"Actions: " +
+		"start (non-blocking, returns recording_id) | stop (finalize) | " +
+		"list (active recordings) | stats (frame/audio counters) | " +
+		"clip duration=N (synchronous record-N-seconds-and-return — useful " +
+		"for short demos when you don't want to track an id) | " +
+		"list_mics (enumerate microphone devices) | " +
+		"with_ax duration=N (record N-second clip + parallel AX-event " +
+		"JSONL sidecar — output is .mp4 + .mp4.ax.jsonl, ideal for " +
+		"forge-harvest of user demos into replayable SKILL.md) | " +
+		"region (NOT YET — kinrec full-display only; planned for kit upgrade) | " +
+		"window (NOT YET — same gap). " +
+		"Optional system audio + microphone. Requires Screen Recording " +
+		"permission; microphone use also requires Microphone permission."
 }
 
 func (s *recordSkill) ToolDef() json.RawMessage {
@@ -78,7 +93,43 @@ func (s *recordSkill) ToolDef() json.RawMessage {
 		map[string]map[string]string{
 			"action": {
 				"type":        "string",
-				"description": "start | stop | list | stats",
+				"description": "start | stop | list | stats | clip | list_mics | region | window | with_ax",
+			},
+			"ax_bundle_id": {
+				"type":        "string",
+				"description": "For action=with_ax: AX-observation target bundle (e.g. 'com.apple.Numbers'). Default: focused app at recording start.",
+			},
+			"ax_pid": {
+				"type":        "string",
+				"description": "For action=with_ax: AX-observation target pid (alternative to ax_bundle_id).",
+			},
+			"events": {
+				"type":        "string",
+				"description": "For action=with_ax: comma-separated AX notifications to subscribe (default: focus/value/title/menu/window/app activated set).",
+			},
+			"duration": {
+				"type":        "integer",
+				"description": "For action=clip: seconds to record (1..300). Synchronous — call returns when the clip is finalized.",
+			},
+			"output_path": {
+				"type":        "string",
+				"description": "For action=clip: optional explicit MP4 path. Default: timestamped file under recordings cache dir.",
+			},
+			"mic_device": {
+				"type":        "string",
+				"description": "For action=clip with mic=true: UniqueID from `list_mics` to force a specific microphone (e.g. external USB headset). Default: system default mic.",
+			},
+			"session_id": {
+				"type":        "string",
+				"description": "For action=start: optional session id to embed in the .mp4.json sidecar metadata. Useful for replay tooling to correlate recordings with chat sessions.",
+			},
+			"soul": {
+				"type":        "string",
+				"description": "For action=start: optional soul name to embed in the sidecar (e.g. 'KinClaw Pilot'). Replay tooling uses this to know which agent produced the recording.",
+			},
+			"task_note": {
+				"type":        "string",
+				"description": "For action=start: free-form short description of the task (e.g. 'Numbers spreadsheet demo'). Stored in sidecar.",
 			},
 			"id": {
 				"type":        "string",
@@ -121,6 +172,7 @@ func (s *recordSkill) Execute(params map[string]string) (string, error) {
 	if action == "" {
 		action = "start"
 	}
+	ctx := context.Background()
 	switch action {
 	case "start":
 		return s.start(params)
@@ -130,8 +182,18 @@ func (s *recordSkill) Execute(params map[string]string) (string, error) {
 		return s.list()
 	case "stats":
 		return s.stats(params)
+	case "clip":
+		return s.clip(ctx, params)
+	case "list_mics":
+		return s.listMics(ctx)
+	case "region":
+		return s.regionStub(ctx, params)
+	case "window":
+		return s.windowStub(ctx, params)
+	case "with_ax":
+		return s.recordWithAX(ctx, params)
 	default:
-		return "", fmt.Errorf("unknown action %q (expected: start, stop, list, stats)", action)
+		return "", fmt.Errorf("unknown action %q (expected: start | stop | list | stats | clip | list_mics | region | window | with_ax)", action)
 	}
 }
 
@@ -223,7 +285,12 @@ func (s *recordSkill) start(params map[string]string) (string, error) {
 	s.mu.Lock()
 	s.counter++
 	id := fmt.Sprintf("rec-%d-%d", time.Now().Unix(), s.counter)
-	s.active[id] = &activeRec{rec: r, path: out, started: time.Now()}
+	s.active[id] = &activeRec{
+		rec: r, path: out, started: time.Now(),
+		sessionID: strings.TrimSpace(params["session_id"]),
+		soul:      strings.TrimSpace(params["soul"]),
+		taskNote:  strings.TrimSpace(params["task_note"]),
+	}
 	s.mu.Unlock()
 
 	warmup := ""
@@ -267,8 +334,20 @@ func (s *recordSkill) stop(params map[string]string) (string, error) {
 		size = fi.Size()
 	}
 
-	return fmt.Sprintf("path: %s\nduration: %s\nbytes: %d\nframes: %d\naudio_buffers: %d",
-		rec.path, dur, size, stats.Frames, stats.AudioBuffers), nil
+	// Sidecar metadata. Writing into the MP4 container itself would
+	// require kinrec-side AVMetadataItem plumbing (a kit change).
+	// A sidecar JSON does the same job for our use case: any tool
+	// reading the recording can ask "what soul made this, what task,
+	// when did it start/end" by reading the .json next to the .mp4.
+	// Convention: <recording>.mp4 → <recording>.mp4.json.
+	sidecarPath := writeRecordingSidecar(rec, id, dur, size, stats)
+
+	out := fmt.Sprintf("path: %s\nduration: %s\nbytes: %d\nframes: %d\naudio_buffers: %d",
+		rec.path, dur, size, stats.Frames, stats.AudioBuffers)
+	if sidecarPath != "" {
+		out += "\nsidecar: " + sidecarPath
+	}
+	return out, nil
 }
 
 func (s *recordSkill) list() (string, error) {

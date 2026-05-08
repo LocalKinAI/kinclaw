@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	version = "1.13.0"
+	version = "1.14.0"
 	// maxToolRounds caps the tool-call sequence per user turn. 20 was
 	// fine for kernel-only flows but compound demos (record start + tts
 	// + multi-step ui find/click/verify + tts + record stop) easily
@@ -291,6 +291,11 @@ func buildRegistry(s *soul.Soul, store *memory.SQLiteStore) *skill.Registry {
 	reg.Register(skill.NewInputSkill(s.Meta.Permissions.Input))
 	reg.Register(skill.NewUISkill(s.Meta.Permissions.UI))
 	reg.Register(skill.NewRecordSkill(s.Meta.Permissions.Record, s.Meta.Skills.OutputDir))
+	// smart_click is a cross-claw composite (OCR + click) — soul must
+	// grant BOTH `screen` and `input` for it to work, so we AND the
+	// gates here. Either one disabled → skill registered but disabled.
+	reg.Register(skill.NewSmartClickSkill(
+		s.Meta.Permissions.Screen && s.Meta.Permissions.Input))
 	// Sub-agent dispatch — gated by permissions.spawn. Kernel-side
 	// recursion limit (env guard) means child agents can't themselves
 	// spawn even if they declared the permission, so this is safe to

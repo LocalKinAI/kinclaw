@@ -29,12 +29,15 @@ func (s *inputSkill) Name() string { return "input" }
 
 func (s *inputSkill) Description() string {
 	return "Synthesize mouse/keyboard events on macOS via CGEvent. Actions: " +
-		"move (cursor), click (at point or current), type (UTF-8 text), " +
-		"hotkey (modifier+key), scroll (wheel), cursor (read position), " +
-		"screen_size. Set `target_pid` to drive an app in the BACKGROUND " +
-		"without stealing focus from the user's foreground window — verified " +
-		"on Lark / VSCode / Chrome and other Electron + WebKit hosts. " +
-		"Requires macOS Accessibility permission."
+		"move | move_by | click | triple_click | type | type_slow | hotkey | " +
+		"key_down | key_up | scroll | scroll_smooth | cursor | screen_size | " +
+		"paste (clipboard fast text — use for Chinese/IME text) | " +
+		"drag (kit-level mousedown→smooth-move→mouseup) | " +
+		"record_user_input (pending input-go CGEventTap). " +
+		"`target_pid` routes events to a SPECIFIC process via CGEventPostToPid " +
+		"so the targeted app receives input but its window does NOT come to " +
+		"front — user's foreground app keeps focus. Verified on Lark / VSCode " +
+		"/ Chrome / Electron / WebKit. Requires Accessibility permission."
 }
 
 func (s *inputSkill) ToolDef() json.RawMessage {
@@ -42,7 +45,29 @@ func (s *inputSkill) ToolDef() json.RawMessage {
 		map[string]map[string]string{
 			"action": {
 				"type":        "string",
-				"description": "move | click | type | hotkey | scroll | cursor | screen_size",
+				"description": "move | click | type | hotkey | scroll | cursor | screen_size | paste | drag | record_user_input | type_slow | key_down | key_up | triple_click | move_by | scroll_smooth",
+			},
+			"per_char_delay_ms": {
+				"type":        "integer",
+				"description": "For action=type_slow: ms between each character. Default 50 (= 20 chars/s, reliable across all macOS IMEs). Increase for older or slower IMEs.",
+			},
+			"jitter_pct": {
+				"type":        "integer",
+				"description": "For action=type_slow: ±% random variation of per_char_delay (0-80). Default 0 (deterministic). Set to 30-50 to mimic human typing rhythm — useful for anti-bot pages that detect uniform timing.",
+			},
+			"dx": {"type": "number", "description": "For action=move_by: horizontal pixel delta from current cursor position"},
+			"dy": {"type": "number", "description": "For action=move_by: vertical pixel delta from current cursor position"},
+			"restore_clipboard": {
+				"type":        "string",
+				"description": "For action=paste: 'true' (default) saves & restores user's previous clipboard text after pasting. 'false' leaves the new text on clipboard.",
+			},
+			"from_x": {"type": "number", "description": "For action=drag: starting X coordinate"},
+			"from_y": {"type": "number", "description": "For action=drag: starting Y coordinate"},
+			"to_x":   {"type": "number", "description": "For action=drag: ending X coordinate"},
+			"to_y":   {"type": "number", "description": "For action=drag: ending Y coordinate"},
+			"duration_ms": {
+				"type":        "integer",
+				"description": "For action=drag: smooth-move duration in ms (default 200, min 30, max 5000). Apps that detect 'click without movement' need at least 30ms to register a true drag.",
 			},
 			"x":      {"type": "number", "description": "X coordinate (move/click/scroll)"},
 			"y":      {"type": "number", "description": "Y coordinate (move/click)"},
@@ -180,6 +205,33 @@ func (s *inputSkill) Execute(params map[string]string) (string, error) {
 			return "", err
 		}
 		return fmt.Sprintf("scrolled (%d, %d) px%s", dx, dy, pidLabel), nil
+
+	case "paste":
+		return s.paste(ctx, params, opts, pidLabel)
+
+	case "drag":
+		return s.drag(ctx, params, opts, pidLabel)
+
+	case "record_user_input":
+		return s.recordUserInput(ctx, params)
+
+	case "type_slow":
+		return s.typeSlow(ctx, params, opts, pidLabel)
+
+	case "key_down":
+		return s.keyDown(ctx, params, opts, pidLabel)
+
+	case "key_up":
+		return s.keyUp(ctx, params, opts, pidLabel)
+
+	case "triple_click":
+		return s.tripleClick(ctx, params, opts, pidLabel)
+
+	case "move_by":
+		return s.moveBy(ctx, params, opts, pidLabel)
+
+	case "scroll_smooth":
+		return s.scrollSmooth(ctx, params, opts, pidLabel)
 
 	default:
 		return "", fmt.Errorf("unknown action %q", action)

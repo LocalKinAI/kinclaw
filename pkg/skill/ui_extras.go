@@ -420,7 +420,7 @@ func (s *uiSkill) waitUntil(params map[string]string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	depth := atoiDefault(params["depth"], 20)
+	_ = atoiDefault(params["depth"], 20) // tryPredicateOnce uses default 20
 	timeoutMs := atoiDefault(params["timeout_ms"], 10000)
 	if timeoutMs <= 0 {
 		timeoutMs = 10000
@@ -434,27 +434,106 @@ func (s *uiSkill) waitUntil(params map[string]string) (string, error) {
 		predicate = "appears"
 	}
 
+	// Hybrid loop strategy:
+	//
+	//   1. For "value-changes-on-event" predicates (appears /
+	//      disappears / focused) we attempt an Observer fast-path:
+	//      subscribe to AXFocusedUIElementChanged + AXValueChanged +
+	//      AXWindowCreated and wake on each event for an immediate
+	//      re-check. Median latency: tens of ms (event → check)
+	//      instead of 0-250ms (poll cycle).
+	//
+	//   2. For pure-state predicates (enabled / disabled / selected /
+	//      visible) AX doesn't reliably emit a notification when the
+	//      bool flips, so we keep the 250ms poll. The Observer
+	//      subscription is harmless either way.
+	//
+	// We also take an immediate snapshot before subscribing so a
+	// predicate already true doesn't wait for a tick.
+	if matched, msg := tryPredicateOnce(app, m, desc, predicate); matched {
+		return msg, nil
+	}
+
 	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
-	pollInterval := 250 * time.Millisecond
 	start := time.Now()
 
-	for time.Now().Before(deadline) {
-		el, ok := app.FindFirst(m, depth)
-		if ok {
-			match, label := evaluatePredicate(el, predicate)
-			el.Close()
-			if match {
-				return fmt.Sprintf("matched %s after %dms (predicate: %s)",
-					desc, time.Since(start).Milliseconds(), label), nil
+	pid := kinax.FrontmostPID()
+	if p := params["pid"]; p != "" {
+		pid = atoiDefault(p, pid)
+	}
+	var obs *kinax.Observer
+	if pid > 0 {
+		if o, err := kinax.NewObserver(pid); err == nil {
+			subErr := o.Subscribe(app,
+				kinax.NotifFocusedUIElementChanged,
+				kinax.NotifValueChanged,
+				kinax.NotifWindowCreated,
+				kinax.NotifTitleChanged,
+			)
+			if subErr == nil {
+				obs = o
+				defer o.Close()
+			} else {
+				o.Close()
 			}
-		} else if predicate == "disappears" {
-			return fmt.Sprintf("matched (disappeared) %s after %dms",
-				desc, time.Since(start).Milliseconds()), nil
 		}
-		time.Sleep(pollInterval)
+	}
+
+	pollInterval := 250 * time.Millisecond
+	for time.Now().Before(deadline) {
+		// Try once before sleeping — the Observer wake fires us back
+		// here and we want to check immediately, not after a poll
+		// interval.
+		if matched, msg := tryPredicateOnce(app, m, desc, predicate); matched {
+			startMs := time.Since(start).Milliseconds()
+			return fmt.Sprintf("%s (waited %dms)", msg, startMs), nil
+		}
+
+		// Wait for either an Observer event OR the poll interval,
+		// whichever comes first. Observer.Next blocks up to its arg
+		// duration; if no event by then, we poll-tick.
+		var waitFor time.Duration
+		if obs != nil {
+			waitFor = pollInterval
+		} else {
+			waitFor = pollInterval
+		}
+		remaining := time.Until(deadline)
+		if waitFor > remaining {
+			waitFor = remaining
+		}
+		if waitFor <= 0 {
+			break
+		}
+		if obs != nil {
+			if ev, err := obs.Next(waitFor); err == nil && ev != nil {
+				ev.Element.Close()
+				continue // event fired — re-check at top of loop immediately
+			}
+		} else {
+			time.Sleep(waitFor)
+		}
 	}
 	return "", fmt.Errorf("wait_until: predicate %q on %s did not become true within %dms",
 		predicate, desc, timeoutMs)
+}
+
+// tryPredicateOnce checks the predicate against the current AX state
+// without sleeping. Used both for the pre-subscribe immediate snapshot
+// and inside the loop after each Observer wake. Returns (true, msg)
+// on match, (false, "") otherwise.
+func tryPredicateOnce(app *kinax.Element, m kinax.Matcher, desc, predicate string) (bool, string) {
+	el, ok := app.FindFirst(m, 20)
+	if ok {
+		match, label := evaluatePredicate(el, predicate)
+		el.Close()
+		if match {
+			return true, fmt.Sprintf("matched %s (predicate: %s)", desc, label)
+		}
+	} else if predicate == "disappears" || predicate == "gone" {
+		return true, fmt.Sprintf("matched (disappeared) %s", desc)
+	}
+	return false, ""
 }
 
 // evaluatePredicate runs the named predicate against a found element.

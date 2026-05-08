@@ -41,8 +41,15 @@ func (s *uiSkill) Description() string {
 		"wait_until (block until predicate true: appears/enabled/disabled/focused/selected/visible/disappears) | " +
 		"menu_path (walk 'File > Export > PDF...' menu path) | " +
 		"shortcut (read keyboard shortcut for menu path) | " +
-		"select_text (read/replace selected text in focused field). " +
-		"Requires macOS Accessibility permission."
+		"select_text (read/replace selected text in focused field) | " +
+		"scroll_to (scroll element into view) | focus (set keyboard focus) | " +
+		"attribute (read ANY AX attribute by name — escape hatch for niche attrs " +
+		"like AXSelectedTextRange / AXScrollPosition / AXSliderValue) | " +
+		"set_attribute (write ANY settable AX attribute, type=bool|string) | " +
+		"spatial_find (locate element relative to an anchor — 'AXButton below " +
+		"AXStaticText[Email]' style; takes anchor_role/title/id + direction " +
+		"above|below|left_of|right_of|near + max_distance_px; returns the " +
+		"closest matching candidate). Requires macOS Accessibility permission."
 }
 
 func (s *uiSkill) ToolDef() json.RawMessage {
@@ -50,7 +57,31 @@ func (s *uiSkill) ToolDef() json.RawMessage {
 		map[string]map[string]string{
 			"action": {
 				"type":        "string",
-				"description": "focused_app | tree | find | click | click_sequence | read | at_point | watch | actions | app_state | state_diff | wait_until | menu_path | shortcut | select_text",
+				"description": "focused_app | tree | find | click | click_sequence | read | at_point | watch | actions | app_state | state_diff | wait_until | menu_path | shortcut | select_text | scroll_to | focus | attribute | set_attribute | spatial_find",
+			},
+			"anchor_role":           {"type": "string", "description": "spatial_find: anchor's AXRole"},
+			"anchor_title":          {"type": "string", "description": "spatial_find: anchor's AXTitle (exact)"},
+			"anchor_title_contains": {"type": "string", "description": "spatial_find: anchor's AXTitle substring"},
+			"anchor_identifier":     {"type": "string", "description": "spatial_find: anchor's AXIdentifier"},
+			"direction": {
+				"type":        "string",
+				"description": "spatial_find: above | below | left_of | right_of | near (default near = closest by Euclidean distance, no direction filter).",
+			},
+			"max_distance_px": {
+				"type":        "integer",
+				"description": "spatial_find: cap candidate Euclidean distance from anchor center. 0 = no cap.",
+			},
+			"attribute": {
+				"type":        "string",
+				"description": "For action=attribute / set_attribute: the AX attribute name (e.g. AXEnabled, AXSelectedTextRange, AXScrollPosition, AXSliderValue, AXValue, AXFocused).",
+			},
+			"value": {
+				"type":        "string",
+				"description": "For action=set_attribute: the new value (string form). Auto-detect: 'true'/'false' becomes bool; everything else becomes string. Override with type=bool|string.",
+			},
+			"type": {
+				"type":        "string",
+				"description": "For action=set_attribute: explicit value type override — 'bool' or 'string'. Default: auto-detect from value.",
 			},
 			"bundle_id": {
 				"type":        "string",
@@ -207,6 +238,16 @@ func (s *uiSkill) Execute(params map[string]string) (string, error) {
 		return s.shortcut(params)
 	case "select_text":
 		return s.selectText(params)
+	case "scroll_to":
+		return s.scrollTo(params)
+	case "focus":
+		return s.focus(params)
+	case "attribute":
+		return s.attribute(params)
+	case "set_attribute":
+		return s.setAttribute(params)
+	case "spatial_find":
+		return s.spatialFind(params)
 	default:
 		return "", fmt.Errorf("unknown action %q", action)
 	}

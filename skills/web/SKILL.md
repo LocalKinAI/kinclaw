@@ -39,6 +39,14 @@ command:
     JS_CODE="$7"
     TIMEOUT="$8"
     PRESS_ENTER="$9"
+    # Shifted positional params (>9) — POSIX shell needs ${} bracketing.
+    SHOT_SELECTOR="${10}"
+    SHOT_FULL_PAGE="${11}"
+    PDF="${12}"
+    PDF_FORMAT="${13}"
+    SESSION_ID="${14}"
+    UPLOAD_SELECTOR="${15}"
+    UPLOAD_FILES="${16}"
 
     [ -z "$URL" ] && { echo "url required" >&2; exit 1; }
 
@@ -51,12 +59,25 @@ command:
     [ -n "$JS_CODE" ]     && set -- "$@" --js "$JS_CODE"
     [ -n "$TIMEOUT" ]     && set -- "$@" --timeout-ms "$TIMEOUT"
     [ "$PRESS_ENTER" = "true" ] && set -- "$@" --press-enter
+    [ -n "$SHOT_SELECTOR" ]     && set -- "$@" --screenshot-selector "$SHOT_SELECTOR"
+    [ "$SHOT_FULL_PAGE" = "true" ] && set -- "$@" --screenshot-full-page
+    [ -n "$SESSION_ID" ]        && set -- "$@" --session-id "$SESSION_ID"
+    [ -n "$UPLOAD_SELECTOR" ]   && set -- "$@" --upload-selector "$UPLOAD_SELECTOR"
+    [ -n "$UPLOAD_FILES" ]      && set -- "$@" --upload-files "$UPLOAD_FILES"
 
     # Screenshot mode: generate output path under cache dir, pass it in.
     if [ "$SCREENSHOT" = "true" ]; then
       OUT="$HOME/Library/Caches/kinclaw/web/web-$(date +%Y%m%d-%H%M%S-%N).png"
       mkdir -p "$(dirname "$OUT")"
       set -- "$@" --screenshot "$OUT"
+    fi
+
+    # PDF mode: same idea — generate output path, pass to --pdf.
+    if [ "$PDF" = "true" ]; then
+      OUT="$HOME/Library/Caches/kinclaw/web/web-$(date +%Y%m%d-%H%M%S-%N).pdf"
+      mkdir -p "$(dirname "$OUT")"
+      set -- "$@" --pdf "$OUT"
+      [ -n "$PDF_FORMAT" ] && set -- "$@" --pdf-format "$PDF_FORMAT"
     fi
 
     # Fail fast if playwright isn't installed — clear hint instead of
@@ -82,6 +103,13 @@ args:
   - "{{js}}"
   - "{{timeout_ms}}"
   - "{{press_enter}}"
+  - "{{screenshot_selector}}"
+  - "{{screenshot_full_page}}"
+  - "{{pdf}}"
+  - "{{pdf_format}}"
+  - "{{session_id}}"
+  - "{{upload_selector}}"
+  - "{{upload_files}}"
 schema:
   url:
     type: string
@@ -116,6 +144,53 @@ schema:
       button is gated on internal state and won't enable from a fill
       alone. Real keyboard event (page.press), not synthetic. Use
       with click=<input selector> + type_text=<message>.
+  screenshot_selector:
+    type: string
+    description: |
+      When set with screenshot=true, capture only the bounding box of
+      this CSS selector instead of the full viewport. Falls back to
+      viewport if the selector is offscreen / zero-sized. Useful for
+      grabbing just a chart, just a card, just a paragraph.
+  screenshot_full_page:
+    type: string
+    description: |
+      When "true" (and screenshot=true, no screenshot_selector),
+      capture the FULL scrollable page rather than just the viewport.
+      Long articles / infinite-scroll content in one shot.
+  pdf:
+    type: string
+    description: |
+      Set to "true" to render the page as a PDF instead of HTML
+      extraction. Mutually exclusive with screenshot=true. Headless
+      Chromium's print-pdf engine — high quality, includes JS-rendered
+      content + computed CSS + background images. Default A4.
+  pdf_format:
+    type: string
+    description: |
+      Page format for PDF mode (A4, Letter, Legal, A3, etc.). Default A4.
+  session_id:
+    type: string
+    description: |
+      When set, persist storage state (cookies, localStorage) under
+      ~/.kinclaw/web-sessions/<session_id>.json. First call writes;
+      subsequent calls with same session_id load + reuse. Lets a
+      soul log into a site once and run multiple fetches without
+      re-authenticating. Pair with --click=<login form> +
+      --type-text=<creds> on the first call.
+  upload_selector:
+    type: string
+    description: |
+      CSS selector for an <input type=file> element. Pair with
+      upload_files= to populate the input via Playwright's
+      set_input_files (fires change events the page expects). For
+      hidden file inputs (drag-drop overlays), most still work via
+      the underlying input element.
+  upload_files:
+    type: string
+    description: |
+      Comma-separated absolute file paths to upload via
+      upload_selector. Examples: "/Users/me/photo.jpg" or
+      "/tmp/a.pdf,/tmp/b.pdf" for multi-file inputs.
 timeout: 60
 ---
 
