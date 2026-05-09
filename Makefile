@@ -8,7 +8,7 @@
 BINARY     := kinclaw
 IDENTIFIER := com.localkinai.kinclaw
 
-.PHONY: all build sign cli run test vet clean help
+.PHONY: all build sign cli run run-claude test vet smoke tier3 bench bench-record warmup verify tcc-reset clean help
 
 all: cli
 
@@ -33,6 +33,48 @@ test:                      ## go test ./...
 
 vet:                       ## go vet ./...
 	go vet ./...
+
+smoke:                     ## tests/smoke.sh — Tier 0+1, no permission, ~30s
+	@./tests/smoke.sh
+
+tier3:                     ## tests/tier3.sh — drive Safari/TextEdit via -exec (interactive)
+	@./tests/tier3.sh
+
+bench: cli                 ## Run macbench (369 macOS task slots) against this kinclaw build
+	@if [ ! -d ../macbench ]; then \
+	  echo "✗ macbench not found at ../macbench"; \
+	  echo "  clone it: git clone https://github.com/LocalKinAI/macbench ../macbench"; \
+	  exit 2; \
+	fi
+	@if [ -z "$$SKIP_WARMUP" ]; then \
+	  echo "→ kinclaw warmup (TCC + brain + kits health) — SKIP_WARMUP=1 to bypass"; \
+	  ./scripts/warmup.sh || { echo "✗ kinclaw warmup failed; abort"; exit 1; }; \
+	  echo ""; \
+	fi
+	@cd ../macbench && $(MAKE) bench \
+	  AGENT="$(CURDIR)/$(BINARY)" \
+	  AGENT_ARGS='-soul $(CURDIR)/souls/macbench.soul.md -exec {prompt}' \
+	  $(if $(TASKS),TASKS=$(TASKS)) \
+	  $(if $(TIMEOUT),TIMEOUT=$(TIMEOUT))
+
+bench-record: cli          ## Run macbench with mp4 recording (kinrec required)
+	@if [ ! -d ../macbench ]; then \
+	  echo "✗ macbench not found at ../macbench"; \
+	  echo "  clone it: git clone https://github.com/LocalKinAI/macbench ../macbench"; \
+	  exit 2; \
+	fi
+	@if [ -z "$$SKIP_WARMUP" ]; then ./scripts/warmup.sh || exit 1; fi
+	@cd ../macbench && $(MAKE) bench-record \
+	  AGENT="$(CURDIR)/$(BINARY)" \
+	  AGENT_ARGS='-soul $(CURDIR)/souls/macbench.soul.md -exec {prompt}' \
+	  $(if $(TASKS),TASKS=$(TASKS)) \
+	  $(if $(TIMEOUT),TIMEOUT=$(TIMEOUT))
+
+warmup:                    ## Pre-flight: build + sign + verify TCC + brain + kits
+	@./scripts/warmup.sh
+
+verify: cli smoke          ## build + smoke (fastest "did I break anything" gate)
+	@echo "→ smoke green; for end-to-end: cd ../kinclaw-mac && make kill && make run"
 
 tcc-reset:                 ## reset macOS TCC grants for this binary (forces re-prompt)
 	tccutil reset Accessibility   $(IDENTIFIER) || true

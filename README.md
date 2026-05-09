@@ -781,6 +781,63 @@ The same probe, fed bundle IDs from stdin, produced the 50-app validation
 that recorded **94% controllable, 88% pure-AX** on a real dev Mac — empirical
 evidence that the 5-claw thesis holds. It now ships in the box.
 
+## Benchmarks
+
+kinclaw runs against multiple public computer-use benchmarks. See
+[`benchmarks/`](benchmarks/) for the full portfolio + status board.
+
+**First reference score (v1.15.0, 2026-05-08):**
+
+```
+kinclaw v1.15.0 + Kimi-K2.5(cloud) on macbench v0.1
+  IMPLEMENTED:  101 / 150  =  67.3%
+  STRICT:       101 / 369  =  27.4%
+```
+
+For context, Anthropic Computer Use scores ~38% on
+[OSWorld](https://os-world.github.io) (Linux desktop). macbench
+benchmarks a different surface (macOS-native apps), so the numbers
+aren't directly comparable, but the methodology + scoring discipline
+are the same.
+
+**Home court — macbench (we wrote it):**
+
+kinclaw is the reference agent for
+**[macbench](https://github.com/LocalKinAI/macbench)**, the first
+publicly published macOS-native computer-use benchmark. **369 task
+slots** across 15 macOS categories (Finder / Safari / Mail / Notes /
+Calendar / Reminders / Settings / Terminal / Pages / Numbers /
+Keynote / Music / Photos / Maps / multi-app). Same three-file
+pattern as [OSWorld](https://github.com/xlang-ai/OSWorld) (`task.json`
++ `setup.sh` + `eval.sh`), but adapted for the macOS app surface
+OSWorld can't reach. v0.1 ships 150 implemented + 219 stubs (real
+prompts, no setup/eval yet); fill rate over v0.2 → v1.0 is roughly
+30-50 stubs/month.
+
+```bash
+git clone https://github.com/LocalKinAI/macbench ../macbench
+cd kinclaw
+make warmup        # pre-flight: build + sign + verify TCC + brain + kits
+make bench         # auto-warmup + run all 369 task slots (219 stubs skip in 0 ms)
+make bench-record  # same but records each task to mp4 via kinrec
+SKIP_WARMUP=1 make bench   # skip warmup (fast dev iteration)
+```
+
+**Cross-validation portfolio (designed, not yet implemented):**
+
+| Benchmark | What it tests | kinclaw fit | Status |
+|---|---|---|---|
+| [WebArena](benchmarks/webarena/) | Live web tasks (Reddit / GitLab / shopping clones in Docker) | 🟢 high — kinclaw's web claw IS Playwright | designed |
+| [OSWorld](benchmarks/osworld/) | Linux desktop tasks in a VM | 🟡 vision-only fallback | designed (with caveats) |
+| [Online-Mind2Web](benchmarks/online-mind2web/) | Live web tasks on real public sites | 🟡 likely high | investigation |
+| Mind2Web (original) | Static action prediction | 🔴 architectural mismatch | skipped |
+
+The benchmark portfolio is **agent-agnostic by design** — every
+adapter accepts `AGENT=...` + `AGENT_ARGS='...{prompt}...'`, so
+Anthropic Computer Use, OpenAI CUA, or any binary that takes a
+prompt and drives macOS / a browser can plug in. kinclaw is our
+reference implementation, not the only one allowed.
+
 ## Roadmap (post-1.4)
 
 What's shipped, what's next, and what's an explicit non-goal.

@@ -1,5 +1,142 @@
 # Changelog
 
+## [1.15.0] - 2026-05-08
+
+**First public benchmark — kinclaw on macbench v0.1: 67.3% IMPLEMENTED.**
+
+This release wires kinclaw to [macbench](https://github.com/LocalKinAI/macbench),
+the macOS-native computer-use benchmark released alongside this
+version. Headline numbers from the first reference run:
+
+```
+kinclaw v1.15.0 + Kimi-K2.5 on macbench v0.1
+  IMPLEMENTED: 101 / 150  =  67.3%
+  STRICT:      101 / 369  =  27.4%   (stubs count as fail)
+```
+
+For context, Anthropic Computer Use scores ~38% on
+[OSWorld](https://os-world.github.io) (Linux desktop). macbench
+measures a different surface (macOS native apps), so the numbers
+aren't directly comparable, but the methodology + scoring discipline
+are the same.
+
+### Added
+
+#### Benchmark integration
+
+- **`souls/macbench.soul.md`** — single-task benchmark soul.
+  Disables memory + spawn + network so each macbench task starts
+  from a clean agent (no cross-task pollution). 8 skills enabled
+  (5 claws + file_read/write/edit + app_open_clean), temperature
+  0.1 for determinism. **`make bench` now uses this soul by default**
+  (was incorrectly defaulting to `pilot.soul.md`, which caused
+  cross-task memory pollution and was the root cause of the
+  "agent does 5 tasks worth of work in one prompt" effect we saw
+  in early benchmark runs).
+
+- **`scripts/warmup.sh`** — pre-flight environment check. Six probes:
+  build + sign, codesign identifier (= `com.localkinai.kinclaw`,
+  required for sticky TCC), Accessibility TCC (via `kinclaw probe
+  com.apple.finder`), Screen Recording TCC, brain reachability
+  (round-trip "say hello" via macbench soul), sibling kit
+  availability (kinax / sckit / input / kinrec). Reports
+  ✓ healthy / ⚠ degraded / ✗ blocked per probe. Exits 1 on any
+  blocker.
+
+- **`make warmup`** — runs `scripts/warmup.sh` standalone.
+- **`make bench`** — auto-runs kinclaw warmup, then delegates to
+  `../macbench && make bench` (which also runs its own env-reset
+  warmup). Use `SKIP_WARMUP=1 make bench` to skip both warmups for
+  fast dev iteration.
+- **`make bench-record`** — same but with mp4 capture per task via
+  kinrec.
+
+#### `benchmarks/` directory
+
+Catalog of public computer-use benchmarks kinclaw participates in
+(or plans to). v1.15.0 ships:
+
+- `benchmarks/README.md` — feasibility matrix + status board (✓
+  runnable / 📐 designed / 📋 investigation / ❌ skipped).
+  Honest claim ladder: what kinclaw is allowed to claim at each
+  milestone.
+- `benchmarks/macbench/` — pointer to the standalone repo
+  (`LocalKinAI/macbench`).
+- `benchmarks/webarena/README.md` — design for the WebArena
+  adapter (high feasibility, 1-2 days work, kinclaw's web claw
+  IS Playwright). v0.1 status: 📐 designed, not implemented.
+- `benchmarks/osworld/README.md` — design + caveats for OSWorld
+  vision-only-mode adapter (~1 week work, but loses kinclaw's AX
+  advantage entirely → degrades to "vision-LLM coordinate clicker"
+  which scored ~12-15% on OSWorld). Status: 📐 designed.
+- `benchmarks/online-mind2web/README.md` — investigation pending.
+  Original Mind2Web (static action prediction) is explicitly
+  skipped — architectural mismatch with kinclaw's execution model.
+
+### Changed
+
+- **`make bench` default soul changed from `pilot.soul.md` to
+  `macbench.soul.md`.** This is a behavioral change for anyone who
+  was running `make bench` directly: the agent now operates in
+  single-task mode without memory or spawn. Tasks complete cleanly
+  and exit. The pilot soul (with memory + spawn + 22 skills) is
+  what KinClawMac.app uses for daily Cowork pilot work — that path
+  is unchanged.
+
+### Tests
+
+- `tests/README.md` updated to add **Tier 5 — macbench** alongside
+  the existing 4 tiers (hygiene / kit smoke / kit deep / kinclaw verbs
+  / KinClawMac end-to-end). macbench is the public-facing capability
+  score; the in-tree tiers remain for kinclaw's own correctness.
+
+### Notes from the first run
+
+A multi-hour debugging session in 2026-05-08 surfaced three real
+problems and two false positives:
+
+**Real problems (fixed in this release):**
+1. **Cross-task memory pollution** when bench used `pilot.soul.md`.
+   Agent at task N pulled prior task prompts from `~/.kinclaw/`
+   memory and tried to redo them all at once. Fixed by macbench
+   soul disabling memory.
+2. **macbench runner v0 only ran eval if exec exited cleanly.**
+   Many tasks completed the action then kept exploring, hitting
+   exec timeout — eval never ran, work counted as fail. Fixed in
+   macbench v0.1 runner: eval always runs, exec failures attribute
+   to the right phase.
+3. **Mid-run app degradation.** Notes / Calendar / Reminders
+   AppleScript hangs after ~5-10 invocations, even on warm-started
+   apps. Fixed by macbench runner's per-task PID-snapshot isolation:
+   between tasks, kill bench-spawned PIDs only (preserves user's
+   pre-existing Safari/Notes/etc. state).
+
+**False positives (caught + dismissed):**
+- "kinclaw is bad at Notes" — was actually `${VAR,,}` bash-4-only
+  syntax in eval scripts (macOS ships bash 3.2). Fixed in macbench
+  by switching to `tr '[:upper:]' '[:lower:]'`.
+- "Safari TCC denied" — was a transient state recoverable by
+  `make warmup`. Documented as a one-time setup step in macbench
+  README.
+
+### Known limitations (v1.15.0)
+
+- **Brain coupling.** Reference score (67.3%) used Kimi-K2.5 cloud.
+  Cross-brain comparison (Claude Sonnet 4.5, DeepSeek-V4-Pro,
+  GPT-4o) is v1.16 work — needs the brain switcher in macbench
+  soul to actually flip without rebuilding kinclaw.
+- **macbench fully implemented count is 150 / 369 slots.** The
+  remaining 219 stubs have real prompts but no setup/eval scripts.
+  Fill rate over v0.2 → v1.0 is roughly 30-50 stubs/month.
+- **Some tasks still need infrastructure macOS doesn't expose
+  cleanly to bash:** Pages/Numbers/Keynote document inspection
+  (binary plist + protobuf), Photos library queries, Maps state.
+  Marked as stubs deliberately — implementation deferred to v0.2.
+- **Tasks that need sudo (e.g. firewall, login window) cause an
+  interactive `Password:` prompt that hangs.** macbench soul
+  doesn't currently block sudo; need to add `sudo: false` in
+  permissions and document explicitly. v1.16.
+
 ## [1.14.2] - 2026-05-07
 
 **Architecture cleanup — kit-debt repayment.** v1.14.0 / v1.14.1
