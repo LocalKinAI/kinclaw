@@ -805,8 +805,10 @@ are the same.
 kinclaw is the reference agent for
 **[macbench](https://github.com/LocalKinAI/macbench)**, the first
 publicly published macOS-native computer-use benchmark. The v0.1
-paper is archived on Zenodo: [`10.5281/zenodo.20094245`](https://zenodo.org/records/20094245)
-(CC-BY-4.0, EN+中文 at [localkin.dev/papers/macbench](https://www.localkin.dev/papers/macbench)).
+paper is archived on Zenodo at concept DOI
+[`10.5281/zenodo.20094244`](https://doi.org/10.5281/zenodo.20094244)
+(CC-BY-4.0, single PDF bundles EN + 中文; mirrored at
+[localkin.dev/papers/macbench](https://www.localkin.dev/papers/macbench)).
 **369 task slots** across 15 macOS categories (Finder / Safari /
 Mail / Notes / Calendar / Reminders / Settings / Terminal / Pages /
 Numbers / Keynote / Music / Photos / Maps / multi-app). Same

@@ -4,10 +4,12 @@
 
 ### Changed — README
 
-- Updated the macbench section to point at the Zenodo DOI for the
-  v0.1 paper: [`10.5281/zenodo.20094245`](https://zenodo.org/records/20094245).
-  No code changes; the headline 67.3% IMPLEMENTED reference number
-  is unchanged.
+- Updated the macbench section to point at the Zenodo **concept DOI**
+  for the v0.1 paper:
+  [`10.5281/zenodo.20094244`](https://doi.org/10.5281/zenodo.20094244)
+  (auto-resolves to latest version, CC-BY-4.0, single PDF bundles
+  EN + 中文). No code changes; the headline 67.3% IMPLEMENTED
+  reference number is unchanged.
 
 ## [1.15.0] - 2026-05-08
 
