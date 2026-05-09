@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased] - 2026-05-09
+
+### Changed — README
+
+- Updated the macbench section to point at the Zenodo DOI for the
+  v0.1 paper: [`10.5281/zenodo.20094245`](https://zenodo.org/records/20094245).
+  No code changes; the headline 67.3% IMPLEMENTED reference number
+  is unchanged.
+
 ## [1.15.0] - 2026-05-08
 
 **First public benchmark — kinclaw on macbench v0.1: 67.3% IMPLEMENTED.**

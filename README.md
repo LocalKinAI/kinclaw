@@ -804,15 +804,17 @@ are the same.
 
 kinclaw is the reference agent for
 **[macbench](https://github.com/LocalKinAI/macbench)**, the first
-publicly published macOS-native computer-use benchmark. **369 task
-slots** across 15 macOS categories (Finder / Safari / Mail / Notes /
-Calendar / Reminders / Settings / Terminal / Pages / Numbers /
-Keynote / Music / Photos / Maps / multi-app). Same three-file
-pattern as [OSWorld](https://github.com/xlang-ai/OSWorld) (`task.json`
-+ `setup.sh` + `eval.sh`), but adapted for the macOS app surface
-OSWorld can't reach. v0.1 ships 150 implemented + 219 stubs (real
-prompts, no setup/eval yet); fill rate over v0.2 → v1.0 is roughly
-30-50 stubs/month.
+publicly published macOS-native computer-use benchmark. The v0.1
+paper is archived on Zenodo: [`10.5281/zenodo.20094245`](https://zenodo.org/records/20094245)
+(CC-BY-4.0, EN+中文 at [localkin.dev/papers/macbench](https://www.localkin.dev/papers/macbench)).
+**369 task slots** across 15 macOS categories (Finder / Safari /
+Mail / Notes / Calendar / Reminders / Settings / Terminal / Pages /
+Numbers / Keynote / Music / Photos / Maps / multi-app). Same
+three-file pattern as [OSWorld](https://github.com/xlang-ai/OSWorld)
+(`task.json` + `setup.sh` + `eval.sh`), but adapted for the macOS
+app surface OSWorld can't reach. v0.1 ships 150 implemented + 219
+stubs (real prompts, no setup/eval yet); fill rate over v0.2 → v1.0
+is roughly 30-50 stubs/month.
 
 ```bash
 git clone https://github.com/LocalKinAI/macbench ../macbench
