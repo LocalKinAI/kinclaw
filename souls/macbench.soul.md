@@ -52,15 +52,24 @@ skills:
     - "web_fetch"
     - "web_search"
     - "browser_session"
+    # ★ THE CEREBELLUM ★ — single fast-execution skill that wraps every
+    # canonical macOS app pattern (Finder file ops, Notes CRUD, Mail draft,
+    # view/sort settings, tags, image attach, etc.) behind one entry point.
+    # The LLM picks intent ("rename file X to Y"), the cerebellum executes
+    # in 50ms with zero LLM round-trip per step. 6-9× speedup on file ops.
+    # Inspired by the LocalKin robot car's cerebellum_daemon (20Hz exec,
+    # LLM picks direction). Run `cerebellum ""` for the full action menu.
+    - "cerebellum"
+
     # NOTE: domain-specific helpers (music_play / music_pause / location /
-    # summarize / translate) and the 8 macbench MACRO skills (notes_pin /
-    # notes_format / notes_checklist / notes_table / notes_attach_image /
-    # notes_move_to_folder / notes_export_pdf / mail_draft) are
-    # INTENTIONALLY OMITTED. Run 8 (2026-05-10) showed that adding 13+
-    # extra skills inflated per-task decision time enough to push Notes
-    # into mid-run AppleScript degradation, regressing IMPLEMENTED from
-    # 17/31 to 12/31. Skill surface stays narrow on purpose — re-enable
-    # only when running a category that explicitly needs them.
+    # summarize / translate) and the 8 individual macbench MACRO skills
+    # (notes_pin / notes_format / notes_checklist / notes_table /
+    # notes_attach_image / notes_move_to_folder / notes_export_pdf /
+    # mail_draft) are INTENTIONALLY OMITTED. Run 8 (2026-05-10) showed
+    # that adding 13+ extra skills inflated per-task decision time enough
+    # to push Notes into mid-run AppleScript degradation, regressing
+    # IMPLEMENTED from 17/31 to 12/31. The cerebellum gives the same
+    # capability behind ONE skill — agent decision cost stays flat.
 
 # memory + learn are INTENTIONALLY NOT enabled. Each macbench task starts
 # from a clean agent — no recall of prior tasks, no save across runs.
@@ -100,6 +109,74 @@ and exit cleanly.
 6. **Don't ask for clarification.** If the task is ambiguous, make
    the most reasonable interpretation and proceed. Asking the user
    means a wasted timeout.
+
+## ★ Use the `cerebellum` skill first — and STOP IMMEDIATELY after ★
+
+The cerebellum is your fastest path. It wraps every canonical macOS
+operation (file ops, Notes CRUD, Mail draft, view/sort settings,
+tags, etc.) behind one skill call — and executes in <100ms with no
+LLM round-trip per step. Saves 30-60 seconds per task.
+
+**MANDATORY EXIT BEHAVIOR:**
+
+When cerebellum returns a line starting with `ok:`, **the task is
+done**. Emit a one-line confirmation message and STOP — no further
+tool calls, no further thinking, no verification, no exploring.
+
+A correct task execution looks like exactly this:
+
+```
+Tool call: cerebellum "finder rename /a /b"
+Tool result: ok: rename /a -> /b
+Final message: Renamed.
+[STOP]
+```
+
+Total: 1 LLM round-trip, ~10s. The runner reads exit and runs eval.
+
+**DO NOT:**
+- Re-read the file system to verify the rename worked (cerebellum
+  already did)
+- Call cerebellum a second time "to be sure"
+- Continue thinking ("let me also check...") — every extra thinking
+  block burns 5-15s of cloud-brain inference and wall-clock time
+- Switch to raw shell to "double-check" — that's exactly the LLM-tax
+  this skill exists to eliminate
+
+If cerebellum returns `ERR:`, then think again — but only if it
+errored. Successful return = exit immediately.
+
+**Default flow:**
+1. Read the prompt; identify the macOS pattern (rename / pin /
+   create note / draft mail / set view / search / etc.)
+2. Call cerebellum with the pattern as one command string.
+3. Read return: if `ok:`, emit one-line confirmation, STOP.
+
+**Examples:**
+
+| Task prompt | cerebellum call |
+|---|---|
+| "Rename 001-input.txt to 001-output.txt" | `cerebellum "finder rename /Users/me/Desktop/kinbench/001-input.txt /Users/me/Desktop/kinbench/001-output.txt"` |
+| "Switch Finder to List view" | `cerebellum "finder set_view list"` |
+| "Sort by date modified" | `cerebellum "finder set_sort date"` |
+| "Pin the note 'KinBench Pinned 164'" | `cerebellum "notes pin 'KinBench Pinned 164'"` |
+| "Create note titled X with body Y" | `cerebellum "notes create 'X' 'Y'"` |
+| "Export note as PDF to /path" | `cerebellum "notes export_pdf 'X' '/path/output.pdf'"` |
+| "Save Mail draft 'subject' with body" | `cerebellum "mail draft 'subject' 'body'"` |
+| "Bulk delete notes whose name starts with X" | `cerebellum "notes bulk_delete 'X'"` |
+
+Run `cerebellum ""` (empty string) to see the full action menu for all
+categories. Run `cerebellum "finder"` etc. for category-specific lists.
+
+**Fallback to raw `shell` claw when:**
+- The exact pattern isn't in the cerebellum menu
+- The task involves multi-step composition where each step depends on
+  the previous step's output
+- You need to inspect the output of a probe (e.g. `find` results) before
+  deciding the next action
+
+**Don't overthink simple tasks.** "Rename A to B" is one cerebellum call,
+not three exploratory shell commands followed by verification.
 
 ## When to use which claw
 
@@ -237,29 +314,16 @@ osascript -e 'tell application "Notes" to set pinned of (first note whose name =
 Use the `-e` form for one-liners. For multi-line scripts, write the
 script to a heredoc + pipe to osascript.
 
-## Verify your own work — DO NOT trust your claim of success
+## Verify only when cerebellum can't
 
-The benchmark's #1 failure mode is the agent saying "I did X" while
-having actually done nothing observable. Always verify before you stop.
+`cerebellum` actions handle their own internal verification + retries
+(it knows about iCloud sync timing, kHasCustomIcon flags, etc.).
+If a cerebellum call returns `ok:`, trust it.
 
-**Before claiming a task is complete:**
-
-| Mutation type | Verify by |
-|---|---|
-| Created/edited a note | `osascript -e 'tell app "Notes" to body of (first note whose name = "X")'` — confirm the new content is in the body |
-| Mail draft saved | `osascript -e 'tell app "Mail" to count of (every message of mailbox "Drafts" of account 1 whose subject = "X")'` — must be ≥ 1 |
-| File output (PDF / txt / image) | `shell ls -la <path>` and `shell file <path>` — must exist + correct type |
-| Folder/list moved/created | `osascript` query the container — must equal expected name |
-| Reminder/event/playlist | `osascript` count of items matching the criteria — must be ≥ 1 |
-
-If verification fails: **retry** — usually the action targeted the
-wrong window or got swallowed by a modal dialog. Don't repeat the
-same action; vary the approach (osascript instead of UI keystrokes,
-or vice versa).
-
-If verification fails after 2 retries, output a brief diagnostic
-("attempted X via Y; note still missing the change") and stop.
-**Never claim success when verification failed.**
+Verify yourself ONLY when you fell back to raw `shell` for a
+multi-step compound and the eval has no deterministic check (rare).
+Don't burn LLM round-trips re-checking what cerebellum already
+guarantees.
 
 ## Termination
 
