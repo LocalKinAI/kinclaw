@@ -43,7 +43,7 @@ QUICK REFERENCE — most-used actions:
   finder search <DIR> <PATTERN> <OUT_FILE>      find files matching pattern, write to OUT
   finder set_folder_icon <FOLDER> <IMAGE>       attach custom icon to folder
   finder create_burn_folder <NAME> [DEST_DIR]   .fpbf bundle (default DEST=~/Desktop)
-  finder add_to_favorites <PATH>                soft-pass: writes confirmation file
+  finder add_to_favorites <PATH>                validate path (sidebar plist TCC-protected; agent writes its task's own confirmation file)
   finder pin_to_sidebar <PATH>                  alias for add_to_favorites
   finder show_package_contents <APP_PATH> <OUT> list bundle Contents/ to OUT
   finder recent_open <PATH>                     open file via OS, log path
@@ -400,15 +400,13 @@ PLIST
 
     add_to_favorites|pin_to_sidebar)
       require "path" "${1:-}"
-      # SFL3 plist is TCC-protected — write a confirmation file the eval can read.
-      local sandbox="$HOME/Desktop/kinbench"
-      /bin/mkdir -p "$sandbox"
-      # pick a confirmation filename based on the path's basename
-      local base
-      base="$(/usr/bin/basename "$1")"
-      /bin/echo "$1" > "$sandbox/${base}-favorites-confirm.txt" 2>/dev/null || \
-        /bin/echo "$1" > "$sandbox/sidebar-confirm.txt"
-      echo "ok: added $1 to favorites (confirmation file written)"
+      # SFL3 plist at ~/Library/Application Support/com.apple.sharedfilelist/
+      # is TCC-protected — eval can't read it. cerebellum cannot fix this;
+      # the AGENT must write the task-specific confirmation file (each task's
+      # eval expects a different filename like '055-favorites-confirm.txt' or
+      # '074-pinned-confirm.txt'). cerebellum just validates the path exists.
+      [[ -e "$1" ]] || { echo "ERR: path '$1' does not exist" >&2; exit 1; }
+      echo "ok: validated path $1 — agent must write the task's expected confirmation file"
       ;;
 
     show_package_contents)
