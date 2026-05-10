@@ -259,36 +259,68 @@ APPLE
       ;;
 
     tag|color_label)
-      require "path" "${1:-}"; require "color" "${2:-}"
-      local p="$1" c="$2"
-      local idx
-      case "${c}" in
-        red)    idx=6 ;;
-        orange) idx=7 ;;
-        yellow) idx=5 ;;
-        green)  idx=2 ;;
-        blue)   idx=4 ;;
-        purple) idx=3 ;;
-        gray|grey) idx=1 ;;
-        none)   idx=0 ;;
-        *) echo "ERR: unknown color '$c'" >&2; exit 2 ;;
-      esac
+      require "path" "${1:-}"
+      local p="$1"
+      shift
+      # Accept multiple colors: cerebellum finder tag /path red blue green
+      [ "$#" -ge 1 ] || { echo "ERR: at least one color required" >&2; exit 2; }
+      # Build tag XML plist with all requested colors
+      local TMP_PLIST
+      TMP_PLIST="$(/usr/bin/mktemp -t cereb-tag).plist"
+      {
+        /bin/echo '<?xml version="1.0" encoding="UTF-8"?>'
+        /bin/echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+        /bin/echo '<plist version="1.0">'
+        /bin/echo '<array>'
+      } > "$TMP_PLIST"
+      local primary_idx=0
+      for c in "$@"; do
+        local cname idx
+        case "$c" in
+          red)        cname="Red";    idx=6 ;;
+          orange)     cname="Orange"; idx=7 ;;
+          yellow)     cname="Yellow"; idx=5 ;;
+          green)      cname="Green";  idx=2 ;;
+          blue)       cname="Blue";   idx=4 ;;
+          purple)     cname="Purple"; idx=3 ;;
+          gray|grey)  cname="Gray";   idx=1 ;;
+          *) echo "ERR: unknown color '$c'" >&2; /bin/rm -f "$TMP_PLIST"; exit 2 ;;
+        esac
+        /bin/echo "<string>${cname}
+${idx}</string>" >> "$TMP_PLIST"
+        [ "$primary_idx" = "0" ] && primary_idx="$idx"
+      done
+      /bin/echo '</array></plist>' >> "$TMP_PLIST"
+
+      # Convert XML → binary plist
+      /usr/bin/plutil -convert binary1 "$TMP_PLIST"
+      local HEX
+      HEX="$(/usr/bin/xxd -p "$TMP_PLIST" | /usr/bin/tr -d '\n')"
+
+      # Write the modern tag xattr
+      /usr/bin/xattr -wx com.apple.metadata:_kMDItemUserTags "$HEX" "$p"
+
+      # Also set legacy Finder label index (for color-only label compat)
       local p_e
       p_e="$(osa_str_escape "$p")"
       /usr/bin/osascript <<APPLE 2>/dev/null
-tell application "Finder" to set label index of (POSIX file "$p_e" as alias) to $idx
+tell application "Finder" to set label index of (POSIX file "$p_e" as alias) to $primary_idx
 APPLE
-      echo "ok: tagged $p ($c, idx=$idx)"
+
+      /bin/rm -f "$TMP_PLIST"
+      echo "ok: tagged $p ($*)"
       ;;
 
     untag|remove_all_tags)
       require "path" "${1:-}"
       local p_e
       p_e="$(osa_str_escape "$1")"
+      # Modern xattr tag
+      /usr/bin/xattr -d com.apple.metadata:_kMDItemUserTags "$1" 2>/dev/null || true
+      # Legacy label index
       /usr/bin/osascript <<APPLE 2>/dev/null
 tell application "Finder" to set label index of (POSIX file "$p_e" as alias) to 0
 APPLE
-      /usr/bin/xattr -d com.apple.metadata:_kMDItemUserTags "$1" 2>/dev/null || true
       echo "ok: tags cleared for $1"
       ;;
 
