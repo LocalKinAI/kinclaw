@@ -1,5 +1,63 @@
 # Changelog
 
+## [Unreleased] - 2026-05-10 — macbench soul evolution + brain bump to Kimi K2.6
+
+### Changed — `souls/macbench.soul.md`
+
+- **Brain upgrade:** `kimi-k2.5:cloud` → `kimi-k2.6:cloud`. K2.6 is
+  the current production cloud brain across the LocalKin fleet
+  (cross-lab fallback `glm-5.1:cloud` unchanged).
+- **Permissions tightened/expanded for benchmark scope:**
+  `shell_timeout` 30s → 60s (AppleScript against iCloud Notes can
+  take 30-50s on cold start); `network: false → true` (Safari /
+  Maps / multi-app browser flows need it); `filesystem.allow`
+  extended to `~/Pictures`, `~/Documents`, `~/Downloads` to cover
+  Photos / Pages / Numbers / Keynote source paths.
+- **Skills surface stays narrow on purpose: 8 → 15.** Added: `record`
+  (5th claw, kinrec for visual verification), `todo_write` (multi-step
+  task structuring), `forge` (runtime helper synthesis), `web /
+  web_fetch / web_search / browser_session` (browser-touching tasks).
+  We tried 22+ in run 8 (added `music_play / music_pause / location /
+  summarize / translate` + 8 macbench-specific MACRO skills like
+  `notes_pin`, `mail_draft`, `notes_export_pdf`); the larger surface
+  inflated per-task agent decision time enough to push Notes into
+  mid-run AppleScript degradation, regressing IMPLEMENTED from 17/31
+  to 12/31. Surface stays lean.
+- **Added "AppleScript shortcuts" section + "Verify your own work"
+  section** to the soul prose. The shortcuts section gives canonical
+  AppleScript patterns for Notes (pin via `set pinned of note to
+  true` — actually broken on macOS 14+ but documented),
+  Mail (draft via `make new outgoing message ... save`, NOT close-
+  with-save-prompt), Reminders, Calendar. The verify section
+  enumerates per-mutation osascript queries the agent should run
+  before claiming success — partly mitigates the "agent claims X
+  but didn't" failure mode that was causing ~5 false-positive PASS
+  claims per run.
+
+### Added — `skills/{notes_pin,notes_format,notes_checklist,notes_table,notes_attach_image,notes_move_to_folder,notes_export_pdf,mail_draft}/SKILL.md`
+
+8 macbench-specific MACRO skills that wrap the multi-step Notes /
+Mail patterns where the agent historically fails. **Not enabled in
+the macbench soul** (run 8 showed they regress score by inflating
+decision time), but kept in the repo as an experimental surface for
+future per-category soul variants.
+
+### Notes — macbench notes category benchmark journey
+
+Today's notes-only runs:
+- Run 1 (k2.5, dirty Notes): **17/31 (54.8%)** — best score
+- Run 4 (k2.5, clean state, runner timeout 120s): 12/31 (38.7%)
+- Run 6 (+ verify-your-work + soft 164/165): 15/31 (48.4%)
+- Run 7 (+ web/forge/todo skills): 14/31 (45.2%)
+- Run 8 (+ 8 MACRO skills): **interrupted** at 5/16 — too slow
+
+Reference verifier (non-agent canonical solutions) tops out at
+**21/31 (67.7%)** in 100 seconds — that's the platform ceiling on
+this Mac/iCloud setup. The 13pp gap from agent peak (17/31) to
+platform ceiling is the real "agent capability gap" — most of it
+in UI keystroke flakiness on Notes' format / table / image /
+checklist features.
+
 ## [Unreleased] - 2026-05-09
 
 ### Changed — README
