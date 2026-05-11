@@ -203,6 +203,102 @@ APPLE
       echo "ok: screenshot $shot -> Pages doc $out_doc (best-effort)"
       ;;
 
+    pages_text_pdf|text_to_pages_pdf)
+      # Create a new Pages document containing TEXT, then export as PDF.
+      # Args: TEXT OUT_PDF
+      # Used by 050-multi-pages-pdf (compose body + export → PDF) without
+      # asking the caller to juggle two sub-actions and an intermediate .pages.
+      require "text" "${1:-}"; require "out_pdf" "${2:-}"
+      local body="$1" out_pdf="$2"
+      local t_e p_e
+      t_e="$(osa_str_escape "$body")"
+      p_e="$(osa_str_escape "$out_pdf")"
+      /bin/mkdir -p "$(/usr/bin/dirname "$out_pdf")"
+      /usr/bin/osascript <<APPLE 2>/dev/null
+tell application "Pages"
+    activate
+    delay 0.8
+    try
+        set newDoc to make new document
+        delay 0.8
+        try
+            -- Try the high-level body text property first (works on modern Pages).
+            set body text of newDoc to "$t_e"
+        on error
+            -- Fall back to keystroke if AS body text property is unavailable.
+            tell application "System Events"
+                tell process "Pages"
+                    keystroke "$t_e"
+                end tell
+            end tell
+        end try
+        delay 0.5
+        try
+            export newDoc to (POSIX file "$p_e") as PDF
+        on error errMsg
+            log errMsg
+        end try
+        delay 0.5
+        try
+            close newDoc saving no
+        end try
+    on error errMsg
+        log errMsg
+    end try
+end tell
+APPLE
+      /bin/sleep 1
+      if [ -s "$out_pdf" ]; then
+        echo "ok: Pages doc with text '$body' -> PDF $out_pdf"
+      else
+        echo "WARN: PDF not produced at $out_pdf (Pages export may have varied)" >&2
+        exit 1
+      fi
+      ;;
+
+    contact_to_mail|spotlight_contact_to_mail)
+      # Look up a Contact by name in the macOS Contacts app, extract their first
+      # email, then create a Mail draft addressed to that email.
+      # Args: CONTACT_NAME SUBJECT [BODY]
+      # Used by 367-multi-spotlight-then-mail.
+      require "contact_name" "${1:-}"; require "subject" "${2:-}"
+      local name="$1" subj="$2" body="${3:-}"
+      local n_e
+      n_e="$(osa_str_escape "$name")"
+      local email
+      email="$(/usr/bin/osascript <<APPLE 2>/dev/null
+tell application "Contacts"
+    try
+        set matches to (every person whose name = "$n_e")
+        if (count of matches) is 0 then
+            -- Try partial / "first name + last name" combinations.
+            set matches to (every person whose name contains "$n_e")
+        end if
+        if (count of matches) is 0 then return ""
+        set p to item 1 of matches
+        try
+            set em to value of first email of p
+            return em
+        on error
+            return ""
+        end try
+    on error
+        return ""
+    end try
+end tell
+APPLE
+)"
+      if [ -z "$email" ]; then
+        echo "ERR: contact '$name' not found or has no email" >&2
+        exit 1
+      fi
+      mail_dispatch draft_with_to "$subj" "$email" "$body" || {
+        echo "ERR: Mail draft to '$email' failed" >&2
+        exit 1
+      }
+      echo "ok: contact '$name' resolved to $email + Mail draft '$subj'"
+      ;;
+
     music_pause_then_screenshot|multi_music_pause_then_screenshot)
       # Pause Music if playing, then take a screenshot.
       # Args: OUT_IMG
@@ -384,7 +480,7 @@ APPLE
 
     *)
       echo "ERR: unknown multi action '$ACTION'. Run 'cerebellum' for menu." >&2
-      echo "Actions: finder_to_mail finder_mail_attach screenshot_to_mail event_to_reminder spotlight_calendar note_to_pdf note_to_mail clipboard_to_note clipboard_to_mail screenshot_to_note screenshot_to_pages music_pause_then_screenshot finder_quicklook spotlight_mail reminders_to_calendar photo_camera_to_mail search_then_mail search_mail_then_calendar" >&2
+      echo "Actions: finder_to_mail finder_mail_attach screenshot_to_mail event_to_reminder spotlight_calendar note_to_pdf note_to_mail clipboard_to_note clipboard_to_mail screenshot_to_note screenshot_to_pages pages_text_pdf contact_to_mail music_pause_then_screenshot finder_quicklook spotlight_mail reminders_to_calendar photo_camera_to_mail search_then_mail search_mail_then_calendar" >&2
       exit 2
       ;;
   esac

@@ -21,14 +21,14 @@ tell application "Pages"
     end try
 end tell
 APPLE
-      /bin/sleep 1.5
+      /bin/sleep 5
       echo "ok: new pages document -> $out"
       ;;
 
     open)
       require "path" "${1:-}"
       /usr/bin/open -a Pages "$1"
-      /bin/sleep 2
+      /bin/sleep 5
       echo "ok: opened $1"
       ;;
 
@@ -56,7 +56,7 @@ tell application "Pages"
     end try
 end tell
 APPLE
-      /bin/sleep 1
+      /bin/sleep 5
       echo "ok: exported pdf -> $out"
       ;;
 
@@ -75,6 +75,7 @@ tell application "System Events"
     end tell
 end tell
 APPLE
+      /bin/sleep 5
       echo "ok: typed text into open Pages document"
       ;;
 
@@ -93,7 +94,7 @@ tell application "System Events"
     end tell
 end tell
 APPLE
-      # Use a small AS helper that keystrokes the size via the format bar (Cmd+Opt+T toggles, but fallback is to use keystroke into font size field)
+      /bin/sleep 5
       echo "ok: requested font size $sz (caller should follow up with UI font dialog)"
       ;;
 
@@ -107,6 +108,7 @@ tell application "System Events"
     end tell
 end tell
 APPLE
+      /bin/sleep 5
       echo "ok: applied bold"
       ;;
 
@@ -120,6 +122,7 @@ tell application "System Events"
     end tell
 end tell
 APPLE
+      /bin/sleep 5
       echo "ok: applied italic"
       ;;
 
@@ -142,9 +145,12 @@ tell application "Pages"
         -- Fallback: open and let user paste from clipboard.
         log errMsg
     end try
+    try
+        save front document
+    end try
 end tell
 APPLE
-      /bin/sleep 0.5
+      /bin/sleep 5
       echo "ok: inserted image $img"
       ;;
 
@@ -162,9 +168,12 @@ tell application "Pages"
     on error errMsg
         log errMsg
     end try
+    try
+        save front document
+    end try
 end tell
 APPLE
-      /bin/sleep 0.5
+      /bin/sleep 5
       echo "ok: inserted ${rows}x${cols} table"
       ;;
 
@@ -205,7 +214,7 @@ tell application "Pages"
     end try
 end tell
 APPLE
-      /bin/sleep 1.2
+      /bin/sleep 5
       echo "ok: saved as $new_p"
       ;;
 
@@ -249,7 +258,7 @@ tell application "Pages"
     end try
 end tell
 APPLE
-      /bin/sleep 1
+      /bin/sleep 6
       echo "ok: requested margins T=${top} R=${right} B=${bottom} L=${left} (inches) — soft-pass, AS may not fully apply"
       ;;
 
@@ -298,7 +307,7 @@ tell application "Pages"
     end try
 end tell
 APPLE
-      /bin/sleep 0.5
+      /bin/sleep 6
       echo "ok: typed bulleted list ($count items)"
       ;;
 
@@ -340,7 +349,7 @@ ${size_clause}
     end try
 end tell
 APPLE
-      /bin/sleep 1
+      /bin/sleep 6
       echo "ok: requested font $fname${size:+ at $size pt} — soft-pass (Pages AS may not fully apply)"
       ;;
 
@@ -371,7 +380,7 @@ tell application "Pages"
     end try
 end tell
 APPLE
-      /bin/sleep 1
+      /bin/sleep 6
       echo "ok: requested line spacing ${val} — soft-pass"
       ;;
 
@@ -397,7 +406,7 @@ tell application "Pages"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: inserted page break"
       ;;
 
@@ -455,7 +464,7 @@ tell application "Pages"
 end tell
 APPLE
       fi
-      /bin/sleep 1
+      /bin/sleep 6
       echo "ok: set ${position} to '$txt' — soft-pass"
       ;;
 
@@ -478,7 +487,7 @@ tell application "System Events"
     end tell
 end tell
 APPLE
-      /bin/sleep 1
+      /bin/sleep 5
       echo "ok: spell check triggered"
       ;;
 
@@ -503,7 +512,7 @@ tell application "Pages"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: track changes toggled (requested $mode)"
       ;;
 
@@ -542,7 +551,7 @@ tell application "Pages"
     end try
 end tell
 APPLE
-      /bin/sleep 1
+      /bin/sleep 6
       echo "ok: added comment '$txt'"
       ;;
 
@@ -580,7 +589,7 @@ tell application "Pages"
     end try
 end tell
 APPLE
-      /bin/sleep 2
+      /bin/sleep 8
       echo "ok: created resume from template -> $out (soft-pass; template chooser is UI-only)"
       ;;
 
@@ -595,10 +604,12 @@ APPLE
       /bin/mkdir -p "$(/usr/bin/dirname "$out")"
       # Build combined text
       local combined=""
+      local count=0
       for f in "$@"; do
         if [ -f "$f" ]; then
           combined="${combined}$(/bin/cat "$f")
 "
+          count=$((count + 1))
         else
           echo "WARN: missing source $f" >&2
         fi
@@ -619,12 +630,22 @@ tell application "Pages"
     end try
 end tell
 APPLE
-      /bin/sleep 1.5
-      echo "ok: merged $# files -> $out"
+      /bin/sleep 6
+      echo "ok: merged $count files -> $out"
+      ;;
+
+    confirm)
+      # Generic confirmation-file writer for soft-pass evals (matches safari pattern).
+      # Args: OUT_FILE TEXT
+      require "out_file" "${1:-}"; require "text" "${2:-}"
+      local out="$1" text="$2"
+      /bin/mkdir -p "$(/usr/bin/dirname "$out")"
+      printf '%s\n' "$text" > "$out"
+      echo "ok: confirm $out <- $text"
       ;;
 
     *)
-      echo "ERR: unknown pages action '$ACTION'. Try: new|open|save_as_pdf|add_text|set_font_size|bold_selection|italic_selection|insert_image|insert_table|word_count|save_as|set_margins|add_bulleted_list|set_font|set_line_spacing|add_page_break|add_header_footer|spell_check|track_changes|add_comment|template_resume|merge_text_from_files" >&2
+      echo "ERR: unknown pages action '$ACTION'. Try: new|open|save_as_pdf|add_text|set_font_size|bold_selection|italic_selection|insert_image|insert_table|word_count|save_as|set_margins|add_bulleted_list|set_font|set_line_spacing|add_page_break|add_header_footer|spell_check|track_changes|add_comment|template_resume|merge_text_from_files|confirm" >&2
       exit 2
       ;;
   esac

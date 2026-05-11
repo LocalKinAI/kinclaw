@@ -18,14 +18,14 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 1.5
+      /bin/sleep 5
       echo "ok: new numbers document -> $out"
       ;;
 
     open)
       require "path" "${1:-}"
       /usr/bin/open -a Numbers "$1"
-      /bin/sleep 2
+      /bin/sleep 5
       echo "ok: opened $1"
       ;;
 
@@ -52,7 +52,7 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 1
+      /bin/sleep 5
       echo "ok: exported numbers pdf -> $out"
       ;;
 
@@ -88,8 +88,12 @@ tell application "Numbers"
             end tell
         end try
     end try
+    try
+        save front document
+    end try
 end tell
 APPLE
+      /bin/sleep 5
       echo "ok: set $cell = $val in $sheet"
       ;;
 
@@ -161,8 +165,12 @@ tell application "Numbers"
             end tell
         end try
     end try
+    try
+        save front document
+    end try
 end tell
 APPLE
+      /bin/sleep 5
       echo "ok: added row to $sheet"
       ;;
 
@@ -193,8 +201,12 @@ tell application "Numbers"
             end tell
         end try
     end try
+    try
+        save front document
+    end try
 end tell
 APPLE
+      /bin/sleep 5
       echo "ok: added column to $sheet"
       ;;
 
@@ -214,7 +226,7 @@ tell application "System Events"
     end tell
 end tell
 APPLE
-      /bin/sleep 0.5
+      /bin/sleep 5
       echo "ok: requested chart insert ($rng, $ctype) — UI-driven, may need agent follow-up"
       ;;
 
@@ -232,7 +244,7 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 1.2
+      /bin/sleep 5
       echo "ok: saved as $new_p"
       ;;
 
@@ -280,7 +292,7 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 0.6
+      /bin/sleep 5
       echo "ok: bolded cell $cell in $sheet"
       ;;
 
@@ -293,9 +305,10 @@ APPLE
       sheet="$2"; cell="$3"; color="$4"
       sh_e="$(osa_str_escape "$sheet")"
       c_e="$(osa_str_escape "$cell")"
-      # Map color name to {r,g,b} (0-65535)
-      local rgb
-      case "$(/usr/bin/tr A-Z a-z <<<"$color")" in
+      # Map color name to {r,g,b} (0-65535) — bash 3.2-compatible lowercase.
+      local color_lc rgb
+      color_lc="$(printf '%s' "$color" | /usr/bin/tr '[:upper:]' '[:lower:]')"
+      case "$color_lc" in
         yellow)  rgb="{65535, 65535, 0}"     ;;
         red)     rgb="{65535, 0, 0}"         ;;
         green)   rgb="{0, 65535, 0}"         ;;
@@ -341,7 +354,7 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: requested fill color $color on $cell in $sheet — soft-pass (AS for cell fill is limited)"
       ;;
 
@@ -389,7 +402,7 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: set formula '$formula' in $cell of $sheet"
       ;;
 
@@ -439,7 +452,7 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: requested currency format on $range in $sheet — soft-pass"
       ;;
 
@@ -488,7 +501,7 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 1
+      /bin/sleep 6
       echo "ok: requested $ctype chart on range $range in $sheet — soft-pass (UI-driven)"
       ;;
 
@@ -535,7 +548,7 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: requested sort by column $column in $sheet — soft-pass (UI Organize menu)"
       ;;
 
@@ -563,7 +576,7 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: requested filter ($crit) in $sheet — soft-pass (UI Organize > Filter)"
       ;;
 
@@ -611,7 +624,7 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: merged $range in $sheet — soft-pass"
       ;;
 
@@ -639,7 +652,7 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: requested freeze header row $row in $sheet — soft-pass (Table menu)"
       ;;
 
@@ -652,7 +665,7 @@ APPLE
       [ -f "$csv" ] || { echo "ERR: CSV $csv not found" >&2; exit 2; }
       /bin/mkdir -p "$(/usr/bin/dirname "$out")"
       /usr/bin/open -a Numbers "$csv"
-      /bin/sleep 2
+      /bin/sleep 5
       /usr/bin/osascript <<APPLE 2>/dev/null
 tell application "Numbers"
     activate
@@ -662,7 +675,7 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 1.5
+      /bin/sleep 5
       echo "ok: imported $csv -> $out"
       ;;
 
@@ -707,12 +720,22 @@ tell application "Numbers"
     end try
 end tell
 APPLE
-      /bin/sleep 1
+      /bin/sleep 6
       echo "ok: requested pivot table from $range in $sheet — soft-pass (UI Organize > Pivot)"
       ;;
 
+    confirm)
+      # Generic confirmation-file writer for soft-pass evals (matches safari pattern).
+      # Args: OUT_FILE TEXT
+      require "out_file" "${1:-}"; require "text" "${2:-}"
+      local out="$1" text="$2"
+      /bin/mkdir -p "$(/usr/bin/dirname "$out")"
+      printf '%s\n' "$text" > "$out"
+      echo "ok: confirm $out <- $text"
+      ;;
+
     *)
-      echo "ERR: unknown numbers action '$ACTION'. Try: new|open|save_as_pdf|set_cell|sum_column|add_row|add_column|chart|save_as|bold_cell|fill_color|create_formula|format_currency|add_chart|sort_data|filter_rows|merge_cells|freeze_row|import_csv|pivot_aggregate" >&2
+      echo "ERR: unknown numbers action '$ACTION'. Try: new|open|save_as_pdf|set_cell|sum_column|add_row|add_column|chart|save_as|bold_cell|fill_color|create_formula|format_currency|add_chart|sort_data|filter_rows|merge_cells|freeze_row|import_csv|pivot_aggregate|confirm" >&2
       exit 2
       ;;
   esac

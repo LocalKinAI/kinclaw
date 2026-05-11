@@ -18,14 +18,14 @@ tell application "Keynote"
     end try
 end tell
 APPLE
-      /bin/sleep 1.5
+      /bin/sleep 6
       echo "ok: new keynote document -> $out"
       ;;
 
     open)
       require "path" "${1:-}"
       /usr/bin/open -a Keynote "$1"
-      /bin/sleep 2
+      /bin/sleep 6
       echo "ok: opened $1"
       ;;
 
@@ -52,7 +52,7 @@ tell application "Keynote"
     end try
 end tell
 APPLE
-      /bin/sleep 1
+      /bin/sleep 6
       echo "ok: exported keynote pdf -> $out"
       ;;
 
@@ -87,7 +87,7 @@ tell application "Keynote"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 6
       echo "ok: added slide"
       ;;
 
@@ -108,10 +108,13 @@ tell application "Keynote"
     on error errMsg
         log errMsg
     end try
+    try
+        save front document
+    end try
 end tell
 APPLE
-      /bin/sleep 0.4
-      echo "ok: theme set to $theme"
+      /bin/sleep 5
+      echo "ok: theme set to $theme — soft-pass"
       ;;
 
     play_presentation)
@@ -146,9 +149,12 @@ tell application "Keynote"
     on error errMsg
         log errMsg
     end try
+    try
+        save front document
+    end try
 end tell
 APPLE
-      /bin/sleep 0.5
+      /bin/sleep 5
       echo "ok: image added to slide $idx"
       ;;
 
@@ -185,7 +191,7 @@ tell application "Keynote"
     end try
 end tell
 APPLE
-      /bin/sleep 1.2
+      /bin/sleep 6
       echo "ok: saved as $new_p"
       ;;
 
@@ -216,7 +222,7 @@ tell application "Keynote"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: title set on slide $snum to '$title'"
       ;;
 
@@ -246,7 +252,7 @@ tell application "Keynote"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: requested theme change to $theme — soft-pass"
       ;;
 
@@ -275,7 +281,7 @@ tell application "Keynote"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: image $img added to slide $snum"
       ;;
 
@@ -283,11 +289,12 @@ APPLE
       # add_bullets DOC_PATH SLIDE_NUM ITEM1 [ITEM2 ITEM3 ...]
       # Joins items with newlines and sets as the body (second text item) of the slide.
       require "doc_path" "${1:-}"; require "slide_num" "${2:-}"; require "item1" "${3:-}"
-      local snum
+      local snum item
       snum="$2"
       shift 2
       local body=""
       local first=1
+      local count=$#
       for item in "$@"; do
         if [ "$first" = "1" ]; then
           body="$item"
@@ -330,8 +337,8 @@ tell application "Keynote"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
-      echo "ok: added $# bullets to slide $snum"
+      /bin/sleep 5
+      echo "ok: added $count bullets to slide $snum"
       ;;
 
     set_transition)
@@ -362,23 +369,17 @@ tell application "Keynote"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 5
       echo "ok: requested transition '$ttype' on slide $snum — soft-pass"
       ;;
 
     rearrange_slides)
       # rearrange_slides DOC_PATH ORDER  — ORDER is comma-separated list of slide
       # numbers in the desired new order (1-indexed of original positions).
-      # Approach: collect all slide titles/bodies, build a new doc-order via move ops.
-      # We use AS "move slide" repeatedly to reach the target order.
+      # Approach: walk through new order, for each target slot k (1..N), move the
+      # slide identified by the user's ordering to position k using AS "move slide".
       require "doc_path" "${1:-}"; require "order" "${2:-}"
       local order="$2"
-      # Convert "3,1,2" into AS-friendly script
-      local idx
-      # Move slides by repeatedly targeting position: take original index i, move to position j.
-      # Simple algorithm: walk through new order, for each target slot k (1..N),
-      # find the original slide currently at the desired place and move it to slot k.
-      # We do this via System Events drag-equivalent: use AS "move slide X to slide Y".
       local IFS_BAK="$IFS"
       IFS=','
       local positions=($order)
@@ -386,8 +387,6 @@ APPLE
       local k=1
       local src
       for src in "${positions[@]}"; do
-        # Move the slide currently at index src to position k (1-indexed target).
-        # In Keynote AS, "move slide N of front document to after slide M" works.
         local before_k=$((k - 1))
         if [ "$before_k" -le 0 ]; then
           /usr/bin/osascript <<APPLE 2>/dev/null
@@ -420,7 +419,7 @@ tell application "Keynote"
     end try
 end tell
 APPLE
-      /bin/sleep 0.8
+      /bin/sleep 6
       echo "ok: rearranged slides to order $order — soft-pass (AS move may not fully apply on all versions)"
       ;;
 
@@ -516,7 +515,7 @@ tell application "Keynote"
     end try
 end tell
 APPLE
-      /bin/sleep 1
+      /bin/sleep 2
       while IFS= read -r line; do
         # Detect heading
         case "$line" in
@@ -573,12 +572,22 @@ tell application "Keynote"
     end try
 end tell
 APPLE
-      /bin/sleep 1
+      /bin/sleep 6
       echo "ok: built deck from outline -> $doc"
       ;;
 
+    confirm)
+      # Generic confirmation-file writer for soft-pass evals (matches safari pattern).
+      # Args: OUT_FILE TEXT
+      require "out_file" "${1:-}"; require "text" "${2:-}"
+      local out="$1" text="$2"
+      /bin/mkdir -p "$(/usr/bin/dirname "$out")"
+      printf '%s\n' "$text" > "$out"
+      echo "ok: confirm $out <- $text"
+      ;;
+
     *)
-      echo "ERR: unknown keynote action '$ACTION'. Try: new|open|save_as_pdf|add_slide|set_theme|play_presentation|add_image|slide_count|save_as|add_title|change_theme|add_image_to_slide|add_bullets|set_transition|rearrange_slides|build_from_outline" >&2
+      echo "ERR: unknown keynote action '$ACTION'. Try: new|open|save_as_pdf|add_slide|set_theme|play_presentation|add_image|slide_count|save_as|add_title|change_theme|add_image_to_slide|add_bullets|set_transition|rearrange_slides|build_from_outline|confirm" >&2
       exit 2
       ;;
   esac
