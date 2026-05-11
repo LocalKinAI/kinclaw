@@ -12,25 +12,64 @@ music_dispatch() {
       echo "ok: pause"
       ;;
 
+    play_pause|playpause|toggle)
+      # Toggle between play/pause based on current state.
+      /usr/bin/osascript <<'APPLE' 2>/dev/null
+tell application "Music"
+    try
+        if player state is playing then
+            pause
+        else
+            play
+        end if
+    on error
+        try
+            playpause
+        end try
+    end try
+end tell
+APPLE
+      echo "ok: play_pause"
+      ;;
+
     next|skip|skip_forward)
-      /usr/bin/osascript -e 'tell application "Music" to next track' 2>/dev/null
-      echo "ok: next track"
+      # Optional N count — skip N tracks forward.
+      local n="${1:-1}"
+      if [ "$n" -lt 1 ] 2>/dev/null; then n=1; fi
+      local i=0
+      while [ "$i" -lt "$n" ]; do
+        /usr/bin/osascript -e 'tell application "Music" to next track' 2>/dev/null
+        i=$((i + 1))
+      done
+      echo "ok: next track x$n"
       ;;
 
-    prev|previous|skip_backward)
-      /usr/bin/osascript -e 'tell application "Music" to previous track' 2>/dev/null
-      echo "ok: previous track"
+    prev|previous|skip_backward|skip_back)
+      # Optional N count — skip N tracks backward.
+      local n="${1:-1}"
+      if [ "$n" -lt 1 ] 2>/dev/null; then n=1; fi
+      local i=0
+      while [ "$i" -lt "$n" ]; do
+        /usr/bin/osascript -e 'tell application "Music" to previous track' 2>/dev/null
+        i=$((i + 1))
+      done
+      echo "ok: previous track x$n"
       ;;
 
-    search_track)
+    search_track|search_library)
       require "query" "${1:-}"; require "out_file" "${2:-}"
       local q_e
       q_e="$(osa_str_escape "$1")"
+      /bin/mkdir -p "$(/usr/bin/dirname "$2")"
       /usr/bin/osascript <<APPLE 2>/dev/null > "$2"
 tell application "Music"
     set out to ""
     try
-        set hits to (every track of library playlist 1 whose (name contains "$q_e" or artist contains "$q_e"))
+        if "$q_e" is "" then
+            set hits to (every track of library playlist 1)
+        else
+            set hits to (every track of library playlist 1 whose (name contains "$q_e" or artist contains "$q_e"))
+        end if
         repeat with t in hits
             set out to out & (name of t) & " — " & (artist of t) & linefeed
         end repeat
@@ -96,6 +135,7 @@ APPLE
 
     current_track)
       require "out_file" "${1:-}"
+      /bin/mkdir -p "$(/usr/bin/dirname "$1")"
       /usr/bin/osascript <<'APPLE' 2>/dev/null > "$1"
 tell application "Music"
     try
@@ -134,6 +174,21 @@ APPLE
       echo "ok: shuffle=$v"
       ;;
 
+    shuffle_toggle|toggle_shuffle)
+      # Flip current shuffle state — read, invert, set.
+      local cur
+      cur="$(/usr/bin/osascript -e 'tell application "Music" to shuffle enabled' 2>/dev/null)"
+      local nv
+      case "$cur" in
+        true) nv="false" ;;
+        *) nv="true" ;;
+      esac
+      /usr/bin/osascript <<APPLE 2>/dev/null
+tell application "Music" to set shuffle enabled to $nv
+APPLE
+      echo "ok: shuffle toggled $cur -> $nv"
+      ;;
+
     repeat)
       require "mode" "${1:-}"
       local m
@@ -151,6 +206,7 @@ APPLE
 
     list_playlists)
       require "out_file" "${1:-}"
+      /bin/mkdir -p "$(/usr/bin/dirname "$1")"
       /usr/bin/osascript <<'APPLE' 2>/dev/null > "$1"
 tell application "Music"
     set out to ""
@@ -163,13 +219,49 @@ APPLE
       echo "ok: playlists -> $1"
       ;;
 
+    export_playlist)
+      # Write the track titles of a specific playlist to OUT_FILE (one per line).
+      require "playlist_name" "${1:-}"; require "out_file" "${2:-}"
+      local p_e
+      p_e="$(osa_str_escape "$1")"
+      /bin/mkdir -p "$(/usr/bin/dirname "$2")"
+      /usr/bin/osascript <<APPLE 2>/dev/null > "$2"
+tell application "Music"
+    set out to ""
+    try
+        if exists (user playlist "$p_e") then
+            set pl to user playlist "$p_e"
+            repeat with t in (every track of pl)
+                set out to out & (name of t) & linefeed
+            end repeat
+        end if
+    end try
+    return out
+end tell
+APPLE
+      echo "ok: playlist '$1' tracks -> $2"
+      ;;
+
     volume_down)
-      # decrement by 10
+      # Decrement by N (default 10).
+      local step="${1:-10}"
       local cur
       cur="$(/usr/bin/osascript -e 'tell application "Music" to sound volume' 2>/dev/null)"
       [ -z "$cur" ] && cur=50
-      local nv=$((cur - 10))
+      local nv=$((cur - step))
       [ "$nv" -lt 0 ] && nv=0
+      /usr/bin/osascript -e "tell application \"Music\" to set sound volume to $nv" 2>/dev/null
+      echo "ok: volume $cur -> $nv"
+      ;;
+
+    volume_up)
+      # Increment by N (default 10).
+      local step="${1:-10}"
+      local cur
+      cur="$(/usr/bin/osascript -e 'tell application "Music" to sound volume' 2>/dev/null)"
+      [ -z "$cur" ] && cur=50
+      local nv=$((cur + step))
+      [ "$nv" -gt 100 ] && nv=100
       /usr/bin/osascript -e "tell application \"Music\" to set sound volume to $nv" 2>/dev/null
       echo "ok: volume $cur -> $nv"
       ;;
@@ -195,6 +287,7 @@ APPLE
 
     most_played)
       require "out_file" "${1:-}"
+      /bin/mkdir -p "$(/usr/bin/dirname "$1")"
       /usr/bin/osascript <<'APPLE' 2>/dev/null > "$1"
 tell application "Music"
     set winner to missing value
@@ -217,6 +310,7 @@ APPLE
 
     *)
       echo "ERR: unknown music action '$ACTION'. Run 'cerebellum' for menu." >&2
+      echo "Actions: play pause play_pause next skip_forward prev skip_back search_track search_library create_playlist delete_playlist add_to_playlist current_track set_volume volume_up volume_down shuffle shuffle_toggle repeat list_playlists export_playlist play_album most_played" >&2
       exit 2
       ;;
   esac
