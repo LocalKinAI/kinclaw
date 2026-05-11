@@ -82,7 +82,7 @@ multi_dispatch() {
       else
         /usr/bin/open -a "$app" >/dev/null 2>&1 || true
       fi
-      /bin/sleep 0.8
+      /bin/sleep 2  # Calendar.app needs ~1.5s to be ready for AppleScript after cold launch
       # Pick a calendar if not supplied: prefer Home, else first writable.
       if [ -z "$cal" ]; then
         local cal_list
@@ -98,6 +98,7 @@ multi_dispatch() {
         echo "ERR: event creation failed in calendar '$cal'" >&2
         exit 1
       }
+      /bin/sleep 1.5  # iCloud sync wait before eval
       echo "ok: Spotlight-launched $app + event '$sum' in '$cal'"
       ;;
 
