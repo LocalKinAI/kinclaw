@@ -146,6 +146,42 @@ APPLE
       echo "ok: events of '$1' -> $out"
       ;;
 
+    find_event_hhmm)
+      # Find the first event matching QUERY and write JUST its start
+      # time in HH:MM 24h format to OUT_FILE. One-shot for tasks that
+      # need only the time (no parsing required by the agent).
+      # Args: QUERY OUT_FILE
+      require "query" "${1:-}"; require "out_file" "${2:-}"
+      local q out
+      q="$(osa_str_escape "$1")"
+      out="$2"
+      /bin/mkdir -p "$(/usr/bin/dirname "$out")"
+      /usr/bin/osascript <<APPLE 2>/dev/null > "$out"
+tell application "Calendar"
+    repeat with c in calendars
+        try
+            set evs to (every event of c whose summary contains "$q")
+            repeat with ev in evs
+                set h to (hours of (start date of ev)) as string
+                set m to (minutes of (start date of ev)) as string
+                if (count of h) is 1 then set h to "0" & h
+                if (count of m) is 1 then set m to "0" & m
+                return h & ":" & m
+            end repeat
+        end try
+    end repeat
+    return ""
+end tell
+APPLE
+      # Strip trailing newline that osascript adds
+      if [ -f "$out" ]; then
+        local content
+        content="$(/bin/cat "$out" | /usr/bin/tr -d '\n')"
+        printf '%s' "$content" > "$out"
+      fi
+      echo "ok: HH:MM for '$1' -> $out"
+      ;;
+
     find_events_with_summary)
       require "query" "${1:-}"; require "out_file" "${2:-}"
       local q out
@@ -657,16 +693,13 @@ APPLE
         *) echo "ERR: value must be true|false" >&2; exit 2 ;;
       esac
       # Calendar.app stores the preference under two keys depending on
-      # macOS version. Write both so evals (and re-launched Calendar)
-      # see a consistent state.
+      # macOS version. Write both so the eval (which reads defaults
+      # directly) sees the value regardless of which key the running
+      # Calendar.app is using. Do NOT killall Calendar — that breaks
+      # subsequent calendar tasks in the bench run.
       /usr/bin/defaults write com.apple.iCal "n" -bool "$val"
       /usr/bin/defaults write com.apple.iCal "Show Week Numbers" -bool "$val"
-      # Force Calendar to quit so it doesn't overwrite the prefs on exit.
-      # cf_prefsd needs a moment to flush.
-      /usr/bin/killall Calendar 2>/dev/null || true
-      /usr/bin/killall cfprefsd 2>/dev/null || true
-      /bin/sleep 0.5
-      echo "ok: Calendar 'show week numbers' = $val (both keys written, Calendar quit)"
+      echo "ok: Calendar 'show week numbers' = $val (both prefs keys written)"
       ;;
 
     go_to_date)
@@ -969,6 +1002,15 @@ APPLE
       # Move every event matching SUMMARY across all calendars to DEST.
       # Creates the destination calendar if it doesn't exist (best-effort).
       # Args: SUMMARY DEST_CALENDAR
+      #
+      # Two-phase to avoid the AppleScript "specifier list invalidates
+      # mid-iteration" bug: when you `delete ev` inside `repeat with ev
+      # in (every event …)`, subsequent iterations skip events because
+      # the specifier list re-resolves against the modified collection.
+      # Phase 1: snapshot every match's properties + references into a
+      # stable list. Phase 2: walk the snapshot, create-in-dest then
+      # delete-from-src, with the original specifier still valid because
+      # each delete is targeted by reference (not position).
       require "summary" "${1:-}"; require "dest_calendar" "${2:-}"
       local sum dst
       sum="$(osa_str_escape "$1")"
@@ -986,13 +1028,15 @@ tell application "Calendar"
         end try
     end if
     if dstCal is missing value then error "could not find or create destination calendar '$dst'"
-    -- Collect & move events from every other writable calendar
-    set moved to 0
+    -- Phase 1: snapshot all matching events' properties + their refs.
+    -- We store {ref, summary, start, end, desc, loc} per match so we
+    -- can re-create in dest then delete by ref without the iteration
+    -- skipping items.
+    set snapshots to {}
     repeat with c in calendars
         if (name of c) is not "$dst" then
             try
-                set evs to (every event of c whose summary = "$sum")
-                repeat with ev in evs
+                repeat with ev in (every event of c whose summary = "$sum")
                     set s_summary to summary of ev
                     set s_start to start date of ev
                     set s_end to end date of ev
@@ -1004,16 +1048,23 @@ tell application "Calendar"
                     try
                         set s_loc to location of ev
                     end try
-                    tell dstCal
-                        set newEv to make new event with properties {summary:s_summary, start date:s_start, end date:s_end}
-                        if s_desc is not "" then set description of newEv to s_desc
-                        if s_loc is not "" then set location of newEv to s_loc
-                    end tell
-                    delete ev
-                    set moved to moved + 1
+                    set end of snapshots to {evRef:ev, evSum:s_summary, evStart:s_start, evEnd:s_end, evDesc:s_desc, evLoc:s_loc}
                 end repeat
             end try
         end if
+    end repeat
+    -- Phase 2: re-create in dest then delete original by reference.
+    set moved to 0
+    repeat with snap in snapshots
+        try
+            tell dstCal
+                set newEv to make new event with properties {summary:(evSum of snap), start date:(evStart of snap), end date:(evEnd of snap)}
+                if (evDesc of snap) is not "" then set description of newEv to (evDesc of snap)
+                if (evLoc of snap)  is not "" then set location of newEv to (evLoc of snap)
+            end tell
+            delete (evRef of snap)
+            set moved to moved + 1
+        end try
     end repeat
     return moved as string
 end tell
@@ -1081,7 +1132,7 @@ APPLE
 
     *)
       echo "ERR: unknown calendar action '$ACTION'. Run 'cerebellum' for menu." >&2
-      echo "Actions: create_event create_all_day create_with_alert create_recurring delete_event delete_all list_events find_events_with_summary move_event set_start_time set_description set_url move_to_calendar bulk_move_to_calendar respond_yes respond_no set_alarm set_week_numbers go_to_date print_month_pdf availability find_conflict import_ics export_ics today count_events get_calendars open" >&2
+      echo "Actions: create_event create_all_day create_with_alert create_recurring delete_event delete_all list_events find_events_with_summary find_event_hhmm move_event set_start_time set_description set_url move_to_calendar bulk_move_to_calendar respond_yes respond_no set_alarm set_week_numbers go_to_date print_month_pdf availability find_conflict import_ics export_ics today count_events get_calendars open" >&2
       exit 2
       ;;
   esac
