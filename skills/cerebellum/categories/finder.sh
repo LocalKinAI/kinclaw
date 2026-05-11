@@ -343,6 +343,30 @@ PLIST
       /usr/bin/zip -r "$out" "$@" >/dev/null
       echo "ok: zipped $# items -> $out"
       ;;
+    rename_from_clipboard_list)
+      # Read clipboard lines, apply as new names to files in DIR in alphabetical order.
+      require "dir" "${1:-}"
+      local dir="$1"
+      [ -d "$dir" ] || { echo "ERR: not a directory: $dir" >&2; exit 1; }
+      # Collect clipboard names (skip blanks)
+      local names_tmp files_tmp
+      names_tmp="$(/usr/bin/mktemp)"
+      files_tmp="$(/usr/bin/mktemp)"
+      /usr/bin/pbpaste | /usr/bin/grep -v '^[[:space:]]*$' > "$names_tmp"
+      ( cd "$dir" && /bin/ls -1 | /usr/bin/sort > "$files_tmp" )
+      local i=1 src new
+      while IFS= read -r src; do
+        new="$(/usr/bin/sed -n "${i}p" "$names_tmp")"
+        if [ -n "$new" ]; then
+          /bin/mv "$dir/$src" "$dir/$new"
+          i=$((i + 1))
+        else
+          break
+        fi
+      done < "$files_tmp"
+      /bin/rm -f "$names_tmp" "$files_tmp"
+      echo "ok: renamed $((i - 1)) files in $dir from clipboard"
+      ;;
     *)
       echo "ERR: unknown finder action '$ACTION'. Run 'cerebellum' for menu." >&2
       exit 2

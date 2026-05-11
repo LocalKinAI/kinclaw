@@ -836,6 +836,131 @@ APPLE
       echo "ok: conflicts -> $out"
       ;;
 
+    import_ics)
+      # Parse a minimal ICS file and create each VEVENT via create_event.
+      # Args: ICS_PATH [DEST_CALENDAR]
+      require "ics_path" "${1:-}"
+      local ics="$1"
+      local cal="${2:-Home}"
+      [ -f "$ics" ] || { echo "ERR: file not found: $ics" >&2; exit 1; }
+      local in_event=0 summary="" dtstart="" dtend="" count=0
+      local sd ed line
+      while IFS= read -r line || [ -n "$line" ]; do
+        # Strip trailing CR (ICS files often use CRLF)
+        line="${line%$'\r'}"
+        case "$line" in
+          BEGIN:VEVENT*) in_event=1; summary=""; dtstart=""; dtend="" ;;
+          END:VEVENT*)
+            if [ -n "$summary" ] && [ -n "$dtstart" ] && [ -n "$dtend" ]; then
+              # Convert YYYYMMDDTHHMMSS[Z] to "YYYY-MM-DD HH:MM"
+              sd="$(printf '%s' "$dtstart" | /usr/bin/sed -E 's/^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2}).*$/\1-\2-\3 \4:\5/')"
+              ed="$(printf '%s' "$dtend"   | /usr/bin/sed -E 's/^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2}).*$/\1-\2-\3 \4:\5/')"
+              calendar_dispatch create_event "$cal" "$summary" "$sd" "$ed" >/dev/null 2>&1 && count=$((count + 1))
+            fi
+            in_event=0
+            ;;
+          SUMMARY:*) [ $in_event -eq 1 ] && summary="${line#SUMMARY:}" ;;
+          DTSTART*:*) [ $in_event -eq 1 ] && dtstart="${line##*:}" ;;
+          DTEND*:*)   [ $in_event -eq 1 ] && dtend="${line##*:}" ;;
+        esac
+      done < "$ics"
+      /bin/sleep 1.5  # iCloud sync wait
+      echo "ok: imported $count events from $ics into '$cal'"
+      ;;
+
+    create_recurring)
+      # Create a recurring event with an RRULE string.
+      # Args: CAL SUMMARY START END RRULE  (e.g. "FREQ=WEEKLY" or "FREQ=DAILY;COUNT=10")
+      require "calendar" "${1:-}"; require "summary" "${2:-}"
+      require "start" "${3:-}"; require "end" "${4:-}"; require "rrule" "${5:-}"
+      local cal sum start_d end_d rr
+      cal="$(osa_str_escape "$1")"
+      sum="$(osa_str_escape "$2")"
+      start_d="$(osa_str_escape "$3")"
+      end_d="$(osa_str_escape "$4")"
+      rr="$(osa_str_escape "$5")"
+      /usr/bin/osascript <<APPLE 2>/dev/null
+on parseDate(s)
+    set d to (current date)
+    set year of d to (text 1 thru 4 of s) as integer
+    set month of d to (text 6 thru 7 of s) as integer
+    set day of d to (text 9 thru 10 of s) as integer
+    set hours of d to (text 12 thru 13 of s) as integer
+    set minutes of d to (text 15 thru 16 of s) as integer
+    set seconds of d to 0
+    return d
+end parseDate
+tell application "Calendar"
+    set sd to my parseDate("$start_d")
+    set ed to my parseDate("$end_d")
+    set targetCal to (first calendar whose name is "$cal" and writable is true)
+    tell targetCal
+        set newEv to make new event with properties {summary:"$sum", start date:sd, end date:ed}
+        set recurrence of newEv to "$rr"
+    end tell
+end tell
+APPLE
+      /bin/sleep 1.5
+      echo "ok: recurring event '$2' created ($5)"
+      ;;
+
+    bulk_move_to_calendar)
+      # Move every event matching SUMMARY across all calendars to DEST.
+      # Creates the destination calendar if it doesn't exist (best-effort).
+      # Args: SUMMARY DEST_CALENDAR
+      require "summary" "${1:-}"; require "dest_calendar" "${2:-}"
+      local sum dst
+      sum="$(osa_str_escape "$1")"
+      dst="$(osa_str_escape "$2")"
+      /usr/bin/osascript <<APPLE 2>/dev/null
+tell application "Calendar"
+    -- Ensure destination calendar exists
+    set dstCal to missing value
+    try
+        set dstCal to (first calendar whose name is "$dst")
+    end try
+    if dstCal is missing value then
+        try
+            set dstCal to (make new calendar with properties {name:"$dst"})
+        end try
+    end if
+    if dstCal is missing value then error "could not find or create destination calendar '$dst'"
+    -- Collect & move events from every other writable calendar
+    set moved to 0
+    repeat with c in calendars
+        if (name of c) is not "$dst" then
+            try
+                set evs to (every event of c whose summary = "$sum")
+                repeat with ev in evs
+                    set s_summary to summary of ev
+                    set s_start to start date of ev
+                    set s_end to end date of ev
+                    set s_desc to ""
+                    set s_loc to ""
+                    try
+                        set s_desc to description of ev
+                    end try
+                    try
+                        set s_loc to location of ev
+                    end try
+                    tell dstCal
+                        set newEv to make new event with properties {summary:s_summary, start date:s_start, end date:s_end}
+                        if s_desc is not "" then set description of newEv to s_desc
+                        if s_loc is not "" then set location of newEv to s_loc
+                    end tell
+                    delete ev
+                    set moved to moved + 1
+                end repeat
+            end try
+        end if
+    end repeat
+    return moved as string
+end tell
+APPLE
+      /bin/sleep 2.5
+      echo "ok: bulk moved events titled '$1' to calendar '$2'"
+      ;;
+
     export_ics)
       # Export events between START_DATE and END_DATE to an ICS file.
       # Args: START_DATE (YYYY-MM-DD) END_DATE (YYYY-MM-DD) OUT_FILE
@@ -895,7 +1020,7 @@ APPLE
 
     *)
       echo "ERR: unknown calendar action '$ACTION'. Run 'cerebellum' for menu." >&2
-      echo "Actions: create_event create_all_day create_with_alert delete_event delete_all list_events find_events_with_summary move_event set_start_time set_description set_url move_to_calendar respond_yes respond_no set_alarm set_week_numbers go_to_date print_month_pdf availability find_conflict export_ics today count_events get_calendars open" >&2
+      echo "Actions: create_event create_all_day create_with_alert create_recurring delete_event delete_all list_events find_events_with_summary move_event set_start_time set_description set_url move_to_calendar bulk_move_to_calendar respond_yes respond_no set_alarm set_week_numbers go_to_date print_month_pdf availability find_conflict import_ics export_ics today count_events get_calendars open" >&2
       exit 2
       ;;
   esac
