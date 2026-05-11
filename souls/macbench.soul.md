@@ -52,6 +52,7 @@ skills:
     - "web_fetch"
     - "web_search"
     - "browser_session"
+    - "web_scrape"           # Scrapling — anti-bot (Cloudflare/Akamai/DataDome) + TLS fingerprint; faster than web; the fallback when web_fetch hits a 403/captcha
     # ★ THE CEREBELLUM ★ — single fast-execution skill that wraps every
     # canonical macOS app pattern (Finder file ops, Notes CRUD, Mail draft,
     # view/sort settings, tags, image attach, etc.) behind one entry point.
