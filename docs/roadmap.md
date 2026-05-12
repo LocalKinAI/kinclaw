@@ -462,6 +462,20 @@ Linux pilot soul now reaches feature parity with macOS pilot minus
 `app_open_clean` (which is genuinely macOS-specific — welcome-modal
 dismissal isn't a Linux convention).
 
+### Phase 5 — Linux ui claw → AT-SPI 2 ✅ shipped 2026-05-12
+
+`pkg/skill/ui_linux.go` upgraded from xdotool-only MVP to **AT-SPI 2
+accessibility tree walking via godbus**. New actions:
+  - `tree [depth=4] [app=...]` — full a11y tree dump
+  - `find name=X role=Y` — search by name/role substring
+  - `click_by_name` / `click_by_role` — invoke first action on a
+    matching actionable accessible (uses `org.a11y.atspi.Action.DoAction`)
+
+Window-level actions (focused_app / window_list / window_geometry)
+remain available via xdotool/wmctrl for X11. Tested compile only;
+needs runtime validation on GNOME (Wayland + X11). Added
+`github.com/godbus/dbus/v5` direct dep.
+
 
 
 The macOS `cerebellum/categories/*.sh` library has 15 categories

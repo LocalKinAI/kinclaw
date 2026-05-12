@@ -20,9 +20,16 @@ Each macOS claw now has a Linux sibling. Build tags split so
 - **`input_linux.go`** — xdotool (X11) / ydotool (Wayland) auto-selected.
   Supports move / click / triple_click / type / hotkey / scroll / cursor /
   screen_size / key_down/up / paste / drag.
-- **`ui_linux.go`** — MVP via xdotool + wmctrl (focused_app /
-  window_list / window_geometry). Full AT-SPI 2 tree walking deferred
-  to Phase 5 (needs `godbus` dependency).
+- **`ui_linux.go`** — TWO-TIER:
+  - Window-level (xdotool / wmctrl): focused_app / window_list /
+    window_geometry.
+  - **AT-SPI 2 tree walking (godbus, ✅ shipped this commit)**: `tree`
+    (depth-limited a11y dump), `find` (name/role substring search),
+    `click_by_name` / `click_by_role` (invokes first action via
+    `org.a11y.atspi.Action.DoAction`). Connects via session bus →
+    `org.a11y.Bus.GetAddress` → dedicated a11y bus → registry walk.
+    Requires at-spi2-core daemon (default on GNOME). New direct dep:
+    `github.com/godbus/dbus/v5 v5.2.2`.
 - **`record_linux.go`** — ffmpeg-driven start/stop/status. x11grab on
   X11; PipeWire via xdg-desktop-portal on Wayland.
 

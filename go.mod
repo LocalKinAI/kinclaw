@@ -8,6 +8,7 @@ require (
 	github.com/LocalKinAI/kinax-go v0.4.0
 	github.com/LocalKinAI/kinrec v0.1.0
 	github.com/LocalKinAI/sckit-go v0.3.0
+	github.com/godbus/dbus/v5 v5.2.2
 	golang.org/x/term v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.46.1
