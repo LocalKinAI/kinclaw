@@ -16,15 +16,26 @@ one else has — **reproduces on demand** via three primitives:
   child on a different brain (researcher / eye / critic / coder ship
   in-box; hierarchical, kernel-capped at depth 1).
 
-Single binary, ~17 MB, Go 1.22+, MIT licensed.
-**Primary target: macOS.** **Linux port (Phase 2-5) landed 2026-05-12** —
-the 4 claws (screen / input / ui / record) have Linux implementations via
-grim/scrot/xdotool/ydotool/ffmpeg/wmctrl, and the cerebellum library has
-4 Linux categories (linux-files / linux-apps / linux-settings /
-linux-clipboard). See [issue #1](https://github.com/LocalKinAI/kinclaw/issues/1)
-for current status — community testing on actual Linux (Pi 4 / Ubuntu /
-Sway) much appreciated. Windows is still blocked on
-[kinax-go](https://github.com/LocalKinAI/kinax-go) Windows port.
+Single binary, ~18 MB, Go 1.22+, MIT licensed.
+
+**Primary target: macOS** (tested daily-driver).
+**Linux Phase 2-5 landed 2026-05-12** — code complete, awaiting community
+runtime testing ([issue #1](https://github.com/LocalKinAI/kinclaw/issues/1)):
+
+| Layer | macOS | Linux | Backend |
+|---|---|---|---|
+| `screen` claw | ScreenCaptureKit | ✅ | grim / scrot / xrandr |
+| `input` claw | CGEvent | ✅ | xdotool / ydotool |
+| `ui` claw — window-level | AX | ✅ | xdotool / wmctrl |
+| `ui` claw — a11y tree | AX | ✅ | **AT-SPI 2 via godbus** |
+| `record` claw | ScreenCaptureKit | ✅ | ffmpeg (x11grab / pipewire) |
+| `location` skill | corelocationcli | ✅ | gdbus + geoclue2 (ipapi.co fallback) |
+| `cerebellum/*.sh` library | 16 cats (478 actions) | 4 cats (linux-files / -apps / -settings / -clipboard) | shell + POSIX tools |
+| `pilot` soul | 24 skills | 23 skills (only `app_open_clean` missing — macOS-specific) | — |
+
+Daily-driver Linux soul: [`souls/pilot_linux.soul.md`](souls/pilot_linux.soul.md).
+**Windows** still blocked on upstream
+[`kinax-go`](https://github.com/LocalKinAI/kinax-go) adding a Windows path.
 
 > *Same starter lobster for everyone. Every user's swarm is unique
 > after a month.*
@@ -919,8 +930,13 @@ cross-session memory.
   (`spawn`, hierarchical, depth-1) is OK and shipped. AutoGen-style
   peer coordination belongs in the LocalKin platform layer, not in
   KinClaw itself.
-- ❌ **Windows / Linux support.** macOS-native IS the positioning
-  (the Hermès craft, not the Zara mass-market).
+- ⚠️ **Cross-platform — reversed 2026-05-12.** Linux is now Phase 2-5
+  active work (the 4 claws + 4 cerebellum cats + AT-SPI 2 a11y tree +
+  cross-platform `location` skill all landed today; see CHANGELOG).
+  Windows still blocked on upstream [`kinax-go`](https://github.com/LocalKinAI/kinax-go)
+  adding a Windows path. macOS remains the primary, tested daily-driver
+  target; Linux is "code complete, awaiting community runtime testing"
+  per [issue #1](https://github.com/LocalKinAI/kinclaw/issues/1).
 - ❌ **Token-markup pricing.** Software stays MIT. Revenue model is
   the relay service when it ships.
 - ❌ **Fine-tuned KinClaw-specific model.** Brain stays swappable.

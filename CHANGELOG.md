@@ -1,6 +1,80 @@
 # Changelog
 
-## [Unreleased] - 2026-05-12 — Linux port Phase 2-5: 4 claws + 4 cerebellum cats + cross-platform location + CI
+## [Unreleased] - 2026-05-12 (late) — Phase 5: `ui_linux.go` AT-SPI 2 via godbus
+
+Closes the last big macOS↔Linux capability gap from earlier this
+session. The `ui` claw on Linux was a wmctrl/xdotool MVP for window-
+level queries only; now it has **full AT-SPI 2 accessibility-tree
+walking** mirroring the macOS uiSkill's depth.
+
+### Added — accessibility tree actions in `pkg/skill/ui_linux.go`
+
+| Action | What it does |
+|---|---|
+| `tree [depth=4] [app=…]` | Indented dump of accessibility tree under `/org/a11y/atspi/accessible/root`. Walks top-level apps → children, depth-capped (default 4) to avoid unbounded recursion on JS-heavy apps like Chrome. Optional `app=` filter narrows to one application by substring match on its accessible name. |
+| `find name=X role=Y [app=…]` | Searches the tree for the first accessible whose `Name` contains X (case-insensitive) and/or `GetRoleName` matches Y. Returns a breadcrumb path `App > Container > Widget (at /dbus/path via bus.name)`. |
+| `click_by_name name=X` | Finds an *actionable* accessible (`Action.GetNActions > 0`) matching the name and invokes `Action.DoAction(0)`. Equivalent to a click for buttons / menu items. |
+| `click_by_role role=Y` | Same, filtered by role only. |
+
+Window-level actions unchanged: `focused_app` / `window_list` /
+`window_geometry` still use xdotool + wmctrl.
+
+### Implementation
+
+D-Bus dance:
+```
+session bus → org.a11y.Bus.GetAddress
+            → dedicated a11y bus address
+            → dbus.Dial() + Hello + Auth
+            → walk Registry from /org/a11y/atspi/accessible/root
+              on org.a11y.atspi.Registry
+              ├─ Accessible: Name (property) / GetRoleName (method) /
+              │              ChildCount / GetChildAtIndex
+              └─ Action:     GetNActions / DoAction
+```
+
+Wayland note: works on GNOME (Mutter has an a11y bridge); empty
+registry on Sway / Hyprland / etc. without compositor a11y support.
+Graceful degradation: `tree` returns "(no top-level apps found —
+at-spi2 may not be running)" rather than erroring.
+
+### Dependency
+
+New direct dep: `github.com/godbus/dbus/v5 v5.2.2` — pure Go, no
+cgo, 2.4 kSLOC, MIT. Binary size impact: **+0.5 MB on Linux amd64**
+(17.5 MB → 18.0 MB). macOS unaffected (uses `_other.go` stub).
+
+### Build verification
+
+```
+GOOS=linux GOARCH=amd64 go build → 18.1 MB ELF x86-64 ✓
+GOOS=linux GOARCH=arm64 go build → 17.2 MB ARM aarch64 ✓
+GOOS=darwin go build             → 18.4 MB ✓ (unchanged)
+```
+
+### TODO(linux-verify)
+
+The AT-SPI D-Bus paths + property names were written from the
+freedesktop AT-SPI 2 spec without runtime testing. Need smoke-test on
+Ubuntu 24.04 + GNOME (Wayland and X11) to verify:
+
+1. `org.a11y.Bus.GetAddress` returns valid address on default install
+2. `ChildCount` property is actually `int32` (some older daemons differ)
+3. `Action.DoAction(0)` clicks Buttons; some custom widgets number differently
+4. Wayland behavior on non-GNOME compositors (graceful empty vs error)
+
+Issue #1 (tinkerbaj) updated with the testing ask.
+
+### Skill parity (final)
+
+|  | macOS pilot | Linux pilot |
+|---|---:|---:|
+| Total skills | **24** | **23** |
+| Only gap | — | `app_open_clean` (welcome-modal — macOS-specific convention) |
+
+---
+
+## [Unreleased] - 2026-05-12 (early) — Linux port Phase 2-4: 4 claws + 4 cerebellum cats + cross-platform location + CI
 
 Cross-platform pivot landed in a single session (~2 hours, midnight to
 02:00 PDT). 2026-04-24 roadmap had Linux/Windows explicitly as
