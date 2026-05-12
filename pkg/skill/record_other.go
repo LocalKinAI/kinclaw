@@ -1,7 +1,8 @@
-//go:build !darwin && !linux
+//go:build !darwin && !linux && !windows
 
-// record_other.go — stub for non-Mac, non-Linux (BSD, Windows).
-// Linux has its own implementation in record_linux.go.
+// record_other.go — catch-all stub for platforms with no native record
+// implementation yet (BSDs, etc.). darwin / linux / windows ship
+// dedicated files.
 
 package skill
 

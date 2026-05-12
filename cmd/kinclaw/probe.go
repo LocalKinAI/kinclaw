@@ -1,3 +1,5 @@
+//go:build darwin
+
 // probe.go — implements the `kinclaw probe` subcommand.
 //
 //   kinclaw probe                       # probe focused app (TODO: not yet wired)

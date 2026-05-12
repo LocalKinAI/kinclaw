@@ -1,3 +1,5 @@
+//go:build darwin
+
 // resolve.go — turn user-friendly app references into bundle IDs.
 //
 // `kinclaw probe Notes` and `kinclaw probe com.apple.Notes` should both work.

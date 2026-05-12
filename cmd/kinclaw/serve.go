@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
@@ -34,8 +33,6 @@ import (
 	"github.com/LocalKinAI/kinclaw/pkg/server"
 	"github.com/LocalKinAI/kinclaw/pkg/skill"
 	"github.com/LocalKinAI/kinclaw/pkg/soul"
-	kinax "github.com/LocalKinAI/kinax-go"
-	sckit "github.com/LocalKinAI/sckit-go"
 )
 
 func runServe(args []string) {
@@ -45,46 +42,11 @@ func runServe(args []string) {
 	// or already pid 1) get a no-op.
 	startOrphanWatch()
 
-	// Accessibility preflight: trigger the macOS "kinclaw wants to
-	// control your computer" dialog if we're not yet trusted. Without
-	// this, the user only ever sees the dialog when an actual ui /
-	// input tool call fires — and worse, macOS suppresses re-prompts
-	// after one denial / stale hash record, leaving the user stuck.
-	//
-	// PromptTrust() returns immediately. If trusted, log and continue;
-	// if not, the system dialog fires asynchronously (user gets a
-	// "Open System Settings" button) and we keep booting — chat
-	// surface still works, just the 5 claws will fail until the user
-	// grants. This is intentional: don't block startup on a permission
-	// dialog the user might dismiss with ⌘W.
-	exe, _ := os.Executable()
-	if kinax.PromptTrust() {
-		fmt.Fprintf(os.Stderr, "[kinclaw] Accessibility ✓ (binary: %s)\n", exe)
-	} else {
-		fmt.Fprintf(os.Stderr, "[kinclaw] Accessibility ✗ — system dialog fired\n")
-		fmt.Fprintf(os.Stderr, "[kinclaw]   binary: %s\n", exe)
-		fmt.Fprintf(os.Stderr, "[kinclaw]   Click \"Open System Settings\" in the dialog and toggle ON.\n")
-		fmt.Fprintf(os.Stderr, "[kinclaw]   If no dialog appeared (stale TCC record from previous build),\n")
-		fmt.Fprintf(os.Stderr, "[kinclaw]   run: tccutil reset Accessibility && relaunch.\n")
-	}
-
-	// Screen Recording preflight. sckit-go has no Preflight* helper, so
-	// we test by listing displays — that itself triggers the TCC prompt
-	// on first call and returns ErrPermissionDenied if we're not yet
-	// allowed. Cheap (~10ms when granted) and side-effect-free.
-	//
-	// Without this preflight log, `make doctor` / external tools have
-	// no way to know whether kinclaw can record without actually trying
-	// (and the only "actual try" path is invoking a recording skill,
-	// which requires the agent to be involved).
-	if probeScreenRecording() {
-		fmt.Fprintf(os.Stderr, "[kinclaw] Screen Recording ✓ (binary: %s)\n", exe)
-	} else {
-		fmt.Fprintf(os.Stderr, "[kinclaw] Screen Recording ✗ — system dialog fired (or stale TCC)\n")
-		fmt.Fprintf(os.Stderr, "[kinclaw]   binary: %s\n", exe)
-		fmt.Fprintf(os.Stderr, "[kinclaw]   Click \"Open System Settings\" in the dialog and toggle ON.\n")
-		fmt.Fprintf(os.Stderr, "[kinclaw]   record / screen skills will fail until granted.\n")
-	}
+	// Preflight TCC permissions (Accessibility + Screen Recording on
+	// macOS; no-op on other OSes — Linux/Windows enforce per-call).
+	// Logs ✓ / ✗ to stderr so external tooling (`make doctor`) can
+	// see whether the 5 claws will work before any actual tool fires.
+	preflightPermissions()
 
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	soulPath := fs.String("soul", "", "Path to .soul.md file (defaults to ./souls/pilot.soul.md)")
@@ -823,65 +785,10 @@ func startOrphanWatch() {
 	}()
 }
 
-// captureScreenJPEG shells out to macOS screencapture(1) and returns
-// the resulting JPEG bytes. The server caches the result 800ms so
-// this is invoked at most ~1.25 times/sec under heavy polling.
-//
-// First invocation prompts the user for Screen Recording permission
-// in System Settings. While the prompt is unanswered (or denied),
-// screencapture writes a blank/black image — the call still succeeds
-// from our perspective so the SSE pipeline keeps flowing; the user
-// just sees darkness in their Cowork pane until they grant the perm.
-//
-// Format choice: JPEG at default quality (~75) — small enough that a
-// 1440p capture lands ~150-300KB, big enough that text on the screen
-// remains legible. PNG would be lossless but 5-10x bigger and the
-// extra bandwidth doesn't help an agent that's parsing the frame
-// through a vision model.
-func captureScreenJPEG() ([]byte, error) {
-	tmp, err := os.CreateTemp("", "kinclaw-screen-*.jpg")
-	if err != nil {
-		return nil, fmt.Errorf("temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	tmp.Close()
-	defer os.Remove(tmpPath)
-
-	// -x   no shutter sound
-	// -t   format
-	// -S   capture screen instead of window
-	// -o   no shadow
-	// -C   capture cursor (so the agent sees what the user is pointing at)
-	cmd := exec.Command("/usr/sbin/screencapture",
-		"-x", "-t", "jpg", "-S", "-o", "-C", tmpPath)
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("screencapture failed: %w", err)
-	}
-	data, err := os.ReadFile(tmpPath)
-	if err != nil {
-		return nil, fmt.Errorf("read capture: %w", err)
-	}
-	return data, nil
-}
-
-// activeAppName returns the localized name of the frontmost app via
-// AppleScript. Cheap (~5ms) and matches what the macOS menubar shows.
-// Empty string on error — the UI then labels the feed just "LIVE"
-// rather than guessing wrong.
-func activeAppName() string {
-	out, err := exec.Command("/usr/bin/osascript", "-e",
-		`tell application "System Events" to get name of first application process whose frontmost is true`,
-	).Output()
-	if err != nil {
-		return ""
-	}
-	name := string(out)
-	// osascript appends a trailing newline.
-	for len(name) > 0 && (name[len(name)-1] == '\n' || name[len(name)-1] == ' ') {
-		name = name[:len(name)-1]
-	}
-	return name
-}
+// captureScreenJPEG + activeAppName are platform-specific. macOS lives
+// in serve_livefeed_darwin.go (screencapture(1) + osascript). Linux/
+// Windows stubs live in serve_livefeed_other.go and return empty —
+// the UI hides the feed gracefully when bytes are 0.
 
 // expandHome resolves a leading ~ to the user's home dir. We accept
 // "~/foo" and "~user/foo" forms; bare "~" expands to home.
@@ -1112,20 +1019,3 @@ func runReplayServer(ctx context.Context, addr, replayPath string) {
 	}
 }
 
-// probeScreenRecording returns true if kinclaw has Screen Recording
-// permission. macOS doesn't expose a no-side-effect preflight via
-// sckit-go's API, so we do the cheapest probe available: ListDisplays.
-// On a denied process this triggers the macOS TCC prompt (good — same
-// UX as kinax.PromptTrust) AND returns ErrPermissionDenied. On a
-// granted process it returns the display list in ~10ms.
-//
-// Returns true on success, false on ErrPermissionDenied OR any other
-// error. The "any other error" bucket conservatively assumes "not
-// granted" so the user sees the actionable message instead of a
-// silent green ✓ when something else broke.
-func probeScreenRecording() bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	_, err := sckit.ListDisplays(ctx)
-	return err == nil
-}

@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package applifecycle tracks which apps were running when kinclaw started
 // so it can quit ones IT opened on the way out, leaving the user's pre-
 // existing workspace untouched.

@@ -18,10 +18,10 @@ reorders it faster than this file.
 - ✅ 11 papers on Zenodo, all CC-BY-4.0 — 4-paper thesis chain
   (retrieval / cognition / execution / routing all don't need
   intelligence for bounded domains).
-- 🔄 **Linux / Windows port — was non-goal, now Phase 2 work.** Audit
-  on 2026-05-12 confirms kinclaw already cross-compiles to Linux
-  AMD64 + ARM64 (one `smart_click_other.go` stub away). Windows still
-  blocked on upstream `kinax-go` Windows path. See
+- 🔄 **Linux / Windows port — was non-goal, now Phases 2-6 done.**
+  Linux Phases 2-5 + Windows Phase 6 all landed 2026-05-12 (the same
+  day issue #1 was filed). Both targets cross-compile cleanly to
+  AMD64 and ARM64. Code complete, awaiting community runtime testing. See
   ["Cross-platform port"](#cross-platform-port-202605-).
 
 Links:
@@ -337,11 +337,13 @@ the block clears.
 
 Writing these down so future-me doesn't drift:
 
-- ⚠️ **Windows / Linux support — reversed 2026-05-12.** Was a non-goal
+- ⚠️ **Windows / Linux support — reversed + shipped 2026-05-12.** Was a non-goal
   until paper #11's "具身智能 + 万物智能" thesis made portability the
   natural conclusion of cerebellum + grep router (both are POSIX-shell-
-  native). Linux port now Phase 2 work; Windows blocked on `kinax-go`
-  Windows path. See "Cross-platform port" section.
+  native). Linux Phase 2-5 + Windows Phase 6 both shipped 2026-05-12 —
+  the agent unblocked the kinax-go Windows constraint by splitting the
+  macOS-only callers behind build tags rather than waiting on an
+  upstream PR. See "Cross-platform port" section for details.
 - ❌ **Fine-tuned KinClaw-specific model.** The brain is swappable.
   Don't marry a model.
 - ❌ **Open-source the full Genesis Protocol** (the version from
@@ -503,13 +505,52 @@ file ops, apps, settings, clipboard, terminal, web. Different surface
 than macbench but same evaluation methodology (setup.sh + eval.sh +
 dual scoring).
 
-### Windows (Phase 6+, blocked on upstream `kinax-go`)
+### Phase 6 — Windows port ✅ shipped 2026-05-12 (overnight)
 
-1. Upstream PR to `kinax-go` adding Windows path
-   (`LoadLibrary` / `GetProcAddress` for COM-based UIAutomation).
-2. Once kinclaw compiles on Windows, port `screen` (GDI BitBlt or
-   DXGI Desktop Duplication), `input` (`SendInput`), `record`
-   (`ffmpeg gdigrab`).
-3. `cerebellum/categories/windows-*.sh` — PowerShell-driven.
-4. Likely 2-3× slower than Linux port because the upstream lib gap
-   is real.
+Triggered by Jacky's "把windows也做了吧，我先睡觉了，你自己补齐所有"
+right after Linux Phase 5 landed. The agent didn't wait on an upstream
+`kinax-go` Windows path — instead it sidestepped the blocker by splitting
+the macOS-only callers behind `//go:build darwin` and stubbing them on
+non-darwin, so kinax-go is never compiled on Windows.
+
+**Files split (cleanly isolates the macOS-only Accessibility/SCK stack):**
+- `cmd/kinclaw/serve.go` — kinax/sckit imports removed
+- `cmd/kinclaw/serve_preflight_{darwin,other}.go` — TCC preflight (darwin) / no-op (other)
+- `cmd/kinclaw/serve_livefeed_{darwin,other}.go` — screencapture+osascript (darwin) / empty bytes (other)
+- `cmd/kinclaw/probe.go` (darwin) + `probe_other.go` (stub)
+- `pkg/probe/*.go` — `//go:build darwin`
+- `pkg/applifecycle/applifecycle.go` (darwin) + `applifecycle_other.go` (no-op)
+
+**4 Windows claws (`pkg/skill/*_windows.go`):**
+- `screen_windows.go` — PowerShell + System.Drawing.Graphics.CopyFromScreen (full / region / list_displays)
+- `input_windows.go` — user32.dll P/Invoke + SendKeys
+- `ui_windows.go` — UI Automation 2.0 (`UIAutomationClient` + `UIAutomationTypes`)
+- `record_windows.go` — ffmpeg gdigrab
+
+**4 Windows cerebellum categories (`skills/cerebellum/categories/windows-*.sh`):**
+- `windows-files.sh` — Move/Copy/Remove/Compress + Shell.Application recycle bin
+- `windows-apps.sh` — Start-Process / AppActivate / CloseMainWindow / Get-StartApps
+- `windows-settings.sh` — SendKeys vol, WMI brightness, registry dark mode, Radios API wifi/bt
+- `windows-clipboard.sh` — Set-Clipboard / Get-Clipboard
+
+**Daily-driver soul:** `souls/pilot_windows.soul.md` — 23 skills (same delta
+as Linux: only `app_open_clean` is missing). Windows-style permission paths.
+
+**CI:** Cross-compile matrix now requires linux/amd64, linux/arm64, windows/amd64,
+windows/arm64 — all four must build green.
+
+**Verified:**
+- `GOOS=windows GOARCH=amd64 go build` → 17 MB kinclaw.exe ✅
+- `GOOS=windows GOARCH=arm64 go build` → 16 MB kinclaw.exe ✅
+- All darwin tests still green (`go test ./...`)
+
+**Caveats:**
+- Untested at runtime (no Windows hardware available). Same status as
+  Linux Phase 2-5: code-complete, awaiting community testing on issue #1.
+- UWP apps may need additional UIA patterns beyond `InvokePattern`.
+- Wi-Fi/Bluetooth toggle uses `Windows.Devices.Radios` (UWP API in PS) —
+  may need admin on some Windows configurations.
+- The `paste` action in `input_windows` is mapped to Ctrl+V (SendKeys);
+  the `key_down` / `key_up` actions are degraded (SendKeys auto-releases).
+  Future work: replace SendKeys with raw `SendInput` + `KEYEVENTF_KEYDOWN/KEYUP`
+  for true modifier-hold support.

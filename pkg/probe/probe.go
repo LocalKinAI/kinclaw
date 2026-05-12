@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package probe inspects a macOS app's Accessibility tree to measure
 // "5-claw controllability" — how richly the app exposes its UI semantically.
 //

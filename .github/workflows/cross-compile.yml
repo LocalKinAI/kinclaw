@@ -1,8 +1,9 @@
 name: Cross-compile
 
 # Verifies kinclaw cross-compiles for non-macOS targets on every push.
-# Linux/Windows are post-2026-05-12 work (paper #11 thesis pivot);
-# this CI catches Go-level regressions before they hit Linux users.
+# Both Linux (Phase 2-5) and Windows (Phase 6) are now required targets.
+# This CI catches Go-level regressions before they hit Linux/Windows
+# users.
 
 on:
   push:
@@ -32,8 +33,12 @@ jobs:
             required: true
           - goos: windows
             goarch: amd64
-            label: "Windows x86_64 (currently expected to fail — kinax-go upstream)"
-            required: false
+            label: "Windows x86_64"
+            required: true
+          - goos: windows
+            goarch: arm64
+            label: "Windows ARM64 (Surface, Snapdragon X)"
+            required: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -46,22 +51,24 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           set +e
-          go build -o /tmp/kinclaw-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/kinclaw
+          ext=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
+          go build -o /tmp/kinclaw-${{ matrix.goos }}-${{ matrix.goarch }}${ext} ./cmd/kinclaw
           rc=$?
           if [ $rc -eq 0 ]; then
-            ls -la /tmp/kinclaw-${{ matrix.goos }}-${{ matrix.goarch }}
-            file /tmp/kinclaw-${{ matrix.goos }}-${{ matrix.goarch }}
+            ls -la /tmp/kinclaw-${{ matrix.goos }}-${{ matrix.goarch }}${ext}
+            file /tmp/kinclaw-${{ matrix.goos }}-${{ matrix.goarch }}${ext}
             exit 0
           fi
           if [ "${{ matrix.required }}" != "true" ]; then
-            echo "::warning::Build failed for ${{ matrix.label }} but this target is not yet required (see roadmap §Phase 6)"
+            echo "::warning::Build failed for ${{ matrix.label }} but this target is not yet required"
             exit 0
           fi
           exit $rc
-      - name: Upload artifact (Linux only)
-        if: matrix.goos == 'linux' && success()
+      - name: Upload artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: kinclaw-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: /tmp/kinclaw-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: /tmp/kinclaw-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
           retention-days: 7

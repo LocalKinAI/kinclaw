@@ -35,6 +35,16 @@ CATEGORIES (run "cerebellum '<cat>'" with no action for that category's full lis
   terminal  run command, run script
   multi     cross-app composites
 
+  linux-files     Linux file ops (mv/cp/rm/zip/find/locate/gio-trash/setfattr-tags)
+  linux-apps      Linux app lifecycle (xdg-open, gtk-launch, wmctrl, pgrep, pkill)
+  linux-settings  Linux prefs (pactl volume, brightnessctl, gsettings appearance, nmcli, bluetoothctl)
+  linux-clipboard Linux clipboard (wl-clipboard / xclip / xsel auto-detect)
+
+  windows-files     Windows file ops (Move/Copy/Remove/Compress + Shell.Application trash)
+  windows-apps      Windows app lifecycle (Start-Process, AppActivate focus, CloseMainWindow quit)
+  windows-settings  Windows prefs (SendKeys vol/mute, WMI brightness, registry dark mode, Radios API wifi/bt)
+  windows-clipboard Windows clipboard (Set-Clipboard / Get-Clipboard)
+
 For per-category action lists run e.g.:
   cerebellum "calendar"
   cerebellum "settings"

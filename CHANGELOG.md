@@ -1,5 +1,99 @@
 # Changelog
 
+## [Unreleased] - 2026-05-12 (overnight) — Phase 6: Windows port
+
+After the user went to sleep ("把windows也做了吧，我先睡觉了，你自己补齐所有")
+the agent took the Linux Phase 2-5 architecture and mirrored it for
+Windows. Same 4-claw skill API, same cerebellum DSL, different
+backends (PowerShell + .NET + UIA + ffmpeg gdigrab where Linux uses
+xdotool / AT-SPI 2 / x11grab).
+
+### Added — 4 Windows claw implementations (`pkg/skill/*_windows.go`)
+
+| Claw | File | Backend |
+|---|---|---|
+| `screen` | `screen_windows.go` | PowerShell + System.Drawing.Graphics.CopyFromScreen (full-desktop, region, list_displays) |
+| `input` | `input_windows.go` | user32.dll P/Invoke (`SetCursorPos`, `mouse_event`, `GetSystemMetrics`) + System.Windows.Forms.SendKeys for text/hotkeys |
+| `ui` | `ui_windows.go` | UI Automation 2.0 (UIAutomationClient + UIAutomationTypes assemblies). Actions: `focused_app`, `window_list`, `window_geometry`, `tree`, `find`, `click_by_name`, `click_by_role`. Output shape matches Linux AT-SPI 2 path so portable agent loops parse it the same way. |
+| `record` | `record_windows.go` | ffmpeg `-f gdigrab -i desktop` (libx264 ultrafast, yuv420p for QuickTime / Media Player compat). PID-file based start/stop/status, identical contract to `record_linux.go`. |
+
+Zero CGO. All claws shell out to `powershell.exe -NoProfile
+-NonInteractive`. PowerShell 5.1 ships with every supported Windows
+version (7 SP1+) so no third-party install is needed beyond ffmpeg
+for the `record` claw.
+
+### Added — 4 Windows cerebellum categories (`skills/cerebellum/categories/windows-*.sh`)
+
+| File | Actions | Tools |
+|---|---|---|
+| `windows-files.sh` | rename, copy, mkdir, trash (Shell.Application recycle bin), delete, zip / unzip (Compress-Archive), find_in_dir, locate, open_in_explorer, pin_to_taskbar | PowerShell cmdlets |
+| `windows-apps.sh` | open (Start-Process), launch, focus (WScript.Shell AppActivate), quit (CloseMainWindow → Stop-Process fallback), list_running, list_installed (Get-StartApps), is_running | PowerShell + COM |
+| `windows-settings.sh` | set_volume / volume_up / volume_down / mute, set_brightness (WMI WmiSetBrightness), set_appearance (HKCU theme registry), toggle_wifi (Windows.Devices.Radios; refuses OFF per paper #11 §5.1), list_wifi_networks, toggle_bluetooth, open_settings (ms-settings: protocol) | PowerShell, WMI, registry |
+| `windows-clipboard.sh` | set / copy / set_file / get / paste / get_to_file / clear | PowerShell Set-Clipboard / Get-Clipboard |
+
+The dispatchers are bash scripts that shell out to PowerShell — so
+cerebellum runs unchanged under WSL, Git Bash, MSYS2, or any POSIX
+shell with `powershell.exe` on PATH.
+
+### Added — `souls/pilot_windows.soul.md`
+
+23-skill Windows pilot (same delta as Linux: only `app_open_clean`
+is missing because Windows first-run dialogs are app-specific).
+Permissions use Windows-style paths (`~/AppData/Local/kinclaw` for
+output, `C:\Windows` / `C:\Program Files` / `C:\ProgramData` in the
+deny list).
+
+### Changed — Windows-incompatible Go files split into `_darwin` + `_other`
+
+| File | Change |
+|---|---|
+| `cmd/kinclaw/serve.go` | Extracted Accessibility/Screen Recording preflight + macOS screencapture livefeed into platform-specific files. The serve subcommand itself is now cross-platform. |
+| `cmd/kinclaw/serve_preflight_{darwin,other}.go` | New — darwin runs `kinax.PromptTrust()` + `sckit.ListDisplays()`; other prints `platform=… per-call permission model`. |
+| `cmd/kinclaw/serve_livefeed_{darwin,other}.go` | New — darwin uses `screencapture` + `osascript`; other returns empty bytes (UI hides feed). |
+| `cmd/kinclaw/probe.go` | Tagged `//go:build darwin` (kinax AX-tree walker is macOS-only). |
+| `cmd/kinclaw/probe_other.go` | New — non-darwin stub that prints unsupported message + exits 2. |
+| `pkg/probe/probe.go` + `resolve.go` + `probe_test.go` | Tagged `//go:build darwin` (no probe pkg on non-darwin). |
+| `pkg/applifecycle/applifecycle.go` | Tagged `//go:build darwin`. |
+| `pkg/applifecycle/applifecycle_other.go` | New — `RunningApps()` returns nil, `QuitNew()` is no-op. Linux/Windows pilots don't auto-quit apps at exit yet. |
+| `pkg/skill/{screen,input,ui,record}_other.go` | Build tags tightened from `!darwin && !linux` to `!darwin && !linux && !windows` so dedicated `_windows.go` files don't clash. |
+
+### Changed — `.github/workflows/cross-compile.yml`
+
+Windows AMD64 and Windows ARM64 are both promoted to **required**
+targets (was: AMD64 only, allowed-to-fail). Matrix now: linux/amd64,
+linux/arm64, windows/amd64, windows/arm64 — all required.
+
+### Build verification
+
+```
+GOOS=darwin  GOARCH=arm64 → 18 MB ✅
+GOOS=linux   GOARCH=amd64 → 17 MB ✅
+GOOS=linux   GOARCH=arm64 → 17 MB ✅
+GOOS=windows GOARCH=amd64 → 17 MB ✅ (kinclaw.exe)
+GOOS=windows GOARCH=arm64 → 16 MB ✅ (kinclaw.exe — Surface, Snapdragon X)
+```
+
+All darwin tests still pass (`go test ./...` green across all 9 pkgs).
+
+### TODO(windows-verify)
+
+Same as the Linux verify list — agent wrote the code from API docs
+without Windows hardware. Untested at runtime:
+
+1. PowerShell escape semantics inside Go raw strings (heredoc-style
+   embedding; one backtick clash already caught + fixed during build).
+2. UIA `InvokePattern` availability on UWP apps (most Win32 buttons
+   work; UWP `Button`s sometimes only expose `SelectionItemPattern`).
+3. ffmpeg gdigrab on Windows 11 (DRM-protected windows show black).
+4. Radios API for Wi-Fi/Bluetooth toggle (needs Windows Runtime
+   interop; PS sometimes needs admin to enumerate radios).
+5. CloseMainWindow → Stop-Process fallback on apps that pop a
+   "Save changes?" dialog (kinclaw will currently force-kill after 2s).
+
+Tracking under issue #1 + future windows-only validation runs.
+
+---
+
 ## [Unreleased] - 2026-05-12 (late) — Phase 5: `ui_linux.go` AT-SPI 2 via godbus
 
 Closes the last big macOS↔Linux capability gap from earlier this

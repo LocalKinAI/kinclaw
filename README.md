@@ -19,23 +19,25 @@ one else has — **reproduces on demand** via three primitives:
 Single binary, ~18 MB, Go 1.22+, MIT licensed.
 
 **Primary target: macOS** (tested daily-driver).
-**Linux Phase 2-5 landed 2026-05-12** — code complete, awaiting community
-runtime testing ([issue #1](https://github.com/LocalKinAI/kinclaw/issues/1)):
+**Linux Phase 2-5 + Windows Phase 6 both landed 2026-05-12** — code
+complete, awaiting community runtime testing
+([issue #1](https://github.com/LocalKinAI/kinclaw/issues/1)):
 
-| Layer | macOS | Linux | Backend |
-|---|---|---|---|
-| `screen` claw | ScreenCaptureKit | ✅ | grim / scrot / xrandr |
-| `input` claw | CGEvent | ✅ | xdotool / ydotool |
-| `ui` claw — window-level | AX | ✅ | xdotool / wmctrl |
-| `ui` claw — a11y tree | AX | ✅ | **AT-SPI 2 via godbus** |
-| `record` claw | ScreenCaptureKit | ✅ | ffmpeg (x11grab / pipewire) |
-| `location` skill | corelocationcli | ✅ | gdbus + geoclue2 (ipapi.co fallback) |
-| `cerebellum/*.sh` library | 16 cats (478 actions) | 4 cats (linux-files / -apps / -settings / -clipboard) | shell + POSIX tools |
-| `pilot` soul | 24 skills | 23 skills (only `app_open_clean` missing — macOS-specific) | — |
+| Layer | macOS | Linux | Windows | Backend (non-mac) |
+|---|---|---|---|---|
+| `screen` claw | ScreenCaptureKit | ✅ | ✅ | Linux: grim / scrot / xrandr · Windows: PowerShell + System.Drawing |
+| `input` claw | CGEvent | ✅ | ✅ | Linux: xdotool / ydotool · Windows: user32.dll P/Invoke + SendKeys |
+| `ui` claw — window-level | AX | ✅ | ✅ | Linux: xdotool / wmctrl · Windows: user32.dll GetForegroundWindow |
+| `ui` claw — a11y tree | AX | ✅ | ✅ | Linux: **AT-SPI 2 via godbus** · Windows: **UI Automation (UIA)** |
+| `record` claw | ScreenCaptureKit | ✅ | ✅ | Linux: ffmpeg (x11grab / pipewire) · Windows: ffmpeg (gdigrab) |
+| `location` skill | corelocationcli | ✅ | ✅ | Linux: gdbus + geoclue2 · Windows: Windows.Devices.Geolocation (ipapi.co fallback) |
+| `cerebellum/*.sh` library | 16 cats (478 actions) | 4 cats (linux-files/apps/settings/clipboard) | 4 cats (windows-files/apps/settings/clipboard) | shell + POSIX tools / PowerShell |
+| `pilot` soul | 24 skills | 23 skills (no `app_open_clean`) | 23 skills (no `app_open_clean`) | — |
 
-Daily-driver Linux soul: [`souls/pilot_linux.soul.md`](souls/pilot_linux.soul.md).
-**Windows** still blocked on upstream
-[`kinax-go`](https://github.com/LocalKinAI/kinax-go) adding a Windows path.
+Daily-driver souls:
+- [`souls/pilot.soul.md`](souls/pilot.soul.md) — macOS
+- [`souls/pilot_linux.soul.md`](souls/pilot_linux.soul.md) — Linux
+- [`souls/pilot_windows.soul.md`](souls/pilot_windows.soul.md) — Windows
 
 > *Same starter lobster for everyone. Every user's swarm is unique
 > after a month.*
@@ -930,13 +932,13 @@ cross-session memory.
   (`spawn`, hierarchical, depth-1) is OK and shipped. AutoGen-style
   peer coordination belongs in the LocalKin platform layer, not in
   KinClaw itself.
-- ⚠️ **Cross-platform — reversed 2026-05-12.** Linux is now Phase 2-5
-  active work (the 4 claws + 4 cerebellum cats + AT-SPI 2 a11y tree +
-  cross-platform `location` skill all landed today; see CHANGELOG).
-  Windows still blocked on upstream [`kinax-go`](https://github.com/LocalKinAI/kinax-go)
-  adding a Windows path. macOS remains the primary, tested daily-driver
-  target; Linux is "code complete, awaiting community runtime testing"
-  per [issue #1](https://github.com/LocalKinAI/kinclaw/issues/1).
+- ⚠️ **Cross-platform — reversed 2026-05-12.** Linux Phase 2-5 + Windows
+  Phase 6 both landed the same day. macOS remains the primary, tested
+  daily-driver target. Linux and Windows are "code complete, awaiting
+  community runtime testing" per
+  [issue #1](https://github.com/LocalKinAI/kinclaw/issues/1) — see the
+  feature-parity table at the top of this README + `souls/pilot_linux.soul.md`
+  / `souls/pilot_windows.soul.md` for the per-OS surface.
 - ❌ **Token-markup pricing.** Software stays MIT. Revenue model is
   the relay service when it ships.
 - ❌ **Fine-tuned KinClaw-specific model.** Brain stays swappable.
