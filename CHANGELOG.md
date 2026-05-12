@@ -1,5 +1,107 @@
 # Changelog
 
+## [Unreleased] - 2026-05-12 — Linux port Phase 2-5: 4 claws + 4 cerebellum cats + cross-platform location + CI
+
+Cross-platform pivot landed in a single session (~2 hours, midnight to
+02:00 PDT). 2026-04-24 roadmap had Linux/Windows explicitly as
+**non-goals**; the paper #11 thesis ("具身智能 + 万物智能") and the
+first external GitHub issue ([#1, tinkerbaj](https://github.com/LocalKinAI/kinclaw/issues/1))
+reversed that position.
+
+### Added — 4 Linux claw implementations (`pkg/skill/*_linux.go`)
+
+Each macOS claw now has a Linux sibling. Build tags split so
+`_other.go` stubs cover BSD/Windows (`!darwin && !linux`):
+
+- **`screen_linux.go`** — grim (Wayland) / scrot (X11) / ImageMagick
+  `import` fallback; wlr-randr / xrandr for display enumeration; wmctrl
+  for window listing (X11 only — Wayland is privacy-locked by design).
+  Returns `image://path` marker matching macOS convention.
+- **`input_linux.go`** — xdotool (X11) / ydotool (Wayland) auto-selected.
+  Supports move / click / triple_click / type / hotkey / scroll / cursor /
+  screen_size / key_down/up / paste / drag.
+- **`ui_linux.go`** — MVP via xdotool + wmctrl (focused_app /
+  window_list / window_geometry). Full AT-SPI 2 tree walking deferred
+  to Phase 5 (needs `godbus` dependency).
+- **`record_linux.go`** — ffmpeg-driven start/stop/status. x11grab on
+  X11; PipeWire via xdg-desktop-portal on Wayland.
+
+### Added — 4 Linux cerebellum categories (`skills/cerebellum/categories/linux-*.sh`)
+
+- **`linux-files`** — rename / copy / mkdir / trash (gio) / delete /
+  zip / unzip / find_in_dir / locate (plocate) / open_in_files
+  (xdg-open) / tag (xdg-tags via xattr) / add_to_favorites
+  (GTK bookmarks).
+- **`linux-apps`** — open (xdg-open) / launch (gtk-launch / gio) /
+  focus (wmctrl) / quit (pkill) / list_running / list_installed /
+  is_running.
+- **`linux-settings`** — set_volume / volume_up/down / mute (pactl) /
+  set_brightness (brightnessctl) / set_appearance (gsettings GNOME) /
+  toggle_wifi (nmcli, refuses OFF — same safety guard as macOS) /
+  toggle_bluetooth / open_settings.
+- **`linux-clipboard`** — set / set_file / get / get_to_file / clear
+  with auto-detect of wl-clipboard (Wayland) / xclip / xsel (X11).
+
+### Added — `souls/pilot_linux.soul.md`
+
+Linux daily-driver pilot. 23 skills total — feature parity with the
+macOS pilot (24 skills) minus only `app_open_clean` which is
+genuinely macOS-specific (welcome-modal dismissal isn't a Linux
+convention). cerebellum.{exit_on_ok, grep_route} enabled by default.
+
+### Changed — `skills/location/SKILL.md` is now cross-platform
+
+Auto-detects the right location backend at invocation time:
+
+- **macOS**: `corelocationcli` (CoreLocation) — unchanged from previous version
+- **Linux**: `gdbus` + Geoclue2 D-Bus dance (1) Manager.GetClient
+  (2) Set DesktopId + accuracy (3) Client.Start (4) poll Location
+  property (5) read Lat/Lon/Description (6) Client.Stop. Plus
+  OpenStreetMap Nominatim reverse-geocode for `address` / `city`
+  formats.
+- **Any OS without backend**: `curl ipapi.co/json` fallback —
+  city-level accuracy, no GPS hardware needed. Good for servers / CI /
+  Pi without WiFi positioning.
+
+Same skill name, same `format` arg, agent doesn't need to know what
+OS it's running on.
+
+### Added — `pkg/skill/smart_click_other.go`
+
+The missing `!darwin` stub that was blocking Linux cross-compile.
+Returns the standard "macOS-only" error matching the 4 other claws.
+
+### Added — `.github/workflows/cross-compile.yml`
+
+CI matrix: linux/amd64 (required) + linux/arm64 (required, Raspberry
+Pi 4/5) + windows/amd64 (currently expected to fail, kinax-go upstream
+blocker, marked non-required). Uploads Linux binaries as artifacts.
+Triggers on Go source / go.mod changes.
+
+### Changed — `docs/roadmap.md`
+
+The 2026-04-24 "❌ Windows / Linux support" non-goal reversed to
+**⚠️ Phase 2-6 active work**. Phase 1-4 marked done; Phase 5 (full
+AT-SPI tree) and Phase 6 (Windows, blocked on kinax-go upstream)
+remain. Note this roadmap had been sitting uncommitted in `docs/` for
+17 days; now properly in git history.
+
+### Verified locally (Linux runtime testing TODO — issue #1 asks for community help)
+
+```
+GOOS=linux GOARCH=amd64 go build → 17.5 MB ELF x86-64    ✓
+GOOS=linux GOARCH=arm64 go build → 16.6 MB ARM aarch64   ✓ (Pi 4/5)
+All 4 cerebellum/linux-*.sh pass bash -n                ✓
+skills/location/SKILL.md macOS path: returns coords ✓
+```
+
+Replied on issue [#1](https://github.com/LocalKinAI/kinclaw/issues/1)
+asking tinkerbaj + community to smoke-test on actual Linux (Pi 4 /
+Ubuntu / Sway / Xfce). The headers of each `*_linux.go` file list
+`TODO(linux-verify)` markers for what needs validation.
+
+---
+
 ## [Unreleased] - 2026-05-11 — paper #11: kinthink grep router + web cerebellum + soul flags
 
 Three architectural additions that together implement the **Grep-Routed

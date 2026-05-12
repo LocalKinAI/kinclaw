@@ -59,6 +59,7 @@ skills:
     - "learn"            # append cross-session lesson → ~/.localkin/learned.md
     - "tts"              # text-to-speech via TTS_ENDPOINT HTTP service (works on Linux if a TTS endpoint is reachable; otherwise fall back to `shell espeak`)
     - "stt"              # speech-to-text via STT_ENDPOINT HTTP service
+    - "location"         # real-time GPS — auto-detects backend per OS (geoclue2 on Linux via gdbus, ipapi.co fallback)
     # Linux claws (different impl from macOS but same skill API)
     - "screen"
     - "input"
@@ -69,7 +70,6 @@ skills:
     - "kinthink"
     # Intentionally NOT enabled on Linux (pending per-DE port):
     #   - "app_open_clean"  (macOS welcome-modal dismissal — Linux apps mostly don't have analogous modals)
-    #   - "location"        (corelocationcli is macOS-only; Linux needs geoclue2 via D-Bus, deferred to Phase 5)
   output_dir: "~/.cache/kinclaw/pilot"
 ---
 

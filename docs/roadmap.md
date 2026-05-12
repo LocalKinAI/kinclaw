@@ -454,7 +454,15 @@ For `screen`:
 - `record` — `ffmpeg` driven `x11grab` (X11) or PipeWire screencast
   portal (Wayland, via xdg-desktop-portal).
 
-### Phase 4 — Linux cerebellum (per-DE skill library)
+### Phase 4 — Linux cerebellum (per-DE skill library) ✅ partial
+
+Plus: `skills/location/SKILL.md` rewritten cross-platform on 2026-05-12
+(geoclue2 via gdbus + Nominatim reverse-geocode + ipapi.co fallback).
+Linux pilot soul now reaches feature parity with macOS pilot minus
+`app_open_clean` (which is genuinely macOS-specific — welcome-modal
+dismissal isn't a Linux convention).
+
+
 
 The macOS `cerebellum/categories/*.sh` library has 15 categories
 heavily tied to AppleScript. Linux equivalents will be **leaner**

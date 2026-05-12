@@ -16,9 +16,15 @@ one else has — **reproduces on demand** via three primitives:
   child on a different brain (researcher / eye / critic / coder ship
   in-box; hierarchical, kernel-capped at depth 1).
 
-Single binary, ~17 MB, Go 1.22+, MIT licensed. Runs on your actual
-Mac (not in a virtualized container like Anthropic's Computer Use or
-OpenAI's Operator).
+Single binary, ~17 MB, Go 1.22+, MIT licensed.
+**Primary target: macOS.** **Linux port (Phase 2-5) landed 2026-05-12** —
+the 4 claws (screen / input / ui / record) have Linux implementations via
+grim/scrot/xdotool/ydotool/ffmpeg/wmctrl, and the cerebellum library has
+4 Linux categories (linux-files / linux-apps / linux-settings /
+linux-clipboard). See [issue #1](https://github.com/LocalKinAI/kinclaw/issues/1)
+for current status — community testing on actual Linux (Pi 4 / Ubuntu /
+Sway) much appreciated. Windows is still blocked on
+[kinax-go](https://github.com/LocalKinAI/kinax-go) Windows port.
 
 > *Same starter lobster for everyone. Every user's swarm is unique
 > after a month.*
