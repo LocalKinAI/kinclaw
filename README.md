@@ -19,10 +19,24 @@ your UI semantically, clicks, types, and — the part no one else has —
 
 Single binary, ~18 MB, Go 1.22+, MIT licensed.
 
+> ## 🙏 Help wanted — Linux + Windows testers
+>
+> The agent wrote 2,042 lines of Linux + Windows port code from API
+> docs without hardware to test against on 2026-05-12. **Builds are
+> green; runtime behaviour is unverified.** If you have a Linux box or
+> a Windows machine and 10 minutes to spare, grab a prebuilt binary
+> from the [latest release](https://github.com/LocalKinAI/kinclaw/releases)
+> and try a few smoke commands. See [**`TESTING.md`**](TESTING.md) for
+> a 3-command quickstart + report template. Track Linux progress in
+> [**#1**](https://github.com/LocalKinAI/kinclaw/issues/1), Windows in
+> [**#2**](https://github.com/LocalKinAI/kinclaw/issues/2). Both ✅ and
+> ❌ reports are useful.
+
 **Primary target: macOS** (tested daily-driver).
 **Linux Phase 2-5 + Windows Phase 6 both landed 2026-05-12** — code
 complete, awaiting community runtime testing
-([issue #1](https://github.com/LocalKinAI/kinclaw/issues/1)):
+([#1 Linux](https://github.com/LocalKinAI/kinclaw/issues/1),
+[#2 Windows](https://github.com/LocalKinAI/kinclaw/issues/2)):
 
 | Layer | macOS | Linux | Windows | Backend (non-mac) |
 |---|---|---|---|---|
