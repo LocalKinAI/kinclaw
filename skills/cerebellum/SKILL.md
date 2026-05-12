@@ -1,10 +1,10 @@
 ---
 name: cerebellum
 description: |
-  Single fast-execution skill for macOS app operations. The "cerebellum"
-  to the LLM's "cerebrum" — the brain decides intent, this skill executes
-  the canonical multi-step pattern in one syscall sequence (no LLM
-  round-trip per step).
+  Single fast-execution skill for macOS / Linux / Windows app operations.
+  The "cerebellum" to the LLM's "cerebrum" — the brain decides intent,
+  this skill executes the canonical multi-step pattern in one syscall
+  sequence (no LLM round-trip per step).
 
   Inspired by the same architecture as the LocalKin robot car: the
   high-level brain plans ("rename this file to X"), the cerebellum
@@ -14,7 +14,14 @@ description: |
   USAGE:
     cerebellum "<category> <action> [args...]"
 
-  Categories: finder, notes, mail
+  Categories:
+    macOS    finder, notes, mail, calendar, reminders, settings,
+             safari, music, photos, maps, pages, numbers, keynote,
+             terminal, multi, web                       (16 cats, 478 actions)
+    Linux    linux-files, linux-apps, linux-settings,
+             linux-clipboard                            (4 cats)
+    Windows  windows-files, windows-apps, windows-settings,
+             windows-clipboard                          (4 cats)
   Run with no args to see the full action menu.
 
   Examples:
@@ -58,12 +65,15 @@ schema:
 timeout: 60
 ---
 
-# cerebellum — fast macOS operation dispatcher
+# cerebellum — fast cross-platform operation dispatcher
 
-A single skill that wraps battle-tested canonical osascript/shell
-sequences for common macOS app patterns. Single LLM round-trip in,
-one syscall sequence out. Designed to eliminate the LLM-tax on
-"obvious" multi-step operations.
+A single skill that wraps battle-tested canonical sequences for
+common app patterns. Single LLM round-trip in, one syscall sequence
+out. Designed to eliminate the LLM-tax on "obvious" multi-step
+operations. Per-OS backends:
+  - macOS   — AppleScript / osascript / shell
+  - Linux   — shell + POSIX tools (xdg-open, gtk-launch, gsettings, pactl, …)
+  - Windows — bash → powershell.exe (Move-Item, AppActivate, WMI, UIA, …)
 
 ## When to use
 

@@ -3,9 +3,10 @@
 > **The self-fissioning lobster. Breeds its own swarm on demand.**
 > 可以裂变的龙虾 — 根据需求自己造龙虾群。
 
-KinClaw is a computer-use agent for macOS. It sees your screen,
-understands your UI semantically, clicks, types, and — the part no
-one else has — **reproduces on demand** via three primitives:
+KinClaw is a computer-use agent — primary target macOS, also runs on
+Linux and Windows as of 2026-05-12. It sees your screen, understands
+your UI semantically, clicks, types, and — the part no one else has —
+**reproduces on demand** via three primitives:
 
 - **Soul Clone** (`pkg/clone`) — duplicate a specialist into N
   parallel workers with small per-clone divergence.
@@ -44,18 +45,22 @@ Daily-driver souls:
 
 KinClaw grew out of the earlier `localkin` runtime (a minimal
 embodied-AI microkernel, ~2,300 lines). This repo is that same
-skeleton with the **five claws** bolted on: `screen` (ScreenCaptureKit),
-`input` (CGEvent), `ui` (Accessibility API), `record` (kinrec MP4 +
-audio), and `web` (Playwright) — the first four via their own zero-cgo
-KinKit libraries.
+skeleton with the **five claws** bolted on: `screen`, `input`, `ui`,
+`record`, and `web` (Playwright). On macOS the first four use
+ScreenCaptureKit / CGEvent / Accessibility API / kinrec via their own
+zero-cgo KinKit libraries; the Linux + Windows ports swap those for
+native backends (see feature-parity table above) without changing the
+skill API.
 
 ## 🆕 The grep-routed agent stack (2026-05-11, paper #11)
 
 Since 2026-05-11 KinClaw ships a four-layer NL → action router
-(`skills/kinthink/`) on top of a 478-action macOS skill library
-(`skills/cerebellum/`). For prompts that match a known canonical
-operation — file rename, note create, calendar event, settings
-toggle, web fetch, … — the router skips the LLM entirely:
+(`skills/kinthink/`) on top of a multi-platform skill library
+(`skills/cerebellum/` — 16 macOS cats / 478 actions, 4 Linux cats,
+4 Windows cats; each backend swaps in transparently per `runtime.GOOS`).
+For prompts that match a known canonical operation — file rename,
+note create, calendar event, settings toggle, web fetch, … — the
+router skips the LLM entirely:
 
 ```
 $ kinclaw -soul souls/macbench.soul.md -exec "rename foo.txt to bar.txt"
