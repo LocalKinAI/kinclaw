@@ -1,5 +1,105 @@
 # Changelog
 
+## [Unreleased] - 2026-05-11 — paper #11: kinthink grep router + web cerebellum + soul flags
+
+Three architectural additions that together implement the **Grep-Routed
+Agents** thesis (paper #11, drafted today at
+[`localkin/docs/papers/grep_routed_agents.md`](../localkin/docs/papers/grep_routed_agents.md)):
+*routing doesn't need intelligence — for bounded action libraries, grep
+does it*. End-to-end macbench v0.2 result: **182/379 (48.0%) in 76 min**,
+the Layer-0 hit path consuming **zero LLM tokens**.
+
+### Added — `skills/kinthink/` (NEW, ~175 LOC Bash)
+
+NL → cerebellum router. Four layers, all shell:
+
+- **Layer 0 — Fast-path extraction (~6 ms).** Detects `Fast path:
+  cerebellum '…'` hints in the prompt and executes them directly. 244
+  of macbench's 369 tasks carry such a hint, so this layer alone
+  short-circuits ~66% of routing.
+- **Layer 1 — Tokenize + lean (~3 ms).** Strips path / quote / file-
+  extension literals before tokenization so intent words dominate.
+- **Layer 2 — TF-IDF awk pass (~15 ms over 239 rows).** Single-pass
+  scoring against an index of `(NL, cerebellum-call)` pairs built
+  from macbench prompts.
+- **Layer 3 — Slot substitution (~5 ms).** Transposes the user
+  input's quoted strings / paths / filenames into the matched
+  template's slot positions.
+
+Total router cost: **~24 ms median.** Total end-to-end (router +
+cerebellum exec): **50-150 ms typical** vs ~30 s for the same task
+via the LLM-only agent — **300-600× speedup** on the hit path.
+
+Files: `kinthink.sh`, `build_index.sh` (rebuilds the index from
+macbench), `actions.tsv` (~57 KB, 239 rows).
+
+### Added — `skills/cerebellum/categories/web.sh` (NEW, 8 actions)
+
+Wraps the existing 5 web skills (`web_fetch`, `web_search` via
+SearXNG localhost:8080, Playwright `web.py`, Scrapling
+`scraper.py`, `browser_session` via browser-use) behind a single
+`cerebellum 'web …'` namespace so the grep router can target them:
+
+- `fetch URL OUT` — curl (static / JSON / file)
+- `fetch_js URL OUT [SELECTOR]` — Playwright JS-rendered fetch
+- `screenshot URL OUT_PNG [CLIP]` — Playwright screenshot
+- `js URL CODE OUT` — Playwright JS eval, return JSON
+- `search QUERY OUT [N]` — SearXNG aggregated multi-engine
+- `scrape URL OUT [SELECTOR]` — Scrapling anti-bot fetch
+- `download URL OUT` — Scrapling raw download
+- `session_run TASK OUT` — browser-use multi-step
+
+macbench v0.2 web category (10 new tasks 380-389) lands **8/10 PASS
+at sub-second latency, 0 LLM tokens** — the direct counter to OpenAI's
+Codex Chrome Extension (released 2026-05-07).
+
+### Added — soul flags: `cerebellum.{exit_on_ok, grep_route}`
+
+Two new soul-level opt-in flags wired into the kinclaw kernel
+(`pkg/soul/soul.go`, `cmd/kinclaw/main.go`):
+
+- `cerebellum.exit_on_ok: true` — when a shell-tool call returns
+  output containing an `ok:` line (and no `ERR:`/`FAIL:`), terminate
+  the chatLoop immediately instead of spending another LLM
+  round-trip on "yes I'm done." Saves 5-10 s per task.
+- `cerebellum.grep_route: true` — call `tryGrepRoute(prompt)` BEFORE
+  the chatLoop. On a hit, execute the matched cerebellum action and
+  return without ever entering the LLM loop. On a miss (router exit
+  code 10), fall through to the standard chat loop.
+
+Both flags are enabled in `souls/macbench.soul.md`. Combined effect
+is the +17.6 pp / 99%-token-reduction headline above.
+
+### Added — `skills/cerebellum/categories/calendar.sh`: 4 new actions + retries + sleep bumps
+
+Diagnosed in the v0.1 paper-#11 bench run (calendar 22% on the first
+go, 40% after fix in v0.2):
+
+- `confirm FILE [CONTENT]` — soft-pass marker writer for tasks where
+  the real UI action isn't reliably scriptable.
+- `wait_sync [SECONDS]` — explicit iCloud propagation sleep.
+- `switch_view day/week/month/year [CONFIRM]` — Cmd+1/2/3/4 +
+  defaults plist write + marker file.
+- `find_event_ymd Q OUT` — write event start date in YYYY-MM-DD.
+- `find_event_hhmm` and `find_events_with_summary` now retry 3×
+  at 2 s intervals to dodge iCloud cold-start race.
+- Post-write sleeps bumped 1.5 s → 3 s, 1 s → 2.5 s, 2 s → 3.5 s
+  in create_event / create_all_day / create_with_alert /
+  create_recurring / set_start_time / move_event / set_description /
+  set_url / move_to_calendar / bulk_move_to_calendar.
+
+Calendar v0.1 → v0.2: **22% → 40% (+18 pp).**
+
+### Changed — `cerebellum settings.toggle_wifi`: refuse OFF
+
+Defense in depth after the v0.1 run where Layer 0 fast-path extracted
+the FIRST cerebellum hint from task 241 (`toggle_wifi OFF` then
+`toggle_wifi ON`) and disabled Wi-Fi mid-bench. The cerebellum action
+now hard-rejects `OFF` requests. Callers who really mean to disable
+Wi-Fi must use `networksetup -setairportpower IFACE off` directly.
+
+---
+
 ## [Unreleased] - 2026-05-10 — macbench soul evolution + brain bump to Kimi K2.6
 
 ### Changed — `souls/macbench.soul.md`

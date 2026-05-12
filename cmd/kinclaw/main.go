@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sort"
@@ -450,6 +451,26 @@ func handleUserMessage(ctx context.Context, sess *session, input string) {
 		sess.store.SaveMessage(sess.id, userMsg)
 	}
 
+	// Pre-LLM grep route: if the soul opts in, try kinthink first.
+	// Hit path = ~50-100ms (grep + cerebellum exec), 0 LLM tokens.
+	// Miss path falls through to the LLM chatLoop unchanged. This is
+	// the operational core of paper #1+#11: most user intents map to
+	// a known cerebellum action, and grep finds the match fast.
+	if sess.soul != nil && sess.soul.Meta.Cerebellum.GrepRoute {
+		if reply, ok := tryGrepRoute(sess, input); ok {
+			fmt.Print(reply)
+			if !strings.HasSuffix(reply, "\n") {
+				fmt.Println()
+			}
+			assistantMsg := brain.Message{Role: brain.RoleAssistant, Content: reply}
+			sess.history = append(sess.history, assistantMsg)
+			if sess.store != nil {
+				sess.store.SaveMessage(sess.id, assistantMsg)
+			}
+			return
+		}
+	}
+
 	messages := buildMessages(sess.soul, sess.history)
 	onChunk := func(chunk string, thinking bool) error {
 		if thinking {
@@ -572,8 +593,115 @@ func chatLoop(ctx context.Context, sess *session, messages []brain.Message, onCh
 			messages = append(messages, toolMsg)
 			intermediateHistory = append(intermediateHistory, toolMsg)
 		}
+
+		// Cerebellum short-circuit: if the soul opts in via
+		// `cerebellum.exit_on_ok: true` and the round had a single
+		// tool call whose output's first non-empty line starts with
+		// "ok:", terminate the agent loop here rather than spending
+		// another LLM round trip on a "yes I'm done" confirmation.
+		// Designed for benchmarks / single-task one-shot runs where
+		// the cerebellum's `ok: …` line is itself a sufficient
+		// success signal.
+		if sess.soul != nil && sess.soul.Meta.Cerebellum.ExitOnOK &&
+			len(results) == 1 && isOkLine(results[0].Output) {
+			if sess.debug {
+				fmt.Fprintf(os.Stderr, "\033[2m[cerebellum.exit_on_ok: short-circuit after %s]\033[0m\n", results[0].Name)
+			}
+			return results[0].Output, intermediateHistory, nil
+		}
 	}
 	return "", intermediateHistory, fmt.Errorf("too many tool call rounds (max %d)", maxToolRounds)
+}
+
+// tryGrepRoute runs the kinthink router (a small shell script) against
+// the user's prompt. If the router finds a high-confidence match in
+// its NL→cerebellum index, it executes the matched cerebellum action
+// directly and returns its stdout — without consuming any LLM tokens.
+//
+// Returns (reply, true) on a successful hit + execution.
+// Returns ("", false) if no match, the script is missing, or it errored.
+//
+// The router's exit code semantics:
+//   0  → match + executed (KINTHINK_EXEC=1)
+//   10 → no-match (caller falls back to LLM)
+//   other → script error (treated like no-match for safety)
+func tryGrepRoute(sess *session, prompt string) (string, bool) {
+	script := sess.soul.Meta.Cerebellum.GrepRouteScript
+	if script == "" {
+		// Default location: alongside the kinclaw soul or in the
+		// shipped skills tree. Look in a few obvious places.
+		candidates := []string{
+			filepath.Join(filepath.Dir(sess.soulPath), "..", "skills", "kinthink", "kinthink.sh"),
+			"/Users/jackysun/Documents/Workspace/kinclaw/skills/kinthink/kinthink.sh",
+		}
+		for _, c := range candidates {
+			if abs, err := filepath.Abs(c); err == nil {
+				if info, err := os.Stat(abs); err == nil && !info.IsDir() {
+					script = abs
+					break
+				}
+			}
+		}
+		if script == "" {
+			if sess.debug {
+				fmt.Fprintln(os.Stderr, "\033[2m[grep_route: kinthink.sh not found — skipping]\033[0m")
+			}
+			return "", false
+		}
+	}
+
+	minScore := sess.soul.Meta.Cerebellum.GrepRouteMinScore
+	if minScore <= 0 {
+		minScore = 1.5
+	}
+
+	cmd := exec.Command(script, prompt)
+	cmd.Env = append(os.Environ(),
+		"KINTHINK_EXEC=1",
+		fmt.Sprintf("KINTHINK_MIN_SCORE=%g", minScore),
+	)
+	out, err := cmd.CombinedOutput()
+	output := string(out)
+
+	if sess.debug {
+		fmt.Fprintf(os.Stderr, "\033[2m[grep_route: %s → rc=%v]\033[0m\n", script, err)
+	}
+
+	if err != nil {
+		// rc != 0 → no match or script error. Fall through to LLM.
+		if sess.debug && len(output) > 0 {
+			snippet := output
+			if len(snippet) > 200 {
+				snippet = snippet[:200] + "…"
+			}
+			fmt.Fprintf(os.Stderr, "\033[2m[grep_route stderr: %s]\033[0m\n", strings.ReplaceAll(snippet, "\n", " "))
+		}
+		return "", false
+	}
+	return output, true
+}
+
+// isOkLine reports whether out contains a line starting with "ok:"
+// (case-sensitive) AND no line starting with "ERR:" or "FAIL:".
+// Cerebellum actions emit "ok: …" as the canonical success line,
+// usually as the LAST line — but `osascript` output and other
+// diagnostics often precede it on earlier lines, so we scan the
+// whole output rather than just the first line.
+func isOkLine(out string) bool {
+	sawOK := false
+	for _, line := range strings.Split(out, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(t, "ERR:"), strings.HasPrefix(t, "FAIL:"):
+			return false
+		case strings.HasPrefix(t, "ok:"):
+			sawOK = true
+		}
+	}
+	return sawOK
 }
 
 // ─── Commands ─────────────────────────────────────────────

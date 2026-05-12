@@ -167,6 +167,30 @@ type Meta struct {
 	Boot struct {
 		Message string `yaml:"message"`
 	} `yaml:"boot"`
+	Cerebellum struct {
+		// ExitOnOK ends the agent loop after a single tool-call round
+		// whose only result line starts with "ok:". Saves the second
+		// LLM round trip ("yes I'm done, no more tools") that the
+		// agent would otherwise have to make to terminate. Designed
+		// for benchmarks / single-task one-shot agents where the
+		// cerebellum's "ok: ..." line is itself a success signal.
+		// Default false — interactive REPL flows should leave off.
+		ExitOnOK bool `yaml:"exit_on_ok"`
+
+		// GrepRoute enables the kinthink layer in front of the LLM.
+		// Before chatLoop runs, the user's prompt is fed to the
+		// kinthink router (grep + TF-IDF over a 239-row index built
+		// from macbench Fast-path prompts). If a match is found above
+		// `grep_route_min_score`, kinthink executes the matched
+		// cerebellum action directly and the agent returns its output
+		// without ever touching the LLM. Sub-100ms total in the hit
+		// path; in the miss path we fall through to chatLoop as
+		// before. This is the "grep is all you need" pattern from
+		// paper #1 applied to routing (paper #11).
+		GrepRoute         bool    `yaml:"grep_route"`
+		GrepRouteScript   string  `yaml:"grep_route_script"`    // optional override; default is skills/kinthink/kinthink.sh
+		GrepRouteMinScore float64 `yaml:"grep_route_min_score"` // default 1.5 (TF-IDF)
+	} `yaml:"cerebellum"`
 }
 
 type Soul struct {

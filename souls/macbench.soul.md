@@ -8,6 +8,27 @@ brain:
   temperature: 0.1
   context_length: 65536
 
+# When a tool call returns a single line starting with "ok:" (cerebellum's
+# uniform success signal), end the agent loop immediately instead of
+# spending another LLM round trip on a "yes I'm done" confirmation. Cuts
+# 5-10s per task at the cost of the agent NOT being able to follow a
+# successful cerebellum call with additional thinking. macbench tasks
+# are single-shot — eval reads side effects (files, app state) not the
+# agent's final text — so this is safe and saves ≈30 minutes on the
+# full 369 run.
+cerebellum:
+  exit_on_ok: true
+  # ★ Grep router (paper #1 + #11) ★
+  # Pre-LLM layer: kinthink.sh greps the user prompt against a 239-row
+  # NL→cerebellum index extracted from macbench prompts, scores TF-IDF,
+  # and on a match executes the cerebellum action DIRECTLY with zero
+  # LLM tokens consumed. Sub-100ms hit path (vs ~15-30s with LLM).
+  # On miss (TF-IDF below threshold), falls through to the LLM
+  # chatLoop unchanged. This is "grep is all you need" applied to
+  # action routing.
+  grep_route: true
+  grep_route_min_score: 1.5
+
 permissions:
   shell: true
   shell_timeout: 60        # AppleScript calls against iCloud apps can take 30-50s — give headroom

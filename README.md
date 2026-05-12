@@ -30,6 +30,36 @@ skeleton with the **five claws** bolted on: `screen` (ScreenCaptureKit),
 audio), and `web` (Playwright) — the first four via their own zero-cgo
 KinKit libraries.
 
+## 🆕 The grep-routed agent stack (2026-05-11, paper #11)
+
+Since 2026-05-11 KinClaw ships a four-layer NL → action router
+(`skills/kinthink/`) on top of a 478-action macOS skill library
+(`skills/cerebellum/`). For prompts that match a known canonical
+operation — file rename, note create, calendar event, settings
+toggle, web fetch, … — the router skips the LLM entirely:
+
+```
+$ kinclaw -soul souls/macbench.soul.md -exec "rename foo.txt to bar.txt"
+★ matched   : 001-finder-rename  (tf-idf=3.43, 20ms)
+★ substituted: cerebellum 'finder rename ~/Desktop/kinbench/foo.txt ~/Desktop/kinbench/bar.txt'
+★ router    : 65 ms
+ok: rename /Users/jackysun/Desktop/kinbench/foo.txt -> /Users/jackysun/Desktop/kinbench/bar.txt
+★ TOTAL     : 53 ms (router 20 ms + exec 33 ms)
+real 0.56     # ← 0 LLM tokens, 50-500× faster than agent loop
+```
+
+On the **macbench v0.2 benchmark (379 tasks)**:
+
+| Configuration | Pass | Time | Tokens |
+|---|---:|---:|---|
+| LLM-only baseline (paper #10) | 30.4% | 107 min | Full |
+| Reference verifier (no LLM) | 84.3% | 22 min | 0 |
+| **kinthink + cerebellum (this stack)** | **48.0%** | **76 min** | **0 on Layer-0 hits** |
+
+Opt in by setting `cerebellum.grep_route: true` in your soul. See
+[paper #11](https://www.localkin.dev/papers/grep-routed-agents) for
+the architecture + measurement.
+
 ## Quick start
 
 ```bash

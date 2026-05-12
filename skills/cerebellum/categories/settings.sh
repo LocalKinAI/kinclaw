@@ -219,9 +219,21 @@ APPLE
       ;;
 
     toggle_wifi)
+      # Safety: turning Wi-Fi OFF mid-bench disrupts everything (network,
+      # LLM fallback, iCloud sync, ssh, the agent itself). After
+      # observing this in a 369-task run we refuse OFF requests at the
+      # cerebellum layer. ON requests still go through. Any caller that
+      # really needs to disable Wi-Fi must run
+      #   networksetup -setairportpower IFACE off
+      # directly — bypassing this guard intentionally.
       require "state" "${1:-}"
       local v
-      case "$1" in on|ON|true|1)   v="on"  ;; off|OFF|false|0) v="off" ;;
+      case "$1" in
+        on|ON|true|1)   v="on" ;;
+        off|OFF|false|0)
+          echo "ERR: refusing to turn Wi-Fi OFF via cerebellum — disruptive to a running bench (run 'networksetup -setairportpower IFACE off' directly if you really mean it)" >&2
+          exit 2
+          ;;
         *) echo "ERR: state must be ON|OFF" >&2; exit 2 ;;
       esac
       local iface
