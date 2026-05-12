@@ -1,4 +1,7 @@
-//go:build !darwin
+//go:build !darwin && !linux
+
+// screen_other.go — stub for non-Mac, non-Linux platforms (BSD, Windows).
+// Linux has its own implementation in screen_linux.go.
 
 package skill
 

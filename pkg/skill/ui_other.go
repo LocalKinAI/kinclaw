@@ -1,4 +1,7 @@
-//go:build !darwin
+//go:build !darwin && !linux
+
+// ui_other.go — stub for non-Mac, non-Linux (BSD, Windows).
+// Linux has its own implementation in ui_linux.go.
 
 package skill
 

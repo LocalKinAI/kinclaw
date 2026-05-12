@@ -1,4 +1,7 @@
-//go:build !darwin
+//go:build !darwin && !linux
+
+// record_other.go — stub for non-Mac, non-Linux (BSD, Windows).
+// Linux has its own implementation in record_linux.go.
 
 package skill
 
