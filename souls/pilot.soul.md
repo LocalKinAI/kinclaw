@@ -8,6 +8,26 @@ brain:
   temperature: 0.3
   context_length: 131072
 
+# Paper #11 (Grep-Routed Agents, DOI 10.5281/zenodo.20131046) integration.
+# Cowork mode in KinClaw Mac picks this soul by default, so we wire the
+# grep router in front of the LLM chat loop for every user request.
+#
+# - exit_on_ok:        when any tool call returns "ok:", terminate the
+#                       loop immediately — saves the redundant "I'm done"
+#                       LLM round-trip (~5-10s/task).
+# - grep_route:        before the chat loop, run kinthink.sh against the
+#                       prompt. If TF-IDF score ≥ min_score, execute the
+#                       matched cerebellum action directly (0 LLM tokens,
+#                       50-300ms typical). If miss, fall through to LLM.
+# - grep_route_min_score: conservative threshold for the daily-driver
+#                       pilot soul. Higher than macbench's 1.5 because
+#                       pilot sees free-form natural language; we want
+#                       only confident matches to skip the LLM.
+cerebellum:
+  exit_on_ok: true
+  grep_route: true
+  grep_route_min_score: 3.0
+
 permissions:
   shell: true
   shell_timeout: 60
@@ -56,6 +76,9 @@ skills:
     - "location"         # 实时 GPS via corelocationcli
     - "spawn"            # 派子 agent (researcher 查信息 / eye 看图 / critic 审产物)
     - "todo_write"       # 多步任务 plan,KinClaw Mac 渲染成可见 checklist
+    # ★ Paper #11 整合(2026-05-11)★
+    - "cerebellum"       # 478 个 macOS 规范动作的总入口(15 类:finder/notes/mail/calendar/reminders/settings/safari/music/photos/maps/terminal/pages/numbers/keynote/multi/web)
+    - "kinthink"         # NL → cerebellum 路由器(grep + TF-IDF + 槽位替换);kernel 通过 cerebellum.grep_route flag 已自动接管 chatLoop 前置调用
   output_dir: "~/Library/Caches/kinclaw/pilot"
 ---
 
