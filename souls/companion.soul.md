@@ -103,6 +103,8 @@ skills:
     - "music_pause"
     - "web_search"
     - "screen"          # 「你看看我屏幕上这个」
+    - "ask_user"        # 给 2-5 个选项让用户选;陪伴界面会念出来,也会在底部
+                        # 显示成可点的按钮
     - "file_read"
     - "kinbrowser"      # 读网页 / PDF → markdown
     - "web_fetch"
