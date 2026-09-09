@@ -347,10 +347,13 @@ func runRound(ctx context.Context, sess *session, calls []brain.ToolCall, sink t
 }
 
 // abortNote is appended after a failed turn so the next user message
-// isn't read as "carry on with the previous plan".
+// isn't read as "carry on with the previous plan". Worded for the
+// interrupted case too: in a spoken conversation an abort is usually
+// the user cutting in, and a model that then "pieces the conversation
+// together" out loud is worse than one that simply answers.
 func abortNote(err error) brain.Message {
 	return brain.Message{
 		Role:    brain.RoleAssistant,
-		Content: fmt.Sprintf("(Turn aborted at %s: %v. Reply 'continue' to resume or rephrase to start fresh.)", time.Now().Format("15:04"), err),
+		Content: fmt.Sprintf("(Turn aborted at %s: %v. If the user interrupted, answer what they say next without recapping or resuming this — resume only if asked.)", time.Now().Format("15:04"), err),
 	}
 }
