@@ -9,14 +9,16 @@ version: "0.1.0"
 
 brain:
   provider: "ollama"
-  model: "ornith-1.5:35b"
-  endpoint: "http://192.168.0.21:11434"
+  # 跟 Pilot 用同一个脑子 —— 换脑子会让 Ollama 重载模型 (~10s),
+  # 而陪伴模式是从面板切过来的,那 10 秒全在等它开口。
+  model: "kimi-k2.6:cloud"
+  endpoint: "http://localhost:11434"
   temperature: 0.7                       # 聊天要有点随机性,0.3 太像客服
   context_length: 131072                 # 跟 Pilot 一致 — 不一致 Ollama 会重载模型 (~10s)
-  # ornith 默认先"想"再答:实测每句开口前要 1.3–3.1 秒的 reasoning。文字界面
-  # 无所谓,语音里就是每句话前一段死寂。关掉后首字 0.28 秒,回答质量看不出差别
-  # (陪伴聊天不需要推理)。走 Ollama 的 OpenAI 接口时只有 reasoning_effort 管用,
-  # think:false 会被忽略。
+  # 会思考的模型开口前要先想一段:ornith 实测 1.3–3.1 秒,文字界面无所谓,
+  # 语音里就是每句话前一段死寂。关掉后首字 0.28 秒,陪伴聊天看不出质量差别。
+  # 走 Ollama 的 OpenAI 接口时只有 reasoning_effort 管用,think:false 会被忽略;
+  # kimi 也认这个字段(实测不报错)。
   reasoning_effort: "none"
 
 permissions:

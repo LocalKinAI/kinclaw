@@ -4,8 +4,13 @@ version: "0.3.0"
 
 brain:
   provider: "ollama"
-  model: "ornith-1.5:35b"                # 2026-09-05: Jacky's own model on the LAN box
-  endpoint: "http://192.168.0.21:11434"  # (was kimi-k2.6:cloud via laptop Ollama → Ollama Cloud, 429-prone)
+  # 2026-09-09: 回到本机 Ollama 上的 kimi。LAN 盒子 (192.168.0.21) 上的
+  # ornith-1.5:35b 更快也更私密,但它今天挂了两次 —— ping 得通、11434 不应答、
+  # SSH 也超时,而每次挂掉 Pilot 和陪伴模式就是一句话都答不出来。默认要选
+  # 一个开机就在的。想切回去:右下角模型菜单 → Source → 192.168.0.21。
+  # (kimi 走 Ollama Cloud,历史上有过 429;真撞上了就换 ornith 或 glm-5.3。)
+  model: "kimi-k2.6:cloud"
+  endpoint: "http://localhost:11434"
   temperature: 0.3
   context_length: 131072
 
