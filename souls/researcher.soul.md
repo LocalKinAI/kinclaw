@@ -1,6 +1,7 @@
 ---
 name: "KinClaw Researcher"
 version: "0.2.0"
+role: "worker"          # 被 Pilot 用 spawn 派出来的，不是给人选的门
 
 brain:
   provider: "ollama"

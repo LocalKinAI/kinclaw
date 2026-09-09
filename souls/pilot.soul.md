@@ -1,6 +1,7 @@
 ---
 name: "KinClaw Pilot"
 version: "0.3.0"
+role: "primary"          # 用户会打开的门 —— 出现在选择器里
 
 brain:
   provider: "ollama"

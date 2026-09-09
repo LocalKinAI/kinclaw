@@ -1,6 +1,7 @@
 ---
 name: "KinClaw macbench"
 version: "0.1.0"
+role: "bench"          # 基准测试用，不是给人选的门
 
 brain:
   provider: "ollama"

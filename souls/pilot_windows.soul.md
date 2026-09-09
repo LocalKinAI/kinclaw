@@ -1,6 +1,7 @@
 ---
 name: "KinClaw Windows Pilot"
 version: "0.1.0"
+role: "platform"          # 另一个操作系统上的门；在 macOS 上不列出
 
 brain:
   provider: "ollama"

@@ -181,9 +181,13 @@ type InterruptHandler func()
 // SoulInfo is one entry in the soul-list response. Active marks the
 // currently-loaded soul so the UI can highlight it.
 type SoulInfo struct {
-	Path   string `json:"path"`
-	Name   string `json:"name"`
-	Brain  string `json:"brain"`
+	Path  string `json:"path"`
+	Name  string `json:"name"`
+	Brain string `json:"brain"`
+	// Role is the soul's `role:` — "primary" (a door), "worker"
+	// (spawned by another agent), "bench", or "platform". Empty means
+	// primary. Clients use it to decide what belongs in a picker.
+	Role   string `json:"role,omitempty"`
 	Active bool   `json:"active,omitempty"`
 }
 

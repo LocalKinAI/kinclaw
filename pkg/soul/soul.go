@@ -124,7 +124,20 @@ func locationContext() (location, lat, lon, city, country string) {
 type Meta struct {
 	Name    string `yaml:"name"`
 	Version string `yaml:"version"`
-	Brain   struct {
+	// Role says who opens this soul. Souls are the developer's unit,
+	// not the user's — of eleven in this repo only two are doors a
+	// person would ever pick; the rest are hands the pilot dispatches
+	// with `spawn`, benchmarks, or ports for another OS. Listing all
+	// eleven in a picker asks the user to choose a capability boundary,
+	// which is not a question they have any basis to answer.
+	//
+	//	primary  — a door. Shown in the picker. The default when absent,
+	//	           so a soul that says nothing keeps behaving as before.
+	//	worker   — dispatched by another agent (eye, critic, researcher).
+	//	bench    — a benchmark or test rig.
+	//	platform — a door for a different OS than this one.
+	Role  string `yaml:"role"`
+	Brain struct {
 		Provider      string  `yaml:"provider"`
 		Model         string  `yaml:"model"`
 		Endpoint      string  `yaml:"endpoint"`

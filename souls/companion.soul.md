@@ -1,6 +1,7 @@
 ---
 name: "KinClaw Companion"
 version: "0.1.0"
+role: "primary"          # 用户会打开的门 —— 出现在选择器里
 
 # 陪伴模式的魂 (2026-09-08)。KinClaw Mac 的陪伴界面 (⇧⌘M) 进来时自动切到这个
 # 魂,出去时切回原来的。它和 Pilot 用同一个脑子,不同的是 prompt 只有 Pilot 的

@@ -900,6 +900,7 @@ func listAvailableSouls() []server.SoulInfo {
 				Path:  abs,
 				Name:  s.Meta.Name,
 				Brain: fmt.Sprintf("%s/%s", s.Meta.Brain.Provider, s.Meta.Brain.Model),
+				Role:  s.Meta.Role,
 			})
 		}
 	}

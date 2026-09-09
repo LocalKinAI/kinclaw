@@ -1,6 +1,7 @@
 ---
 name: "KinClaw Curator"
 version: "0.1.0"
+role: "worker"          # 被 Pilot 用 spawn 派出来的，不是给人选的门
 
 brain:
   provider: "ollama"
