@@ -402,6 +402,9 @@ func newSession(soulPath string, debug bool, ephemeral bool) (*session, error) {
 
 	b := brain.NewBrain(s.Meta.Brain.Provider, s.Meta.Brain.Endpoint,
 		s.Meta.Brain.Model, apiKey, s.Meta.Brain.Temperature)
+	if r, ok := b.(brain.ReasoningEffortSetter); ok && s.Meta.Brain.ReasoningEffort != "" {
+		r.SetReasoningEffort(s.Meta.Brain.ReasoningEffort)
+	}
 
 	store, err := memory.OpenMemory(memory.DefaultDBPath())
 	if err != nil {

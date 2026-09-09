@@ -559,6 +559,7 @@ type openAIBrain struct {
 	temperature            float64
 	maxTokens              int
 	client                 *http.Client
+	reasoningEffort        string
 }
 
 func NewOpenAIBrain(endpoint, model, apiKey string, temperature float64) Brain {
@@ -572,6 +573,22 @@ func NewOpenAIBrain(endpoint, model, apiKey string, temperature float64) Brain {
 	}
 }
 
+// ReasoningEffortSetter is implemented by brains that can pass an
+// OpenAI-style `reasoning_effort` through. NewBrain returns the Brain
+// interface, so callers type-assert for it.
+type ReasoningEffortSetter interface {
+	SetReasoningEffort(effort string)
+}
+
+// SetReasoningEffort sends `reasoning_effort` with every request. For
+// a thinking model behind Ollama's OpenAI endpoint "none" switches the
+// thinking off (`think: false` is ignored there; this is not): measured
+// on ornith-1.5:35b, first token in 0.28s instead of the 1.3–3.1s it
+// spent reasoning before saying anything. The companion soul wants
+// exactly that — in a spoken conversation two seconds of silence before
+// every reply is the whole experience.
+func (b *openAIBrain) SetReasoningEffort(effort string) { b.reasoningEffort = effort }
+
 type oaiReq struct {
 	Model       string            `json:"model"`
 	Messages    []oaiMsg          `json:"messages"`
@@ -579,6 +596,10 @@ type oaiReq struct {
 	MaxTokens   int               `json:"max_tokens,omitempty"`
 	Stream      bool              `json:"stream"`
 	Tools       []json.RawMessage `json:"tools,omitempty"`
+	// ReasoningEffort is "none" / "low" / "medium" / "high" where the
+	// server understands it (OpenAI o-series, Ollama thinking models);
+	// omitted otherwise. See SetReasoningEffort.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// StreamOptions asks for a final `usage` chunk on streams. OpenAI,
 	// Ollama, Groq and DeepSeek all honour it; without it a streamed
 	// reply carries no token counts at all.
@@ -693,6 +714,7 @@ func (b *openAIBrain) Chat(ctx context.Context, messages []Message, tools []json
 	reqBody := oaiReq{
 		Model: b.model, Messages: oaiMsgs, Temperature: b.temperature,
 		MaxTokens: b.maxTokens, Stream: onChunk != nil, Tools: tools,
+		ReasoningEffort: b.reasoningEffort,
 	}
 	if onChunk != nil {
 		reqBody.StreamOptions = &oaiStreamOptions{IncludeUsage: true}

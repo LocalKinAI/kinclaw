@@ -348,6 +348,11 @@ Flags:
 
 		newBrain := brain.NewBrain(req.Provider, endpoint,
 			req.Model, apiKey, curSoul.Meta.Brain.Temperature)
+		// The soul's reasoning setting is about the soul's job, not the
+		// model: a voice soul wants no thinking whichever brain it runs.
+		if r, ok := newBrain.(brain.ReasoningEffortSetter); ok && curSoul.Meta.Brain.ReasoningEffort != "" {
+			r.SetReasoningEffort(curSoul.Meta.Brain.ReasoningEffort)
+		}
 
 		sessMu.Lock()
 		currentSess.brain = newBrain

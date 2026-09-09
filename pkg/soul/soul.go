@@ -131,6 +131,11 @@ type Meta struct {
 		Temperature   float64 `yaml:"temperature"`
 		ContextLength int     `yaml:"context_length"`
 		APIKey        string  `yaml:"api_key"`
+		// ReasoningEffort is passed through as OpenAI `reasoning_effort`
+		// on openai/ollama brains. "none" turns a thinking model's
+		// reasoning off — what a voice soul wants, since every second
+		// of thinking is a second of silence before it speaks.
+		ReasoningEffort string `yaml:"reasoning_effort"`
 	} `yaml:"brain"`
 	Permissions struct {
 		Shell        bool `yaml:"shell"`
@@ -193,6 +198,11 @@ type Meta struct {
 		// Disabled turns auto-compaction off (the /compact command and
 		// POST /api/compact still work).
 		Disabled bool `yaml:"disabled"`
+		// MaxToolRounds caps the tool-call rounds one turn may take
+		// before the model is told to answer from what it has. Default
+		// 50 — right for a pilot working through a task, far too many
+		// for a voice soul, where a retry loop is a minute of silence.
+		MaxToolRounds int `yaml:"max_tool_rounds"`
 	} `yaml:"context"`
 	Skills struct {
 		Enable []string `yaml:"enable"`

@@ -155,7 +155,11 @@ func runTurnCore(ctx context.Context, sess *session, input string, sink turnSink
 		return nil
 	}
 
-	for round := 0; round < maxToolRounds; round++ {
+	limit := maxToolRounds
+	if n := sess.soul.Meta.Context.MaxToolRounds; n > 0 {
+		limit = n
+	}
+	for round := 0; round < limit; round++ {
 		maybeCompact(ctx, sess, sink)
 
 		result, err := sess.brain.Chat(ctx, buildMessages(sess), sess.toolDefs, onChunk)
@@ -211,7 +215,21 @@ func runTurnCore(ctx context.Context, sess *session, input string, sink turnSink
 			return results[0].Output, nil
 		}
 	}
-	return "", fmt.Errorf("too many tool call rounds (max %d)", maxToolRounds)
+	// Out of rounds. Failing the turn here used to be the outcome, and
+	// in a voice UI a failed turn is silence with no explanation. Tell
+	// the model the budget is spent and take one more answer with no
+	// tools on offer, so it cannot keep going and has to say something
+	// from what it already found.
+	note := fmt.Sprintf("(Tool budget for this turn is spent after %d rounds. Answer now from what you already have — no more tool calls.)", limit)
+	sink.notice(note)
+	sess.appendMessage(brain.Message{Role: brain.RoleUser, Content: note})
+	result, err := sess.brain.Chat(ctx, buildMessages(sess), nil, onChunk)
+	if err != nil {
+		return "", fmt.Errorf("too many tool call rounds (max %d): %w", limit, err)
+	}
+	sess.recordUsage(result.Usage)
+	sess.appendMessage(brain.Message{Role: brain.RoleAssistant, Content: result.Content})
+	return result.Content, nil
 }
 
 // runRound turns one assistant message's tool calls into tool results:
