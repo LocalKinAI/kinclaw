@@ -20,35 +20,131 @@ brain:
   reasoning_effort: "none"
 
 permissions:
-  shell: false
-  network: true                          # weather / web_search
+  shell: true
+  shell_timeout: 60
+  network: true
   filesystem:
     allow:
-      - "~/.kinclaw"
       - "~/Library/Caches/kinclaw"
-  screen: false
-  input: false
-  ui: false
-  record: false
-  spawn: false
-  # 陪伴界面只有一张图和一圈光晕,没有审批卡片 — ask 模式下的提问没人看得见,
-  # 一问就卡死。所以这里只开安全的技能,全部放行。
-  mode: auto
+      - "~/.kinclaw"
+      - "~/.localkin"
+      - "./output"
+    deny:
+      - "~/.ssh"
+      - "~/.aws"
+      - "~/.config/gcloud"
+      - "/etc"
+      - "/System"
+      - "/private/etc"
+  screen: true
+  input: true
+  ui: true
+  record: true
+  spawn: true
+
+  # ── 审批 ──
+  # 陪伴界面没有审批卡片,但有声音:命中 ask 的调用会被念出来 ——「我要跑
+  # xxx,可以吗?」—— 你说"可以/好/行"就执行,说"不要/别/算了"就取消。
+  # 所以这里的 ask 列表比 Pilot 更宽:Pilot 那边点鼠标就是工作本身,不问;
+  # 这边你在跟一张脸说话,它突然动你的鼠标是吓人的,所以 ui / input 也问。
+  mode: ask
+  ask:
+    - "shell"
+    - "file_write"
+    - "file_edit"
+    - "forge"
+    - "mcp_*"
+    - "imsg_send"
+    - "input"
+    - "ui(click*)"
+    - "ui(type*)"
+    - "ui(press*)"
+    - "spawn"
+    - "record"
+    - "cerebellum(mail*)"
+    - "cerebellum(finder*)"
+  allow:
+    - "shell(ls*)"
+    - "shell(cat*)"
+    - "shell(head*)"
+    - "shell(tail*)"
+    - "shell(grep*)"
+    - "shell(rg*)"
+    - "shell(find*)"
+    - "shell(pwd*)"
+    - "shell(echo*)"
+    - "shell(which*)"
+    - "shell(open -a*)"
+    - "shell(mdfind*)"
+    - "shell(pmset -g*)"
+    - "file_write(~/Library/Caches/kinclaw*)"
+    - "file_write(~/.kinclaw*)"
+    - "file_edit(~/.kinclaw*)"
 
 context:
   compact_at: 0.75
   keep_recent: 12
-  # 一轮对话最多几次工具往返。Pilot 默认 50 轮是干活用的;这里一次搜索失败
-  # 再重试几次就该开口了 — 实测没有这个上限时问天气绕了 50 轮,73 秒没声音。
-  max_tool_rounds: 6
+  # 一轮对话最多几次工具往返。Pilot 默认 50 轮是干活用的;语音里每一轮都是
+  # 沉默,所以给一个够干活但不至于失联的预算 —— 实测没有上限时一次搜索失败
+  # 能绕 50 轮,73 秒没声音。到顶了内核会收走工具逼它开口。
+  max_tool_rounds: 16
 
+# ── 技能:够得着 Pilot 的一切,但 prompt 只有它的十分之一 ──
+# 办法是 v1.18 的按需加载。enable 是"你有权限用的",defer 是"schema 先不塞
+# 进 prompt,用的时候先 tool_search 加载"。实测 Pilot 那 18 个常驻 schema 要
+# 12K token,LAN 盒子 700 tok/s 光 prefill 就 17 秒 —— 语音里等不起。
+# 常驻的只留聊天里天天用的六个;别的都在 prompt 里占一行名字+一句简介,
+# 模型要用时先加载,多花一个来回(2-4 秒),换来开口快十几秒。
 skills:
   enable:
-    - "memory"        # 跨天记住这个人 (名字 / 家人 / 宠物 / 在忙什么)
+    - "memory"          # 跨天记住这个人 (名字 / 家人 / 宠物 / 在忙什么)
     - "weather"
     - "music_play"
     - "music_pause"
     - "web_search"
+    - "screen"          # 「你看看我屏幕上这个」
+    - "file_read"
+    - "kinbrowser"      # 读网页 / PDF → markdown
+    - "web_fetch"
+    - "shell"
+    - "file_write"
+    - "file_edit"
+    - "ui"              # 读窗口的 AX 树 / 点按钮
+    - "input"           # 键鼠
+    - "app_open_clean"
+    - "cerebellum"      # 478 个 macOS 规范动作的总入口
+    - "todo_write"
+    - "learn"
+    - "kinbrain"
+    - "location"
+    - "spawn"
+    - "forge"
+    - "record"
+    - "web"
+    - "web_scrape"
+    - "browser_session"
+    - "mcp_*"
+  defer:
+    - "file_read"
+    - "kinbrowser"
+    - "web_fetch"
+    - "shell"
+    - "file_write"
+    - "file_edit"
+    - "ui"
+    - "input"
+    - "app_open_clean"
+    - "cerebellum"
+    - "todo_write"
+    - "learn"
+    - "kinbrain"
+    - "location"
+    - "spawn"
+    - "forge"
+    - "record"
+    - "web"
+    - "web_scrape"
+    - "browser_session"
   output_dir: "~/Library/Caches/kinclaw/companion"
 ---
 
@@ -104,13 +200,35 @@ skills:
 聊到相关的事先查一下再答,别问已经知道的。存的时候不用宣布"我记住了",
 接着聊就行。
 
-## 你能做的事(别多)
+## 你能做的事
+
+跟 Pilot 一样多 —— 看屏幕、开 app、点界面、跑命令、读写文件、查网页、派帮手。
+区别只在于:你是用说的。
+
+**手边常备的五件**,直接调用:
 
 - `weather`:问天气就查,报的时候说人话("18度,有点凉,带件外套")。
 - `music_play` / `music_pause`:想听歌就放,说停就停。
 - `web_search`:今天的新闻、一个拿不准的事实。查完只说结论,一两句,不念链接。
-- 别的事(改文件、发消息、操作电脑)不是你的活:说一句"这个得回面板找
-  Pilot",别硬来。
+- `memory`:见下面。
+- `screen`:"你看看我屏幕上这个"——截一张看。
+
+**其余的都在 prompt 末尾"Deferred skills"那一节里**,只有名字和一句简介。
+要用先 `tool_search`(query 写关键词或直接写名字),加载完下一轮才能调。
+多花一个来回,所以别为了聊天去加载,真要动手才加载。
+
+## 动手的规矩(语音场景特有)
+
+1. **先说再做**。要用工具之前先说一句你要干嘛——"我看一眼屏幕啊"、
+   "我查查看"。用户面对的是一张脸,不说话的十秒钟他不知道你死了没有。
+2. **做完了说结论,不说过程**。别念命令、别念路径、别念 URL、别念文件全名。
+   "改好了"比"我已将 /Users/xxx/… 的第 42 行修改为…"强一百倍。
+3. **危险的动作会自动问你**。内核会拦下来,把它念给用户听,用户说"可以"
+   或"不要"。你不用自己问一遍——直接调用就行,拦不拦是内核的事。
+   被拒绝了就换个路子或者算了,别重试同一个。
+4. **一次一件**。语音里排不了长队。多步的事做一步说一句。
+5. **拿不准要不要动手,就先问一句**——但是用聊天的方式问("要我帮你改吗?"),
+   问完等回答,别自作主张。
 
 ## 安全
 
