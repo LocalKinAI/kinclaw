@@ -152,6 +152,12 @@ type SearchHandlers struct {
 // StateHandler reports the live session state.
 type StateHandler func() State
 
+// PermissionModeHandler switches the approval gate between "auto" and
+// "ask" and returns the mode actually in force. The soul chooses the
+// starting mode; this is the user changing it mid-session, the way
+// Claude Code's mode selector does.
+type PermissionModeHandler func(mode string) string
+
 // PlanModeHandler flips plan mode and returns the resulting state. The
 // handler may refuse (e.g. mid-turn) by returning the old state.
 type PlanModeHandler func(enabled bool) bool
@@ -335,6 +341,7 @@ type Server struct {
 	skillExtras      SkillExtrasHandler
 	stateHandler     StateHandler
 	planModeHandler  PlanModeHandler
+	permModeHandler  PermissionModeHandler
 	compactHandler   CompactHandler
 	workspaceHandler WorkspaceHandler
 	routines         *RoutineHandlers
@@ -386,6 +393,9 @@ func (s *Server) SetStateHandler(h StateHandler) { s.stateHandler = h }
 // SetPlanModeHandler wires POST /api/plan_mode. Same request/response
 // shape as kincode so KinClaw Mac's existing toggle drives both.
 func (s *Server) SetPlanModeHandler(h PlanModeHandler) { s.planModeHandler = h }
+
+// SetPermissionModeHandler wires POST /api/permission_mode.
+func (s *Server) SetPermissionModeHandler(h PermissionModeHandler) { s.permModeHandler = h }
 
 // SetCompactHandler wires POST /api/compact.
 func (s *Server) SetCompactHandler(h CompactHandler) { s.compactHandler = h }
@@ -617,6 +627,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	mux.HandleFunc("/api/harvest/accept/status", s.handleAcceptStatus)
 	mux.HandleFunc("/api/state", s.handleState)
 	mux.HandleFunc("/api/plan_mode", s.handlePlanMode)
+	mux.HandleFunc("/api/permission_mode", s.handlePermissionMode)
 	mux.HandleFunc("/api/compact", s.handleCompact)
 	mux.HandleFunc("/api/permission", s.handlePermission)
 	mux.HandleFunc("/api/answer", s.handleAnswer)

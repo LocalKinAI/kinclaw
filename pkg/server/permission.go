@@ -353,6 +353,31 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(s.stateHandler())
 }
 
+// handlePermissionMode switches the approval gate. Body: {"mode":"ask"}
+// or {"mode":"auto"}; the response says which mode is in force, which
+// is not always the one asked for — an unknown value leaves it alone.
+func (s *Server) handlePermissionMode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.permModeHandler == nil {
+		http.Error(w, "permission_mode not wired", http.StatusNotImplemented)
+		return
+	}
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	mode := s.permModeHandler(body.Mode)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"mode": mode})
+	s.Push(Event{Type: "permission_mode", Name: mode})
+}
+
 // handlePlanMode flips the read-only gate. Body: {"enabled": bool}.
 // Replies {"enabled": <resulting state>} and broadcasts `plan_mode`.
 func (s *Server) handlePlanMode(w http.ResponseWriter, r *http.Request) {

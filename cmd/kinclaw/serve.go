@@ -549,6 +549,18 @@ Flags:
 		return s.gate.PlanMode()
 	})
 
+	// POST /api/permission_mode — switch the gate between asking and
+	// getting out of the way. Mid-turn is fine for the same reason plan
+	// mode is: the next tool call reads the new value, and "stop asking
+	// me about this" is a thing people decide while watching one.
+	srv.SetPermissionModeHandler(func(mode string) string {
+		sessMu.Lock()
+		s := currentSess
+		sessMu.Unlock()
+		s.gate.SetMode(permission.Mode(mode))
+		return string(s.gate.Mode())
+	})
+
 	// POST /api/compact — fold now. Refused mid-turn: the turn loop owns
 	// sess.history while it runs.
 	srv.SetCompactHandler(func() (string, error) {

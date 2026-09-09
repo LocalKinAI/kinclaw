@@ -124,8 +124,20 @@ func New(mode Mode, ask, allow []string, asker Asker) *Gate {
 	}
 }
 
-// Mode returns the configured mode.
-func (g *Gate) Mode() Mode { return g.mode }
+// Mode returns the current mode.
+func (g *Gate) Mode() Mode { g.mu.Lock(); defer g.mu.Unlock(); return g.mode }
+
+// SetMode changes the gate at runtime — the soul sets the starting
+// value, the user changes their mind. Unknown values are ignored so a
+// typo cannot silently open the gate.
+func (g *Gate) SetMode(m Mode) {
+	if m != ModeAuto && m != ModeAsk {
+		return
+	}
+	g.mu.Lock()
+	g.mode = m
+	g.mu.Unlock()
+}
 
 // SetAsker installs (or replaces) the human-facing prompt.
 func (g *Gate) SetAsker(a Asker) { g.mu.Lock(); g.asker = a; g.mu.Unlock() }
