@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+Voice work, driven by KinClaw Mac's companion mode:
+
+- **`brain.reasoning_effort`** — passed through as OpenAI
+  `reasoning_effort`. `"none"` turns a thinking model's reasoning off;
+  on ornith-1.5:35b behind Ollama that is first token in 0.28s instead
+  of 1.3–3.1s of silence before every spoken reply (`think: false` is
+  ignored by Ollama's OpenAI endpoint; this is not).
+- **`context.max_tool_rounds`** — per-soul cap on tool rounds per turn
+  (default still 50). Hitting the cap no longer fails the turn: the
+  model is told the budget is spent and asked for an answer with no
+  tools offered, so a voice soul says something instead of nothing.
+- **`souls/companion.soul.md`** — 小美, the companion-mode soul: a
+  twentieth of the pilot's prompt, spoken register, thinking off, six
+  tool rounds, memory + weather + music + web_search only, everything
+  auto-approved because the companion view has no approval card.
+- **`weather`** — three-day metric forecast (now / today / tomorrow /
+  day after) instead of one Fahrenheit line; "明天要带伞吗" no longer
+  sends the model off to search the web.
+
 ## [1.18.0] - 2026-09-05
 
 The release where the kernel grew a harness. Since v1.17.0 (the
