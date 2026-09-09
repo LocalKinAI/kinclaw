@@ -431,12 +431,161 @@ func expandTilde(p string) string {
 }
 
 func matchAny(rules []rule, skill string, params map[string]string) bool {
+	// A shell command is not one string to prefix-match; it is however
+	// many commands the shell will actually run. See matchShell.
+	if skill == "shell" {
+		return matchShell(rules, params["command"])
+	}
 	for _, r := range rules {
 		if r.matches(skill, params) {
 			return true
 		}
 	}
 	return false
+}
+
+// matchShell decides whether the allow list covers a shell command.
+//
+// A prefix rule used to be tested against the whole command string, so
+// `shell(echo*)` covered
+//
+//	echo "hello" > ~/Desktop/test.txt && cat ~/Desktop/test.txt
+//
+// — an allow-listed word was a doorway for anything after it. Observed
+// in the wild, not theorised: asked to create a file on the Desktop,
+// the pilot wrote exactly that, the gate waved it through on
+// `shell(echo*)`, and the file appeared with no approval card. Every
+// read-only entry on a normal allow list (ls, cat, grep, git log) is
+// the same doorway via `;`, `&&`, `|`, or a redirect.
+//
+// So the command is split into the simple commands the shell would
+// run, and every one of them has to be covered on its own. A redirect
+// or a substitution is never covered by a prefix rule — the danger is
+// in the target, not in the verb — so those always go to the human.
+// A bare `shell` rule (no parameter) still allows everything, since
+// that is someone saying so explicitly.
+func matchShell(rules []rule, cmd string) bool {
+	shellRules := make([]rule, 0, len(rules))
+	for _, r := range rules {
+		if r.skillPrefix && !strings.HasPrefix("shell", r.skill) {
+			continue
+		}
+		if !r.skillPrefix && r.skill != "shell" {
+			continue
+		}
+		if !r.hasParam {
+			return true // `allow: [shell]` — the user said everything.
+		}
+		shellRules = append(shellRules, r)
+	}
+	if len(shellRules) == 0 {
+		return false
+	}
+	segments, safe := shellSegments(cmd)
+	if !safe || len(segments) == 0 {
+		return false
+	}
+	for _, seg := range segments {
+		covered := false
+		for _, r := range shellRules {
+			if r.paramPrefix && strings.HasPrefix(seg, r.param) {
+				covered = true
+				break
+			}
+			if !r.paramPrefix && seg == r.param {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
+// shellSegments splits a command on the operators that start a new
+// command — `;`, `&&`, `||`, `|`, and newlines — respecting quotes so
+// `echo "a && b"` stays one segment. safe is false when the command
+// contains something a prefix rule has no business approving: a
+// redirect, a substitution, a subshell, or a backgrounding `&`.
+func shellSegments(cmd string) (segments []string, safe bool) {
+	var cur strings.Builder
+	var quote byte
+	flush := func() {
+		if s := strings.TrimSpace(cur.String()); s != "" {
+			segments = append(segments, s)
+		}
+		cur.Reset()
+	}
+	for i := 0; i < len(cmd); i++ {
+		c := cmd[i]
+		if quote != 0 {
+			// Inside single quotes nothing is special. Inside double
+			// quotes a backslash escapes, and `$(` still substitutes.
+			if quote == '"' {
+				if c == '\\' && i+1 < len(cmd) {
+					cur.WriteByte(c)
+					i++
+					cur.WriteByte(cmd[i])
+					continue
+				}
+				if c == '$' && i+1 < len(cmd) && cmd[i+1] == '(' {
+					return nil, false
+				}
+				if c == '`' {
+					return nil, false
+				}
+			}
+			if c == quote {
+				quote = 0
+			}
+			cur.WriteByte(c)
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+			cur.WriteByte(c)
+		case '\\':
+			if i+1 < len(cmd) {
+				cur.WriteByte(c)
+				i++
+				cur.WriteByte(cmd[i])
+			}
+		case '`', '<':
+			return nil, false
+		case '>':
+			return nil, false
+		case '$':
+			if i+1 < len(cmd) && (cmd[i+1] == '(' || cmd[i+1] == '{') {
+				return nil, false
+			}
+			cur.WriteByte(c)
+		case '(', ')':
+			return nil, false
+		case ';', '\n':
+			flush()
+		case '|':
+			if i+1 < len(cmd) && cmd[i+1] == '|' {
+				i++
+			}
+			flush()
+		case '&':
+			if i+1 < len(cmd) && cmd[i+1] == '&' {
+				i++
+				flush()
+				continue
+			}
+			// A lone `&` backgrounds the command — nothing a prefix
+			// rule should wave through.
+			return nil, false
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return segments, true
 }
 
 // Matches reports whether any spec in specs matches the call. Exported
