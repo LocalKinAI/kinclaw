@@ -366,7 +366,24 @@ In `ask` mode a matching call stops and asks — a terminal prompt in the
 REPL, an approval card in KinClaw Mac (**Allow / Always this session /
 Deny**). Rule grammar: skill name, `prefix*`, or `skill(param-prefix*)`
 on the skill's primary parameter (`shell(git push*)`, `ui(click*)`,
-`file_write(~/.kinclaw*)`). `allow` beats `ask`. Shell commands that
+`file_write(~/.kinclaw*)`). `allow` beats `ask`.
+
+A `shell(...)` allow rule is checked against **every simple command the
+shell would run**, not against the command string. Without that, an
+allow-listed verb is a doorway for anything after it: `shell(echo*)`
+would cover `echo hi > ~/.zshrc`, `shell(ls*)` would cover
+`ls; rm -rf ~`. So the command is split on `;` `&&` `||` `|` and
+newlines (respecting quotes, so `grep "a && b" f` stays one command)
+and every part has to be covered on its own — and a redirect or a
+substitution is never covered by a prefix rule, because the danger is
+in the target rather than the verb. Pipelines of allow-listed commands
+(`ls -la | head`) still pass without asking.
+
+The mode is also switchable while the agent runs, via
+`POST /api/permission_mode {"mode":"ask"|"auto"}` — KinClaw Mac puts it
+in the composer's corner. Unknown values are ignored rather than
+defaulted, and the reply says which mode is actually in force, so a
+typo cannot open the gate. Shell commands that
 look irreversible (`rm -r`, `sudo`, `git push`, `kill`, `diskutil
 erase`, `curl … | sh`) always ask unless allowed. A denial becomes the
 tool result, so the model explains and adapts instead of retrying.
@@ -529,9 +546,13 @@ A soul file is YAML frontmatter + a Markdown system prompt.
 ```yaml
 ---
 name: "KinClaw Pilot"
+role: "primary"      # who opens this soul — see below
 brain:
   provider: "ollama"
-  model: "kimi-k2.5:cloud"
+  model: "kimi-k2.6:cloud"
+  reasoning_effort: "none"   # optional; see below
+context:
+  max_tool_rounds: 16        # optional; default 50
 permissions:
   shell: false
   network: false
@@ -546,6 +567,27 @@ skills:
 
 # You are KinClaw Pilot...
 ```
+
+`role:` says who opens this soul, and keeps pickers honest. Eleven
+souls ship in this repo and only three are doors: `primary` is one,
+`worker` is dispatched by another agent with `spawn` (`eye`, `critic`,
+`researcher`…), `bench` is a test rig, `platform` is a door for another
+OS. `KinClaw Eye` has two skills and no keyboard — offering it as a
+choice asks the user to pick a capability boundary, which is not a
+question anyone has a basis to answer. Absent means `primary`, so souls
+written before this are unaffected.
+
+`brain.reasoning_effort` goes out as OpenAI `reasoning_effort`.
+`"none"` turns a thinking model's reasoning off — worth it when every
+second of thinking is a second of silence, which is the whole
+experience in a voice soul. Measured on ornith-1.5:35b behind Ollama:
+first token in 0.28s instead of 1.3–3.1s. (Ollama's OpenAI endpoint
+ignores `think: false`; it honours this.)
+
+`context.max_tool_rounds` caps tool rounds per turn. Running out no
+longer fails the turn — the model is told the budget is spent and asked
+once more with no tools on offer, so it answers from what it already
+found rather than going quiet.
 
 The `screen / input / ui / record` bits are the KinClaw additions. Each
 corresponds to one or two TCC prompts and one KinKit library. If a bit
