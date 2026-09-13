@@ -26,6 +26,14 @@ are security fixes; read the first one even if you skip the rest.
   left in history invited the model to reconstruct the conversation out
   loud instead of answering. It now says: if the user interrupted,
   answer what they say next.
+- **A server that answers a stream with one JSON body got an empty
+  turn.** kinfer does exactly that whenever tools are in the request —
+  it buffers the reply so a tool call never arrives in fragments — and
+  the SSE reader skipped the body as a line without `data: `, so the
+  agent saw no text and no tool calls, as if the model had said
+  nothing. A stream request answered as `application/json` is now read
+  whole. Errors say why, too: kinfer's `{"error":"…"}` used to come out
+  as a bare "returned status 400".
 
 ### Added
 

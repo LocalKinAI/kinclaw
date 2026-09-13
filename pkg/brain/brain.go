@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -737,14 +738,14 @@ func (b *openAIBrain) Chat(ctx context.Context, messages []Message, tools []json
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		var errResp oaiResp
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		if errResp.Error != nil {
-			return nil, fmt.Errorf("OpenAI API error (%d): %s", resp.StatusCode, errResp.Error.Message)
-		}
-		return nil, fmt.Errorf("OpenAI API returned status %d", resp.StatusCode)
+		return nil, oaiError(resp)
 	}
-	if onChunk == nil {
+	// A server may answer a stream request with one plain JSON body.
+	// kinfer does whenever tools are on the table — it buffers the reply
+	// so a tool call never arrives in fragments — and read as SSE that
+	// body is a single line without "data: ": the turn ends with no text
+	// and no tool calls, as if the model had said nothing.
+	if onChunk == nil || strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
 		var chatResp oaiResp
 		if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
 			return nil, fmt.Errorf("decoding response: %w", err)
@@ -753,7 +754,13 @@ func (b *openAIBrain) Chat(ctx context.Context, messages []Message, tools []json
 			return &ChatResult{Usage: chatResp.Usage.toUsage()}, nil
 		}
 		choice := chatResp.Choices[0].Message
-		return &ChatResult{Content: choice.Content, ToolCalls: choice.ToolCalls, Usage: chatResp.Usage.toUsage()}, nil
+		result := &ChatResult{Content: choice.Content, ToolCalls: choice.ToolCalls, Usage: chatResp.Usage.toUsage()}
+		if onChunk != nil && choice.Content != "" {
+			if err := onChunk(choice.Content, false); err != nil {
+				return result, err
+			}
+		}
+		return result, nil
 	}
 	var full strings.Builder
 	var usage Usage
@@ -804,6 +811,35 @@ func (b *openAIBrain) Chat(ctx context.Context, messages []Message, tools []json
 		}
 	}
 	return &ChatResult{Content: full.String(), ToolCalls: streamToolCalls, Usage: usage}, nil
+}
+
+// oaiError says why a request failed. OpenAI nests the reason as
+// {"error":{"message":…}}; kinfer sends {"error":"…"}, and a bare status
+// code where the server had said "this model's chat template cannot make
+// tool calls" leaves the user guessing which of their settings is wrong.
+func oaiError(resp *http.Response) error {
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	var nested struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(raw, &nested) == nil && nested.Error != nil && nested.Error.Message != "" {
+		return fmt.Errorf("OpenAI API error (%d): %s", resp.StatusCode, nested.Error.Message)
+	}
+	var flat struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(raw, &flat) == nil && flat.Error != "" {
+		return fmt.Errorf("OpenAI API error (%d): %s", resp.StatusCode, flat.Error)
+	}
+	if s := strings.TrimSpace(string(raw)); s != "" {
+		if r := []rune(s); len(r) > 300 {
+			s = string(r[:300]) + "…"
+		}
+		return fmt.Errorf("OpenAI API returned status %d: %s", resp.StatusCode, s)
+	}
+	return fmt.Errorf("OpenAI API returned status %d", resp.StatusCode)
 }
 
 func NewBrain(provider, endpoint, model, apiKey string, temperature float64) Brain {
