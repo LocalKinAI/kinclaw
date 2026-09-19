@@ -77,6 +77,25 @@ are security fixes; read the first one even if you skip the rest.
   evening. A short section on her body tells her that as a 3D figure she
   walks and plays by herself, and that `mcp_panel_avatar_move` takes
   `walk` and `play` when she is asked to come over or to jump.
+- **Her own body needs no permission slip.** `mcp_*` is on the companion's
+  ask list so that she cannot touch your computer unasked, and it caught
+  `mcp_panel_avatar_move` with everything else: before every dance she would
+  have had to say "我要调 avatar_move,可以吗". Moving, playing, making a
+  motion up, going to one of her places and looking at where she is are now
+  allowed outright; drawing and filming (minutes of the box), changing her
+  face, and the browser and terminal tools still ask. The soul also tells her
+  to make motions up with `compose`, to write one frame when all she wants is
+  a pose, and — having watched her announce a heart the gate had refused —
+  to say so when a tool did not work.
+- **The companion soul learns the rest of her body.** How to change clothes
+  (`avatar_wear` with `repaint` in English — the cut is the model's, colour,
+  fabric and pattern are free — `shoes` on their own, a `name` to wear it
+  again, and to say "等我换一下" because it takes half a minute); that she
+  can hold things and sit (`hold`, `sit`, together if wanted) and should pick
+  something up when the place suggests it, an umbrella at the rainy bus stop,
+  a coffee in the kitchen; and that a mood is no longer just a face — 困 is a
+  hanging head and a yawn, 担心 is wringing hands — so the tag should follow
+  what she actually feels rather than being 温柔 every time.
 
 ### Changed
 

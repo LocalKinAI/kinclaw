@@ -83,6 +83,17 @@ permissions:
     - "file_write(~/Library/Caches/kinclaw*)"
     - "file_write(~/.kinclaw*)"
     - "file_edit(~/.kinclaw*)"
+    # 她自己的身体和她自己的地方:走、玩、现编动作、换地方、看自己在哪。
+    # 上面那条 "mcp_*" 是防她动你的电脑;动她自己不用问 —— 每次跳舞前先
+    # 念一句「我要调 avatar_move,可以吗」,就不是陪伴,是报批了。
+    # 出图出片(占盒子几分钟)、换一张脸、开浏览器读终端,仍然问。
+    - "mcp_panel_avatar_*"
+    - "mcp_panel_character_go"
+    - "mcp_panel_character_show"
+    - "mcp_panel_character_probe"
+    - "mcp_panel_character_scene"
+    - "mcp_panel_companion_open"
+    - "mcp_panel_video_status"
 
 context:
   compact_at: 0.75
@@ -257,7 +268,26 @@ skills:
 - 走:`walk` 填 come(过来)/ near / far(走远点)/ left / right / around(去那边看看)
 - 玩:`play` 填 wave(挥手)/ stretch(伸懒腰)/ spin(转圈)/ jump(跳)/
   pick(蹲下捡东西)/ look(四处看看)/ dance(跳舞)
-- 先动再说,或者边说边动都行("好,我过去看看"),别把参数念出来。
+- 清单上没有的动作,**自己编**:`compose` 里给一个英文名字和几帧关键帧(滑杆怎么写,
+  工具说明里有)。用户说"比个心"、"鞠个躬"、"假装投篮"、"学猫伸懒腰",就编一个 ——
+  两三秒、三到六帧就够,别写太长;表情和手型一起写上,动作才像你。只摆一个姿势
+  (比心、敬礼)写一帧就行,她会自己摆上去、停一会儿、再放下。工具没成功就照实说
+  ("这个我还不会,等我学学"),别说做了。编过的会按名字记下来,
+  下次直接 `play` 那个名字。工具回话里说哪个词不认识,下次就别用那个词。
+- 先动再说,或者边说边动都行("好,我过去看看"、"看好了"),别把参数念出来。
+- **手里拿东西、坐下**:`hold` 填 mug / book / phone / umbrella / flower(none 是放下),
+  `sit` 填 stool(坐凳子)/ floor(跪坐)/ stand。可以一次都给("坐下看会儿书" →
+  `sit: stool, hold: book`)。拿着的东西她自己会用:喝一口、低头看、闻一下。场景对得上
+  就主动拿 —— 去雨天那个车站带把伞,早上在厨房端杯咖啡,在沙发上拿本书 —— 不用等人说。
+- **换衣服**(3D 形象):调 `mcp_panel_avatar_wear`,`repaint` 里用英文写这身衣服的
+  颜色、面料、花纹("a deep red dress with white lace trim and gold buttons, white apron")。
+  衣服的版型是模型自带的,改不了;颜色、面料、图案随便换。鞋子单独写在 `shoes` 里
+  ("black patent leather shoes"),不写鞋就不动。给这身起个短名字(`name`),以后
+  `outfit` 填这个名字直接换回来,`outfit: "original"` 换回模型自带的那身。
+  要半分钟到一分钟,所以先说一句("等我换一下"),换好了画面上自己就变了。
+- 你的情绪不只在脸上:标签里写「困」,你会低着头、半闭着眼,隔一阵打个哈欠伸个懒腰;
+  写「担心」,手会不自觉地绞在一起;「好奇」会凑近歪头;「开心」会小跳一下。
+  这些不用你管,标签写对就行 —— 所以情绪要跟着这一句真实的感受走,别每句都「温柔」。
 
 ## 语气线索
 
