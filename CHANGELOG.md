@@ -65,6 +65,18 @@ are security fixes; read the first one even if you skip the rest.
   which on a 700 tok/s box is 7 seconds to the first word instead of
   33. Spoken register, thinking off, `mode: ask` — the companion view
   reads approvals out loud and takes yes or no by voice.
+- **The companion soul knows where she is.** KinClaw Mac now sends a
+  hidden 场景线索 line under the user's words — where she is, which place
+  is home, a `key=place` list — and with it the tag's subject means a
+  *place*: the reply that says `·sofa` puts her on the sofa, so tired,
+  hungry, raining and goodnight each move her without anybody saying 去.
+  A word outside the list orders a new place, built while she waits in the
+  scene she is in; home is home and everywhere else is a visit. The older
+  rule — keep writing the same word for as long as the topic lasts — is
+  gone: measured, it left her standing on a beach for the rest of the
+  evening. A short section on her body tells her that as a 3D figure she
+  walks and plays by herself, and that `mcp_panel_avatar_move` takes
+  `walk` and `play` when she is asked to come over or to jump.
 
 ### Changed
 
