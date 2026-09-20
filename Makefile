@@ -76,10 +76,16 @@ warmup:                    ## Pre-flight: build + sign + verify TCC + brain + ki
 verify: cli smoke          ## build + smoke (fastest "did I break anything" gate)
 	@echo "→ smoke green; for end-to-end: cd ../kinclaw-mac && make kill && make run"
 
-tcc-reset:                 ## reset macOS TCC grants for this binary (forces re-prompt)
-	tccutil reset Accessibility   $(IDENTIFIER) || true
-	tccutil reset ScreenCapture   $(IDENTIFIER) || true
-	@echo "→ TCC reset for $(IDENTIFIER)"
+tcc-reset:                 ## how to clear this binary's stale macOS TCC grants (tccutil cannot)
+	@# This used to run `tccutil reset <service> $(IDENTIFIER) || true` and
+	@# announce success. tccutil resolves its argument through LaunchServices,
+	@# a bare binary is not registered there, and the `|| true` hid
+	@# "No such bundle identifier" (OSStatus -10814) for months.
+	@echo "tccutil only resets app bundles; $(BINARY) is a bare binary, keyed in TCC by its path."
+	@echo "System Settings → Privacy & Security → Accessibility (and Screen Recording):"
+	@echo "  select the kinclaw entry, press −, then + and add the binary again, toggle ON."
+	@echo "  An entry that still reads ON after a rebuild is the stale one."
+	@echo "(Bare 'tccutil reset Accessibility' works — by resetting every app on the machine.)"
 
 clean:                     ## remove binary
 	rm -f $(BINARY)

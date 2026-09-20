@@ -35,6 +35,19 @@ are security fixes; read the first one even if you skip the rest.
   whole. Errors say why, too: kinfer's `{"error":"…"}` used to come out
   as a bare "returned status 400".
 
+- **The Accessibility dialog came up at every boot.** `serve` raised
+  the system "would like to control this computer" dialog whenever the
+  grant was missing — and for a binary that is rebuilt often the grant
+  is missing most of the time: an ad-hoc signature is matched by its
+  cdhash, so every rebuild orphans the old entry (which goes on reading
+  ON in System Settings), and the panel restarts the kernel a dozen
+  times a day. One dialog per build now: `~/.kinclaw/tcc-asked.json`
+  remembers which build last asked, by path, size and mtime, so a
+  rebuild — the moment a grant goes stale — gets its one dialog and
+  every later boot gets a log line with the way out instead. The `ui`
+  skill still asks again when a claw is actually needed, but once per
+  run rather than once per retried click.
+
 ### Added
 
 - **`brain.reasoning_effort`** — passed through as OpenAI

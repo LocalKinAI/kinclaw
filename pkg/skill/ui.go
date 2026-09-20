@@ -7,10 +7,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/LocalKinAI/kinax-go"
 )
+
+// uiTrustAsk keeps the Accessibility dialog to one per kernel run.
+var uiTrustAsk sync.Once
 
 // uiSkill is the "visual cortex" of KinClaw. It wraps kinax-go
 // (AXUIElement) so a soul can navigate and manipulate macOS UI by
@@ -180,21 +184,21 @@ func (s *uiSkill) Execute(params map[string]string) (string, error) {
 		return "", fmt.Errorf("permission denied: soul does not grant `ui` capability")
 	}
 	if !kinax.Trusted() {
-		// Re-trigger the system permission dialog. Boot-time
-		// PromptTrust may have been suppressed by a stale TCC record
-		// (rebuild changed our hash); calling it again here gives us
-		// another shot at surfacing the dialog when the user actively
-		// asks for a ui-skill action.
-		_ = kinax.PromptTrust()
+		// Raise the system permission dialog again: boot asks only once
+		// per build, and this is the moment somebody actually needs the
+		// claw. Once per run, though — an agent retrying a click five
+		// times should not put five dialogs in front of the user.
+		uiTrustAsk.Do(func() { _ = kinax.PromptTrust() })
 		exe, _ := os.Executable()
 		return "", fmt.Errorf(
 			"kinax: Accessibility permission not granted for this binary.\n"+
 				"  binary: %s\n"+
 				"  Fix: System Settings → Privacy & Security → Accessibility →\n"+
 				"       remove any old `kinclaw` entry, click +, add the path above, toggle ON.\n"+
-				"  If the system dialog isn't firing (stale TCC record), run:\n"+
-				"       tccutil reset Accessibility\n"+
-				"  Then quit & relaunch.",
+				"  An entry that already reads ON belongs to a previous build: remove it\n"+
+				"  and add the binary again. (tccutil cannot target a bare binary; bare\n"+
+				"  `tccutil reset Accessibility` resets every app on the machine.)\n"+
+				"  This is the user's to do — tell them, do not attempt it.",
 			exe)
 	}
 	action := params["action"]
