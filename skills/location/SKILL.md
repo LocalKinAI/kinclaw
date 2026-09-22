@@ -57,23 +57,33 @@ command:
     fi
 
     # ──── Backend: corelocationcli (macOS) ─────────────────────────
+    # NOTE: do NOT pass `-once`. It is not a valid flag in v4.x, and the
+    # tool silently swallows unknown args — including the `-format` that
+    # follows — then exits 0 printing the default "lat lon". Every branch
+    # below would return bare coords for every requested format. It prints
+    # once anyway unless `--watch` is given. (Verified against v4.0.7.)
     if [ "$BACKEND" = "corelocationcli" ]; then
       case "$FORMAT" in
         coords)
-          LL=$(corelocationcli -once -format "%latitude,%longitude")
+          LL=$(corelocationcli --format "%latitude,%longitude")
           printf 'GPS coordinates (lat,lon): %s\n' "$LL"
           ;;
         address)
-          ADDR=$(corelocationcli -once -format "%address")
+          ADDR=$(corelocationcli --format "%address")
           printf 'GPS address: %s\n' "$ADDR"
           ;;
         city)
-          CITY=$(corelocationcli -once -format "%locality")
+          CITY=$(corelocationcli --format "%locality")
           printf 'GPS city: %s\n' "$CITY"
           ;;
         full)
           printf 'GPS (full reading from CoreLocation):\n'
-          corelocationcli -once
+          corelocationcli --format "  latitude:    %latitude
+  longitude:   %longitude
+  altitude:    %altitude
+  accuracy_m:  %h_accuracy
+  address:     %address
+  time:        %time"
           ;;
         *)
           echo "unknown format: $FORMAT (expected: coords | address | city | full)" >&2
