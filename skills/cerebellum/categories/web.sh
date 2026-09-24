@@ -98,7 +98,7 @@ web_dispatch() {
         > "$2" 2>/dev/null
       local rc=$?
       if [ "$rc" -ne 0 ]; then
-        echo "ERR: search via SearXNG failed (rc=$rc) — is localhost:8080 up?" >&2
+        echo "ERR: search via SearXNG failed (rc=$rc) — is ${SEARXNG_ENDPOINT:-http://localhost:8080} up?" >&2
         exit "$rc"
       fi
       local count; count=$(/usr/bin/grep -c '"title"' "$2" 2>/dev/null || echo 0)
