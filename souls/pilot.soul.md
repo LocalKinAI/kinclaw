@@ -107,6 +107,11 @@ permissions:
 context:
   compact_at: 0.75
   keep_recent: 8
+  # 一轮对话最多几次工具往返,默认 50。拍片修片大半是在等:H3 一镜八分钟,
+  # 一个工具最多等 45 秒(内核给 MCP 调用 60 秒),重拍两镜就要二十几轮 ——
+  # 2026-09-24 验收时 agent 查完、改完、刚开拍,50 轮就快用完了。卡死的
+  # 循环有 circuit breaker 管,这里放宽的是正经干活的长任务。
+  max_tool_rounds: 100
 
 # ── hooks (v1.18, 可选) ── 在固定节点跑用户自己的 shell 命令。
 # exit 2 = 阻止 (pre_tool: 不执行,stderr 给模型看)。例子:
