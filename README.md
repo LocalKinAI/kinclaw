@@ -17,7 +17,7 @@ your UI semantically, clicks, types, and — the part no one else has —
   child on a different brain (researcher / eye / critic / coder ship
   in-box; hierarchical, kernel-capped at depth 1).
 
-Single binary, ~18 MB, Go 1.22+, MIT licensed.
+Single binary, ~18 MB, Go 1.22+, Apache 2.0 licensed.
 
 > ## 🙏 Help wanted — Linux + Windows testers
 >
@@ -1242,7 +1242,7 @@ cross-session memory.
   [issue #1](https://github.com/LocalKinAI/kinclaw/issues/1) — see the
   feature-parity table at the top of this README + `souls/pilot_linux.soul.md`
   / `souls/pilot_windows.soul.md` for the per-OS surface.
-- ❌ **Token-markup pricing.** Software stays MIT. Revenue model is
+- ❌ **Token-markup pricing.** Software stays Apache 2.0. Revenue model is
   the relay service when it ships.
 - ❌ **Fine-tuned KinClaw-specific model.** Brain stays swappable.
 - ❌ **OSWorld / benchmark leaderboard chasing.** Real-app,
@@ -1286,7 +1286,7 @@ welcome.
 
 ## License
 
-MIT. See `LICENSE`.
+Apache License 2.0. See `LICENSE`.
 
 ## See also
 
