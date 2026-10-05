@@ -78,12 +78,10 @@ command:
           ;;
         full)
           printf 'GPS (full reading from CoreLocation):\n'
-          corelocationcli --format "  latitude:    %latitude
-  longitude:   %longitude
-  altitude:    %altitude
-  accuracy_m:  %h_accuracy
-  address:     %address
-  time:        %time"
+          # One line with '|' between fields, made lines here: written as lines inside the
+          # format, the fields fell outside this YAML block and the whole skill stopped loading.
+          corelocationcli --format "latitude:    %latitude|longitude:   %longitude|altitude:    %altitude|accuracy_m:  %h_accuracy|address:     %address|time:        %time" \
+            | tr '|' '\n' | sed 's/^/  /'
           ;;
         *)
           echo "unknown format: $FORMAT (expected: coords | address | city | full)" >&2
