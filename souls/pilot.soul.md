@@ -183,6 +183,11 @@ skills:
     - "location"
     - "spawn"
     - "kinthink"
+    # MCP 的工具也按需加载 (2026-09-30)：KinClaw Mac 面板一个服务就有 96 个工具
+    # (Film / Motion / Studio / Jev…)，schema 约 29K token，每次调用都全量带上 ——
+    # 一次调用 ~49K token 里它占了六成。延迟后只剩一行一个的索引 (~3K)，要用哪个
+    # 先 tool_search。量法：go test -tags measure -run TestPilotPromptSize ./cmd/kinclaw/
+    - "mcp_*"
   output_dir: "~/Library/Caches/kinclaw/pilot"
 ---
 
