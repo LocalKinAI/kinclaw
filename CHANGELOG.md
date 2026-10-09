@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added — souls: 智能卡片, an answer with a small interface of its own
+
+The pilot and the companion write a ```ui block when an interface serves better than words — a
+budget, a split bill, a mortgage, A against B, steps, a timeline, a few numbers that matter. One
+element a line (`card`, `input` / `slider` / `toggle`, `calc 标签 = 公式`, `stat`, `compare` / `vs`,
+`row`, `step`, `time`, `bar`, `check`, `ask`); KinClaw Mac draws it natively, works the formulas out
+again as numbers change, and does not read it out. The companion's version is short (her prompt
+stays small) and tells her about 「画给我看」: the app draws her last answer and her voice tells it.
+With kimi-k2.6: a mortgage question came back as a calculator with the right 月供, a joke with none.
+
 The kernel side of a day spent making the Mac shell speak. Two of these
 are security fixes; read the first one even if you skip the rest.
 
