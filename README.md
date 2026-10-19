@@ -1065,7 +1065,7 @@ Four specialists ship in `souls/`:
 | `researcher` | `kimi-k2.6:cloud` (1T, 256k ctx) | external facts, deep web research |
 | `eye` | `kimi-k2.6:cloud` (multimodal) | AX-blind UI verification (canvas, dense icons) |
 | `critic` | `minimax-m2.7:cloud` | adversarial second opinion on plans / forge'd skills |
-| `coder` | `deepseek-v4-pro:cloud` | re-implement an external SKILL.md as KinClaw exec form (used by `harvest --inspire`) |
+| `coder` | `deepseek-v4.1-flash:cloud` | re-implement an external SKILL.md as KinClaw exec form (used by `harvest --inspire`) |
 
 Different labs on purpose: pilot + researcher + eye on Moonshot Kimi,
 critic on Minimax, coder on DeepSeek — different model lineage means

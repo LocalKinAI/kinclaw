@@ -5,7 +5,7 @@ role: "primary"          # 用户会打开的门 —— 出现在选择器里
 
 brain:
   provider: "ollama"
-  model: "deepseek-v4-pro:cloud"
+  model: "deepseek-v4.1-flash:cloud"
   temperature: 0.2
   context_length: 131072
 
