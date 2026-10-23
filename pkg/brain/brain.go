@@ -590,6 +590,20 @@ type ReasoningEffortSetter interface {
 // every reply is the whole experience.
 func (b *openAIBrain) SetReasoningEffort(effort string) { b.reasoningEffort = effort }
 
+// MaxTokensSetter is implemented by brains whose answer can be given more
+// room than the 4096 tokens they start with. A thinking model spends that
+// room on its thinking first: deepseek-v4.1-flash behind Ollama, thinking
+// on and max_tokens 300, thought for all 300 and said nothing.
+type MaxTokensSetter interface {
+	SetMaxTokens(n int)
+}
+
+// SetMaxTokens sets max_tokens for every request.
+func (b *openAIBrain) SetMaxTokens(n int) { b.maxTokens = n }
+
+// SetMaxTokens sets max_tokens for every request.
+func (b *claudeBrain) SetMaxTokens(n int) { b.maxTokens = n }
+
 type oaiReq struct {
 	Model       string            `json:"model"`
 	Messages    []oaiMsg          `json:"messages"`
