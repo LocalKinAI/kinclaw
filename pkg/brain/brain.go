@@ -683,6 +683,7 @@ type oaiResp struct {
 				} `json:"function"`
 			} `json:"tool_calls"`
 		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *oaiUsage `json:"usage,omitempty"`
 	Error *struct {
@@ -764,6 +765,9 @@ func (b *openAIBrain) Chat(ctx context.Context, messages []Message, tools []json
 		if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
 			return nil, fmt.Errorf("decoding response: %w", err)
 		}
+		if chatResp.Error != nil {
+			return nil, fmt.Errorf("OpenAI API: %s", chatResp.Error.Message)
+		}
 		if len(chatResp.Choices) == 0 {
 			return &ChatResult{Usage: chatResp.Usage.toUsage()}, nil
 		}
@@ -793,6 +797,17 @@ func (b *openAIBrain) Chat(ctx context.Context, messages []Message, tools []json
 		var event oaiResp
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			continue
+		}
+		// A generation that fails once the stream has begun cannot change
+		// the status: kinfer says so in an event of its own, {"error":…},
+		// then finishes with finish_reason "error". Skipped, the turn read
+		// as one where the model chose to say nothing (2026-10-30: the
+		// box's llama.cpp out of GPU memory, code -3, every request).
+		if event.Error != nil {
+			return &ChatResult{Content: full.String()}, fmt.Errorf("OpenAI API: %s", event.Error.Message)
+		}
+		if len(event.Choices) > 0 && event.Choices[0].FinishReason == "error" {
+			return &ChatResult{Content: full.String()}, fmt.Errorf("OpenAI API: the generation failed")
 		}
 		if event.Usage != nil {
 			usage = event.Usage.toUsage()

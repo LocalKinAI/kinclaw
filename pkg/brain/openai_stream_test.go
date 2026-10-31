@@ -79,3 +79,47 @@ func TestOpenAIBrain_FlatErrorBodyIsReported(t *testing.T) {
 		t.Fatalf("err = %v, want it to carry %q", err, why)
 	}
 }
+
+// A generation that fails after the stream began comes as an event of its
+// own, as kinfer sends it when llama.cpp fails (code -3). It is an error,
+// not an answer of nothing.
+func TestOpenAIBrain_ErrorInStreamIsReported(t *testing.T) {
+	const why = "llama.cpp backend failed (code -3)"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null,\"index\":0}]}\n\n" +
+			"data: {\"choices\":[{\"delta\":{\"content\":\"\\\"\"},\"finish_reason\":null,\"index\":0}]}\n\n" +
+			"data: {\"error\":{\"message\":\"" + why + "\",\"type\":\"generation_error\"}}\n\n" +
+			"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"error\",\"index\":0}]}\n\n" +
+			"data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	b := NewOpenAIBrain(srv.URL, "m", "", 0)
+	res, err := b.Chat(context.Background(), []Message{{Role: RoleUser, Content: "hi"}}, nil,
+		func(chunk string, thinking bool) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), why) {
+		t.Fatalf("err = %v, want it to carry %q", err, why)
+	}
+	if res == nil || res.Content != `"` {
+		t.Errorf("what was said before it failed = %+v", res)
+	}
+}
+
+// The same failure in a reply kinfer buffered (tools on the table) is a JSON
+// body with an error and no choices.
+func TestOpenAIBrain_ErrorInBufferedStreamIsReported(t *testing.T) {
+	const why = "llama.cpp backend failed (code -3)"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"error":{"message":"` + why + `"}}`))
+	}))
+	defer srv.Close()
+
+	b := NewOpenAIBrain(srv.URL, "m", "", 0)
+	_, err := b.Chat(context.Background(), []Message{{Role: RoleUser, Content: "hi"}}, nil,
+		func(chunk string, thinking bool) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), why) {
+		t.Fatalf("err = %v, want it to carry %q", err, why)
+	}
+}
