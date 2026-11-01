@@ -8,7 +8,7 @@
 BINARY     := kinclaw
 IDENTIFIER := com.localkinai.kinclaw
 
-.PHONY: all build sign cli run run-claude test vet smoke tier3 bench bench-record warmup verify tcc-reset clean help
+.PHONY: all build sign cli run test vet smoke tier3 bench bench-record warmup verify tcc-reset clean help
 
 all: cli
 
@@ -22,10 +22,7 @@ sign: build                ## re-sign binary with stable identifier (keeps TCC g
 
 cli: sign                  ## build + sign (alias for sign)
 
-run: cli                   ## build + sign + launch the Kimi pilot
-	./$(BINARY) -soul souls/pilot_kimi.soul.md
-
-run-claude: cli            ## build + sign + launch the Claude pilot
+run: cli                   ## build + sign + launch the pilot (Kimi via Ollama Cloud)
 	./$(BINARY) -soul souls/pilot.soul.md
 
 test:                      ## go test ./...
