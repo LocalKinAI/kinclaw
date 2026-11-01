@@ -17,7 +17,8 @@ your UI semantically, clicks, types, and — the part no one else has —
   child on a different brain (researcher / eye / critic / coder ship
   in-box; hierarchical, kernel-capped at depth 1).
 
-Single binary, ~18 MB, Go 1.22+, MIT licensed.
+Single binary, ~18 MB, Go 1.25+, Apache-2.0 licensed. Project page:
+[localkin.app/kinclaw](https://www.localkin.app/kinclaw).
 
 > ## 🙏 Help wanted — Linux + Windows testers
 >
@@ -25,8 +26,8 @@ Single binary, ~18 MB, Go 1.22+, MIT licensed.
 > docs without hardware to test against on 2026-05-12. **Builds are
 > green; runtime behaviour is unverified.** If you have a Linux box or
 > a Windows machine and 10 minutes to spare, grab a prebuilt binary
-> from the [latest release](https://github.com/LocalKinAI/kinclaw/releases)
-> and try a few smoke commands. See [**`TESTING.md`**](TESTING.md) for
+> from [v1.17.0](https://github.com/LocalKinAI/kinclaw/releases/tag/v1.17.0)
+> (v1.18.0 shipped without binaries) and try a few smoke commands. See [**`TESTING.md`**](TESTING.md) for
 > a 3-command quickstart + report template. Track Linux progress in
 > [**#1**](https://github.com/LocalKinAI/kinclaw/issues/1), Windows in
 > [**#2**](https://github.com/LocalKinAI/kinclaw/issues/2). Both ✅ and
@@ -101,9 +102,12 @@ the architecture + measurement.
 ## Quick start
 
 ```bash
-go install github.com/LocalKinAI/kinclaw/cmd/kinclaw@latest
+# The souls live in the repo, so clone it — `go install …@latest`
+# alone gets the binary but not souls/pilot.soul.md.
+git clone https://github.com/LocalKinAI/kinclaw && cd kinclaw
+go install ./cmd/kinclaw
 
-# Default pilot runs Kimi K2.5 via Ollama Cloud. Sign in once:
+# Default pilot runs Kimi K2.6 via Ollama Cloud. Sign in once:
 ollama signin
 
 # The pilot soul — the generalist that drives your Mac
@@ -121,7 +125,7 @@ launch them directly:
 kinclaw -soul souls/researcher.soul.md    # Kimi K2.6 (1T, 256k ctx) — deep web research
 kinclaw -soul souls/eye.soul.md           # Kimi K2.6 multimodal — visual verification
 kinclaw -soul souls/critic.soul.md        # Minimax M2.7 — adversarial review
-kinclaw -soul souls/coder.soul.md         # DeepSeek V4 Pro — harvest --inspire forge specialist
+kinclaw -soul souls/coder.soul.md         # DeepSeek V4.1 Flash — harvest --inspire forge specialist
 ```
 
 All four use Ollama Cloud routing (`ollama signin` once). Different labs
@@ -887,7 +891,9 @@ skill.
 ## `kinbrain` — query accumulated knowledge (2026-05-17)
 
 KinClaw ships a `kinbrain` skill that shells out to the `kinbrain`
-CLI from [LocalKinAI/localkin-core](https://github.com/LocalKinAI/localkin-core).
+CLI from LocalKin. LocalKin is closed source
+([localkin.dev](https://www.localkin.dev)), so for now the skill only
+works on machines that already have it.
 The CLI is a 4-root unified grep view over:
 
 | Root | Contents |
@@ -918,7 +924,7 @@ browsing `~/.kinbrain/notes/<date>/`.
 ### Install
 
 ```bash
-# 1. Build + install the kinbrain CLI (one-time)
+# 1. Build + install the kinbrain CLI (one-time; needs a LocalKin checkout)
 cd ~/Documents/Workspace/localkin && go install ./cmd/kinbrain
 kinbrain version    # → kinbrain v0.2.0 (localkin-core, 4-root: ...)
 
@@ -947,7 +953,7 @@ work.
 ```
 
 Source: [`pkg/skill/kinbrain.go`](pkg/skill/kinbrain.go) (KinClaw side),
-[`LocalKinAI/localkin-core/pkg/kinbrain/`](https://github.com/LocalKinAI/localkin-core/tree/main/pkg/kinbrain) (the brain itself).
+`pkg/kinbrain/` in LocalKin (the brain itself; closed source).
 
 ## Skill harvest — `kinclaw harvest`
 
@@ -993,7 +999,7 @@ much cheaper than forging anything.
 
 When you've reviewed and want to actually use one of the staged
 candidates, `kinclaw harvest --accept <source>/<skill-name>` spawns
-the **coder** specialist (`souls/coder.soul.md`, DeepSeek V4 Pro)
+the **coder** specialist (`souls/coder.soul.md`, DeepSeek V4.1 Flash)
 to forge a real KinClaw exec-style `SKILL.md`. Three outcomes:
 
 | Coder result | Lands at |
@@ -1222,11 +1228,10 @@ cross-session memory.
 
 **Apple-cert blocked** (待 $99 Apple Developer Program 解锁):
 
-- **DMG + signing + notarization** — `kinclaw.localkin.ai/download`
-  one-click install for non-developers.
+- **DMG + signing + notarization** — one-click install for
+  non-developers.
 - **Wails console + 🦞 menu bar** — visible swarm UI on top of CLI.
-- **Relay service** — reach your own KinClaw from anywhere
-  (`kinclaw.localkin.ai`, the actual monetization layer).
+- **Relay service** — reach your own KinClaw from anywhere.
 - **iOS Shortcuts / Siri** integration.
 
 **Explicit non-goals** (not changing):
@@ -1242,8 +1247,8 @@ cross-session memory.
   [issue #1](https://github.com/LocalKinAI/kinclaw/issues/1) — see the
   feature-parity table at the top of this README + `souls/pilot_linux.soul.md`
   / `souls/pilot_windows.soul.md` for the per-OS surface.
-- ❌ **Token-markup pricing.** Software stays MIT. Revenue model is
-  the relay service when it ships.
+- ❌ **Token-markup pricing.** The software stays open source
+  (Apache-2.0).
 - ❌ **Fine-tuned KinClaw-specific model.** Brain stays swappable.
 - ❌ **OSWorld / benchmark leaderboard chasing.** Real-app,
   real-task validation (`kinclaw probe -batch` 50-app reports) is
@@ -1286,10 +1291,15 @@ welcome.
 
 ## License
 
-MIT. See `LICENSE`.
+Apache License 2.0. See `LICENSE`.
 
 ## See also
 
+- [localkin.app/kinclaw](https://www.localkin.app/kinclaw) — the project
+  page. [localkin.app](https://www.localkin.app) lists LocalKin's other
+  open-source tools, including
+  [KinClaw Mac](https://www.localkin.app/kinclaw-mac), a native macOS
+  app that puts KinClaw behind a hotkey.
 - The four KinKit libraries (table above).
 - [LocalKin.dev papers](https://www.localkin.dev/papers) —
   architectural essays: Grep Retrieval, Thin Soul + Fat Skill,

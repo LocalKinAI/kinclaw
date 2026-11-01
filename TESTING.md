@@ -11,10 +11,11 @@ This file is the smoothest on-ramp.
 
 ## Get a binary
 
-**Option A — prebuilt release (recommended).** Grab the latest from
-[Releases](https://github.com/LocalKinAI/kinclaw/releases). Six
-binaries per release (`darwin-{amd64,arm64}`, `linux-{amd64,arm64}`,
-`windows-{amd64,arm64}.exe`). 16–18 MB each.
+**Option A — prebuilt release.**
+[v1.17.0](https://github.com/LocalKinAI/kinclaw/releases/tag/v1.17.0)
+has six binaries (`darwin-{amd64,arm64}`, `linux-{amd64,arm64}`,
+`windows-{amd64,arm64}.exe`), 16–18 MB each. v1.18.0 shipped without
+binaries, so for anything newer use Option B or C.
 
 **Option B — CI artifact (newer than release).** [Latest cross-compile
 run](https://github.com/LocalKinAI/kinclaw/actions/workflows/cross-compile.yml)

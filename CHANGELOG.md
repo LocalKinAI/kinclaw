@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Docs — the README matches the repo again
+
+- License: Apache-2.0, as the `LICENSE` file says; the README said MIT in two places.
+- Go 1.25+ (go.mod asks for 1.25.6), not 1.22+.
+- The quick start clones first. The souls are not embedded, so `go install …@latest` on its own
+  left `-soul souls/pilot.soul.md` pointing at nothing.
+- Model names follow the souls: the pilot runs Kimi K2.6, the coder DeepSeek V4.1 Flash.
+- Prebuilt binaries are on v1.17.0; v1.18.0 shipped without any (the help-wanted box and
+  TESTING.md both said "the latest release").
+- `kinbrain` comes from LocalKin, which is closed source — the links into the private
+  localkin-core repo are gone.
+- The roadmap no longer talks about a monetization layer. Project page: localkin.app/kinclaw.
+
 ### Added — souls: 智能卡片, an answer with a small interface of its own
 
 The pilot and the companion write a ```ui block when an interface serves better than words — a
